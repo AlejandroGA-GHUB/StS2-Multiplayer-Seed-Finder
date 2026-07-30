@@ -1,0 +1,876 @@
+using System.Collections.Concurrent;
+using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Ancients;
+using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Neow;
+
+namespace Sts2.SeedFinder.Core;
+
+/// <summary>Which player slots must satisfy a criterion.</summary>
+public enum SlotRequirement
+{
+    /// <summary>At least one player in the lobby satisfies it.</summary>
+    Any,
+    /// <summary>Every player in the lobby satisfies it.</summary>
+    All,
+    /// <summary>Exactly the slots listed in <see cref="SearchCriteria.RequiredSlots"/>.</summary>
+    Specific,
+}
+
+/// <summary>Where in Neow's offer a relic is allowed to appear.</summary>
+public enum OfferSlot
+{
+    /// <summary>Anywhere in the three options.</summary>
+    Anywhere,
+    /// <summary>Only as the curse-branch option.</summary>
+    CurseOnly,
+    /// <summary>Only as one of the two positive options.</summary>
+    PositiveOnly,
+}
+
+/// <summary>
+/// One Ancient requirement. <paramref name="Relic"/> null means "this Ancient shows up at
+/// all, whatever it offers" — the deliberately loose case.
+///
+/// <paramref name="Requirement"/> is per-criterion rather than inherited from the Neow search:
+/// wanting Silken Tress for everyone but Vakuu's Fiddle for P1 alone is a normal thing to ask,
+/// and folding both into one setting makes that unexpressible. Null inherits the search-wide
+/// requirement.
+/// </summary>
+public sealed record AncientCriterion(
+    Ancient Ancient,
+    string? Relic = null,
+    SlotRequirement? Requirement = null,
+    IReadOnlyList<int>? RequiredSlots = null)
+{
+    public override string ToString()
+    {
+        var what = Relic is null ? Ancient.ToString() : $"{Ancient} offering {AncientOffers.Display(Relic)}";
+        return Requirement switch
+        {
+            SlotRequirement.All => $"{what}, for every player",
+            SlotRequirement.Specific => $"{what}, for {string.Join(" and ", (RequiredSlots ?? []).Select(s => $"P{s + 1}"))}",
+            SlotRequirement.Any => $"{what}, for any player",
+            _ => what,
+        };
+    }
+}
+
+/// <summary>
+/// A boss one act must, or must not, end with. <paramref name="Act"/> is 1-based, as it is
+/// everywhere the user sees it.
+///
+/// A boss is a property of the run rather than of a player, so unlike Neow and the Ancients
+/// there is no slot rule here — everyone in the lobby fights the same one.
+///
+/// The test is against the act's whole boss SET, which is one boss normally and two on the
+/// final act at A10+. So two include criteria on that act pin the pair, and one exclude keeps
+/// a boss out of both slots.
+/// </summary>
+public sealed record BossCriterion(int Act, string Boss, bool Exclude = false)
+{
+    public override string ToString() =>
+        $"Act {Act} {(Exclude ? "does not have" : "has")} {ActCatalog.Display(Boss)}";
+}
+
+/// <summary>
+/// An event required near the front of one act's event order.
+///
+/// Generation shuffles the act's whole event pool once and the act then hands them out from the
+/// front, so the ORDER is fixed by the seed but how far down it you get is not: each event room
+/// takes the next entry that is currently allowed and not already seen this run, and half the
+/// events gate themselves on HP, gold, deck or act. So a match means "near the front of the
+/// queue", which is necessary for seeing it early but not sufficient.
+/// </summary>
+public sealed record EventCriterion(int Act, string Event, int WithinFirst = 3)
+{
+    public override string ToString() =>
+        $"Act {Act} has {ActCatalog.Display(Event)} in the first {WithinFirst} of its event order";
+}
+
+/// <summary>
+/// A card one player's combat reward must offer. <paramref name="Slot"/> is 0-based;
+/// -1 means any player in the lobby.
+///
+/// This one is per-player by nature rather than by choice: every player rolls their own reward
+/// off their own <c>Rewards</c> stream, seeded from their lobby slot, so P1 and P2 fighting the
+/// same monsters are offered completely different cards.
+///
+/// It also carries an assumption the others do not — that the player's Neow pick took no draws
+/// off that stream. See <see cref="Cards.CardRewardGenerator"/>.
+///
+/// <paramref name="Fight"/> is 1-based. Fight 1 is guaranteed by the map and needs no
+/// assumption; fight 2 additionally assumes the party walks straight from the first Monster room
+/// into another, with no shop, elite, event or rest between them.
+/// </summary>
+public sealed record CardCriterion(int Slot, string Card, int Fight = 1)
+{
+    public override string ToString() =>
+        $"{(Slot < 0 ? "Any player" : $"P{Slot + 1}")} is offered {CardCatalog.Display(Card)} "
+        + (Fight <= 1 ? "after the first fight" : $"after fight {Fight}");
+}
+
+/// <summary>
+/// A relic a player's shop must stock in its third slot.
+///
+/// That slot is the one predictable thing about a merchant. Its rarity is hardcoded to
+/// <c>RelicRarity.Shop</c> rather than rolled, and filling it draws no RNG at all — it takes
+/// the back of the player's Shop deque, shuffled during upfront generation. The other two
+/// slots roll their rarity off a pity counter that every card reward taken so far has moved,
+/// so they are not knowable from the seed. See <see cref="RunGenerator.ShopRelicSequence"/>.
+///
+/// Per player, like the card reward, because each player has their own bag and their own
+/// merchant. <paramref name="Visit"/> is which shop, 0 being the first one that player walks
+/// into — not a floor. Skipping a shop shifts everything after it.
+/// </summary>
+public sealed record ShopRelicCriterion(int Slot, string Relic, int Visit = 0)
+{
+    public override string ToString() =>
+        $"{(Slot < 0 ? "Any player" : $"P{Slot + 1}")} is offered {ShopRelics.Display(Relic)} "
+        + $"at their {Ordinal(Visit + 1)} shop";
+
+    private static string Ordinal(int n) => n switch
+    {
+        1 => "first", 2 => "second", 3 => "third", 4 => "fourth", 5 => "fifth", _ => $"{n}th",
+    };
+}
+
+/// <summary>
+/// A relic an act's treasure chest must put on the table.
+///
+/// Run-level, not per player, and deliberately so: the chest is a SHARED pick. It rolls one relic
+/// per player and every player votes on the whole set, so which player walks away with which is
+/// decided at the table, not by the seed. Asking for two relics in the same act therefore means
+/// "both are in that chest", which is satisfiable up to the player count.
+///
+/// <paramref name="Act"/> is 1-based. Every act has exactly one chest and no route can skip it.
+///
+/// <paramref name="Tolerance"/> is what makes this usable past Act 1. The rarity roll is exact,
+/// but the relic itself is the front of the SHARED bag, and every relic anyone picks up earlier in
+/// the run — elite rewards, a merchant's stock, relic events — removes an entry from that bag. A
+/// tolerance of n accepts the relic if it is within the first n+1 of its rarity still standing, so
+/// 0 means "assume nobody has taken anything yet". See <see cref="ChestRelics"/>.
+/// </summary>
+public sealed record ChestRelicCriterion(int Act, string Relic, int Tolerance = 0)
+{
+    public override string ToString()
+    {
+        string with = Tolerance > 0 ? $" (allowing {Tolerance} taken earlier)" : "";
+        return $"Act {Act}'s chest offers {ChestRelics.Display(Relic)}{with}";
+    }
+}
+
+public sealed record SearchCriteria
+{
+    /// <summary>Neow relic to require. Null searches on the Ancient criteria alone.</summary>
+    public NeowRelic? Relic { get; init; }
+    public required NeowContext Context { get; init; }
+
+    /// <summary>
+    /// Which Act 1 map to require — "Overgrowth" or "Underdocks". Null accepts either.
+    ///
+    /// Act 1 is the only act with a choice; acts 2 and 3 have a single candidate each. The
+    /// roll comes off its own <c>act_selection</c> RNG rather than the UpFront stream, so
+    /// testing it costs three draws against roughly four hundred for a full run — which is
+    /// why the search checks it before anything else.
+    /// </summary>
+    public string? Act1 { get; init; }
+
+    /// <summary>
+    /// Ancients that must appear, optionally offering a specific relic. Checking these means
+    /// generating the whole run, which is far more expensive than a Neow-only search — so
+    /// the Neow filter, when present, always runs first.
+    /// </summary>
+    public IReadOnlyList<AncientCriterion> Ancients { get; init; } = Array.Empty<AncientCriterion>();
+
+    /// <summary>Per-act boss requirements. Like the Ancients, these need the whole run generated.</summary>
+    public IReadOnlyList<BossCriterion> Bosses { get; init; } = Array.Empty<BossCriterion>();
+
+    /// <summary>Per-act event-order requirements. Also run-level, see <see cref="EventCriterion"/>.</summary>
+    public IReadOnlyList<EventCriterion> Events { get; init; } = Array.Empty<EventCriterion>();
+
+    /// <summary>
+    /// Cards a player's first combat reward must offer. Far cheaper to test than the run
+    /// criteria — about fourteen draws per player against four hundred — so these are checked
+    /// before generation, not after.
+    /// </summary>
+    public IReadOnlyList<CardCriterion> Cards { get; init; } = Array.Empty<CardCriterion>();
+
+    /// <summary>
+    /// Relics a player's shop must stock in its third slot. These come out of the relic bags
+    /// that upfront generation shuffles, so they need the run generated — but only the bag half
+    /// of it, which is why <see cref="NeedsShopRelics"/> is tracked apart from the act criteria.
+    /// </summary>
+    public IReadOnlyList<ShopRelicCriterion> ShopRelicsWanted { get; init; } = Array.Empty<ShopRelicCriterion>();
+
+    /// <summary>
+    /// Relics an act's treasure chest must offer. Like the shop relics these come out of the
+    /// upfront-shuffled bags, but from the SHARED one, and the rarity that selects between its
+    /// deques is rolled on a run-level stream — so these are run-level criteria with no slot rule.
+    /// </summary>
+    public IReadOnlyList<ChestRelicCriterion> ChestRelicsWanted { get; init; } = Array.Empty<ChestRelicCriterion>();
+
+    /// <summary>
+    /// Treasure picks the party takes before Act 1's chest, i.e. <c>?</c> rooms that resolve into
+    /// treasure rooms. Each shifts every chest by one, so it is an input rather than an assumption.
+    /// Zero is right for the great majority of runs — the base chance is 2% per <c>?</c> room.
+    /// </summary>
+    public int ExtraChestPicks { get; init; }
+
+    /// <summary>Whether anything here can only be answered by generating the run.</summary>
+    public bool NeedsRun => Ancients.Count > 0 || Bosses.Count > 0 || Events.Count > 0
+                            || ShopRelicsWanted.Count > 0 || ChestRelicsWanted.Count > 0;
+
+    /// <summary>Whether generation has to materialise the Shop deques rather than burn them.</summary>
+    public bool NeedsShopRelics => ShopRelicsWanted.Count > 0;
+
+    /// <summary>Whether generation has to materialise the shared bag's combat-rarity deques.</summary>
+    public bool NeedsChestRelics => ChestRelicsWanted.Count > 0;
+
+    /// <summary>
+    /// Whether the party has to be known. Card rewards need it because the pool is the
+    /// character's, even though they do not need the run generated. Chests do not read any
+    /// character pool, but they still need the party SIZE, which the context carries.
+    /// </summary>
+    public bool NeedsCharacters => NeedsRun || Cards.Count > 0 || ShopRelicsWanted.Count > 0;
+
+    /// <summary>Party in lobby order. Required whenever <see cref="NeedsCharacters"/>.</summary>
+    public IReadOnlyList<Character> Characters { get; init; } = Array.Empty<Character>();
+
+    /// <summary>
+    /// Ascension level. Generation ignores it entirely below 10; at A10+ (<c>DoubleBoss</c>)
+    /// the final act gains a second boss, which is one extra draw at the very end of the
+    /// stream and therefore changes nothing else about the run.
+    /// </summary>
+    public int Ascension { get; init; }
+
+    public UnlockState Unlocks { get; init; } = new();
+    public SlotRequirement Requirement { get; init; } = SlotRequirement.Any;
+    public IReadOnlyList<int> RequiredSlots { get; init; } = Array.Empty<int>();
+    public OfferSlot Where { get; init; } = OfferSlot.Anywhere;
+    public int SeedLength { get; init; } = SeedCodec.DefaultLength;
+
+    public int PlayerCount => Context.PlayerCount;
+}
+
+/// <summary><paramref name="Run"/> is present only when the search had Ancient criteria.</summary>
+public sealed record SeedHit(string Seed, NeowOffer[] OffersBySlot, GeneratedRun? Run = null)
+{
+    public IEnumerable<int> MatchingSlots(NeowRelic relic, OfferSlot where) =>
+        OffersBySlot.Index()
+            .Where(x => SeedSearcher.OfferSatisfies(x.Item, relic, where))
+            .Select(x => x.Index);
+}
+
+public static class SeedSearcher
+{
+    internal static bool OfferSatisfies(NeowOffer offer, NeowRelic relic, OfferSlot where) => where switch
+    {
+        OfferSlot.CurseOnly => offer.Curse == relic,
+        OfferSlot.PositiveOnly => offer.Positive1 == relic || offer.Positive2 == relic,
+        _ => offer.Contains(relic),
+    };
+
+    /// <summary>
+    /// Scan a contiguous range of the seed-string space and yield matches.
+    /// Ranges are deterministic, so a search can be sharded or resumed by index.
+    /// </summary>
+    public static IEnumerable<SeedHit> Search(
+        SearchCriteria criteria,
+        ulong startIndex,
+        ulong count,
+        int maxResults,
+        CancellationToken cancellationToken = default)
+    {
+        Validate(criteria);
+
+        var ctx = criteria.Context;
+        var relic = criteria.Relic;
+        var where = criteria.Where;
+        int playerCount = ctx.PlayerCount;
+        var required = ResolveRequiredSlots(criteria);
+        bool anySlot = criteria.Requirement == SlotRequirement.Any;
+
+        // A curse-branch relic can be settled on a SINGLE draw, because the curse is the first
+        // thing Neow rolls — versus roughly twenty draws, three coin flips, a shuffle and a
+        // handful of list allocations to build the whole offer.
+        //
+        // The test is the relic's pool, not what the caller asked for. Neow's curse and
+        // positive pools are disjoint (the "counterpart" relics are different relics), so for
+        // any curse relic "anywhere in the offer" and "curse branch only" are the same
+        // question, and both take the cheap answer. Keying this on `where == CurseOnly` instead
+        // meant the default search setting silently paid the full price, which on a 4-player
+        // Silken Tress search is a 6x difference.
+        //
+        // PositiveOnly is excluded for safety; ValidateCriteria already rejects that pairing.
+        // `relic` is null on a search with no Neow requirement, which has no fast path to take.
+        // Stating that is clearer than letting IndexOf(null) return -1 and arrive at the same
+        // answer by accident.
+        var curseCandidates = NeowGenerator.CurseCandidates(ctx);
+        int curseIndex = relic is null ? -1 : curseCandidates.ToList().IndexOf(relic);
+        bool curseFastPath = curseIndex >= 0 && where != OfferSlot.PositiveOnly;
+
+        bool SlotMatches(ulong runSeed, int slot)
+        {
+            if (curseFastPath)
+            {
+                var rng = new Rng(NeowGenerator.RngSeed(runSeed, slot));
+                return rng.NextInt(0, curseCandidates.Count) == curseIndex;
+            }
+            return OfferSatisfies(NeowGenerator.PredictOffer(runSeed, slot, ctx), relic, where);
+        }
+
+        bool NeowMatches(ulong runSeed)
+        {
+            if (relic is null) return true;
+            if (anySlot)
+            {
+                for (int slot = 0; slot < playerCount; slot++)
+                    if (SlotMatches(runSeed, slot)) return true;
+                return false;
+            }
+            foreach (var slot in required)
+                if (!SlotMatches(runSeed, slot)) return false;
+            return true;
+        }
+
+        // Each player's first card reward, tested against that player's own Rewards stream.
+        // Roughly fourteen draws per slot, so this sits between the Neow filter and the run.
+        bool CardsMatch(ulong runSeed)
+        {
+            if (criteria.Cards.Count == 0) return true;
+
+            // Walk each player's stream once, as far as the deepest fight anyone asked about,
+            // and cache it — fight 2 is a continuation of fight 1's stream, not a fresh one, so
+            // computing them separately would both duplicate work and risk them disagreeing.
+            int deepest = criteria.Cards.Max(c => c.Fight);
+            var offered = new HallwayRewards?[playerCount];
+            HallwayRewards For(int slot) => offered[slot] ??= CardRewardGenerator.Hallway(
+                runSeed, slot, criteria.Characters[slot], deepest, criteria.Ascension, criteria.Unlocks);
+
+            bool Offers(int slot, CardCriterion want) =>
+                For(slot).Fight(want.Fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
+
+            foreach (var want in criteria.Cards)
+            {
+                bool ok = want.Slot >= 0
+                    ? Offers(want.Slot, want)
+                    : Enumerable.Range(0, playerCount).Any(s => Offers(s, want));
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        // Which map each act drew is known from act selection alone, three draws, so a boss or
+        // event that map cannot produce rejects the seed before the ~400-draw run generation.
+        // Only Act 1 has two candidates, so this only ever bites there — but that is half the
+        // seeds, and it costs a lookup.
+        bool MapsCouldSatisfy(ActDefinition[] acts)
+        {
+            // Only the "must have" side pre-filters. An excluded boss the map cannot produce
+            // is trivially satisfied, so rejecting on it would throw away every valid seed.
+            foreach (var want in criteria.Bosses)
+                if (!want.Exclude && !acts[want.Act - 1].Bosses.Any(b => b.Name == want.Boss))
+                    return false;
+
+            foreach (var want in criteria.Events)
+                if (!acts[want.Act - 1].Events.Contains(want.Event)
+                    && !ActData.SharedEvents.Contains(want.Event)) return false;
+
+            return true;
+        }
+
+        // Act criteria need the full run generated, which costs ~20x a Neow check, so this only
+        // ever runs on seeds the (cheap) Neow, Act 1 and map filters already accepted. The acts
+        // already selected for those checks are reused rather than rolled again.
+        GeneratedRun? RunIfActsMatch(ulong runSeed, ActDefinition[]? acts)
+        {
+            if (!criteria.NeedsRun) return null;
+
+            var run = RunGenerator.GenerateRun(
+                runSeed, criteria.Unlocks, isMultiplayer: true, criteria.Characters, acts,
+                criteria.Ascension, criteria.NeedsShopRelics,
+                withChestRelics: criteria.NeedsChestRelics,
+                extraChestPicksBefore: criteria.ExtraChestPicks);
+
+            // Shop relics come out of the bags, which are shuffled before act generation, so
+            // they are already decided by the time we get here — and they are a plain lookup
+            // rather than a scan, so test them ahead of everything else.
+            foreach (var want in criteria.ShopRelicsWanted)
+            {
+                var slots = want.Slot >= 0
+                    ? new[] { want.Slot }
+                    : Enumerable.Range(0, playerCount).ToArray();
+
+                bool ok = slots.Any(s =>
+                    run.ShopRelic(s, want.Visit) is { } got &&
+                    string.Equals(got.Slug, want.Relic, StringComparison.OrdinalIgnoreCase));
+                if (!ok) return null;
+            }
+
+            // Chest relics, grouped by act. Asking for two relics in one act means two DIFFERENT
+            // slots of that chest must supply them, so this is an assignment problem rather than
+            // a test of each criterion on its own — see ChestSatisfies.
+            if (criteria.ChestRelicsWanted.Count > 0)
+            {
+                if (run.Chests is null) return null;
+                foreach (var byAct in criteria.ChestRelicsWanted.GroupBy(w => w.Act))
+                {
+                    if (byAct.Key < 1 || byAct.Key > run.Chests.Slots.Count) return null;
+                    if (!ChestSatisfies(run.Chests.Slots[byAct.Key - 1], byAct.ToList())) return null;
+                }
+            }
+
+            // Cheapest first: a boss is one string compare, an event a short prefix scan, and
+            // an Ancient's offer is a fresh RNG chain per player.
+            foreach (var want in criteria.Bosses)
+            {
+                bool present = run.Acts[want.Act - 1].Bosses.Any(b => b.Name == want.Boss);
+                if (present == want.Exclude) return null;
+            }
+
+            foreach (var want in criteria.Events)
+                if (!run.Acts[want.Act - 1].Events.Take(want.WithinFirst).Contains(want.Event))
+                    return null;
+
+            foreach (var want in criteria.Ancients)
+            {
+                // Which act it turned up in matters: Darv's relic pool is gated on the act.
+                int actIndex = -1;
+                for (int i = 0; i < run.Acts.Count; i++)
+                {
+                    if (AncientOffers.TryParse(run.Acts[i].Ancient, out var a) && a == want.Ancient)
+                    {
+                        actIndex = i;
+                        break;
+                    }
+                }
+                if (actIndex < 0) return null;
+                if (want.Relic is null) continue;
+
+                // This criterion's own slot rule, falling back to the search-wide one.
+                var rule = want.Requirement ?? criteria.Requirement;
+                var slots = rule switch
+                {
+                    SlotRequirement.All => Enumerable.Range(0, playerCount).ToArray(),
+                    SlotRequirement.Specific => (want.Requirement is null
+                        ? criteria.RequiredSlots
+                        : want.RequiredSlots ?? []).ToArray(),
+                    _ => Array.Empty<int>(),
+                };
+
+                var ctxA = new AncientContext { ActIndex = actIndex };
+                bool ok = rule == SlotRequirement.Any
+                    ? Enumerable.Range(0, playerCount).Any(s => SlotOffers(runSeed, s, want, ctxA))
+                    : slots.Length > 0 && slots.All(s => SlotOffers(runSeed, s, want, ctxA));
+                if (!ok) return null;
+            }
+            return run;
+        }
+
+        // A relic counts as offered if ANY branch produces it. Several Ancients gate a pool
+        // on deck state we cannot know from the seed; treating those as misses would throw
+        // away real hits. The CLI labels whether a hit is guaranteed or branch-dependent.
+        bool SlotOffers(ulong runSeed, int slot, AncientCriterion want, AncientContext ctxA) =>
+            AncientOffers.Branches(want.Ancient, runSeed, slot, ctxA)
+                .Any(b => b.Offer.Options.Contains(want.Relic!, StringComparer.OrdinalIgnoreCase));
+
+        // Four results of slack per requested hit, so producers rarely block on the consumer,
+        // but clamped: a large --results would otherwise overflow int and hand BlockingCollection
+        // a negative capacity, which throws before a single seed is scanned.
+        int capacity = (int)Math.Clamp((long)Math.Max(maxResults, 1) * 4, 4L, 65_536L);
+        var results = new BlockingCollection<SeedHit>(capacity);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        int found = 0;
+
+        var producer = Task.Run(() =>
+        {
+            try
+            {
+                var options = new ParallelOptions
+                {
+                    CancellationToken = cts.Token,
+                    MaxDegreeOfParallelism = Environment.ProcessorCount,
+                };
+
+                Parallel.For(0L, (long)count, options, i =>
+                {
+                    if (cts.IsCancellationRequested) return;
+
+                    var seed = SeedCodec.FromIndex(startIndex + (ulong)i, criteria.SeedLength);
+                    ulong runSeed = SeedCodec.RunSeed(seed);
+
+                    // Cheapest filter first: act selection is three draws on its own RNG.
+                    ActDefinition[]? acts = null;
+                    if (criteria.Act1 is not null || criteria.NeedsRun)
+                    {
+                        acts = RunGenerator.SelectActs(runSeed, criteria.Unlocks, isMultiplayer: true);
+                        if (criteria.Act1 is not null
+                            && !acts[0].Name.Equals(criteria.Act1, StringComparison.OrdinalIgnoreCase)) return;
+                        if (!MapsCouldSatisfy(acts)) return;
+                    }
+
+                    if (!NeowMatches(runSeed)) return;
+                    if (!CardsMatch(runSeed)) return;
+
+                    var run = RunIfActsMatch(runSeed, acts);
+                    if (criteria.NeedsRun && run is null) return;
+
+                    results.Add(new SeedHit(seed, NeowGenerator.PredictAllOffers(runSeed, ctx), run), cts.Token);
+                    if (Interlocked.Increment(ref found) >= maxResults) cts.Cancel();
+                });
+            }
+            catch (OperationCanceledException) { /* expected on early exit */ }
+            finally { results.CompleteAdding(); }
+        }, CancellationToken.None);
+
+        int emitted = 0;
+        foreach (var hit in results.GetConsumingEnumerable())
+        {
+            yield return hit;
+            if (++emitted >= maxResults) { cts.Cancel(); break; }
+        }
+
+        try { producer.GetAwaiter().GetResult(); }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>
+    /// Rough expected match rate, for sizing a scan. Positive-slot odds are estimated by
+    /// sampling rather than derived, because the pool size varies with the curse rolled.
+    /// </summary>
+    public static double MatchProbability(SearchCriteria criteria, int sampleSize = 20000)
+    {
+        // Act 1 is one of two candidates, and the roll is independent of everything else.
+        double actFactor = criteria.Act1 is null ? 1.0 : 1.0 / ActData.ByIndex[0].Length;
+
+        if (criteria.Relic is null) return actFactor;
+
+        int hits = 0;
+        for (ulong i = 0; i < (ulong)sampleSize; i++)
+        {
+            ulong runSeed = SeedCodec.RunSeed(SeedCodec.FromIndex(i * 2654435761uL));
+            if (OfferSatisfies(NeowGenerator.PredictOffer(runSeed, 0, criteria.Context), criteria.Relic, criteria.Where))
+                hits++;
+        }
+        double p = Math.Max(hits / (double)sampleSize, 1e-9);
+
+        if (criteria.Requirement == SlotRequirement.Any)
+            return actFactor * (1.0 - Math.Pow(1.0 - p, criteria.PlayerCount));
+        return actFactor * Math.Pow(p, ResolveRequiredSlots(criteria).Count);
+    }
+
+    private static void Validate(SearchCriteria c)
+    {
+        if (c.Relic is null && c.Act1 is null && !c.NeedsCharacters)
+            throw new ArgumentException(
+                "nothing to search for — give --relic, --act1, --boss, --event, --card and/or --ancient.");
+
+        if (c.Act1 is not null && !ActData.ByIndex[0].Any(a => a.Name.Equals(c.Act1, StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException(
+                $"'{c.Act1}' is not an Act 1 map. Choose one of: " +
+                string.Join(", ", ActData.ByIndex[0].Select(a => a.Name)));
+
+        if (c.Ascension < 0 || c.Ascension > AscensionLevels.Max)
+            throw new ArgumentException(
+                $"ascension {c.Ascension} is not a level; use 0-{AscensionLevels.Max}.");
+
+        if (c.NeedsCharacters && c.Characters.Count != c.PlayerCount)
+            throw new ArgumentException(
+                $"boss, event, card and Ancient criteria need --characters with exactly {c.PlayerCount} " +
+                "entries (one per player, in lobby order), because generation depends on the " +
+                "party and card rewards come out of each character's own pool.");
+
+        ValidateActCriteria(c);
+        ValidateCardCriteria(c);
+        ValidateShopCriteria(c);
+        ValidateChestCriteria(c);
+
+        foreach (var a in c.Ancients)
+        {
+            if (a.Relic is null) continue;
+            var pool = AncientOffers.AllRelics(a.Ancient);
+            if (!pool.Contains(a.Relic, StringComparer.OrdinalIgnoreCase))
+                throw new ArgumentException(
+                    $"{a.Ancient} never offers '{AncientOffers.Display(a.Relic)}'. It can offer: " +
+                    string.Join(", ", pool.Select(AncientOffers.Slug)));
+        }
+
+        if (c.Relic is null) return;
+
+        if (!c.Context.IsAllowed(c.Relic))
+            throw new ArgumentException(
+                $"'{c.Relic.Name}' can never be offered under these settings " +
+                $"({c.PlayerCount} players, availability: {c.Relic.Availability}).");
+
+        if (c.Where == OfferSlot.CurseOnly && c.Relic.Pool != NeowPool.Curse)
+            throw new ArgumentException($"'{c.Relic.Name}' is not a curse-branch relic.");
+
+        if (c.Where == OfferSlot.PositiveOnly && c.Relic.Pool == NeowPool.Curse)
+            throw new ArgumentException($"'{c.Relic.Name}' is only ever offered as the curse option.");
+    }
+
+    /// <summary>
+    /// Whether one chest can satisfy every relic asked of it, each from a DIFFERENT slot — the
+    /// chest holds one relic per player, so "Vajra and War Paint in Act 2" needs both to be there
+    /// at once rather than either one twice.
+    ///
+    /// An exhaustive assignment search, which is free at these sizes: at most four criteria
+    /// against at most four slots, and it exits on the first success.
+    /// </summary>
+    private static bool ChestSatisfies(IReadOnlyList<ChestSlot> slots, IReadOnlyList<ChestRelicCriterion> wants)
+    {
+        if (wants.Count > slots.Count) return false;
+        var used = new bool[slots.Count];
+
+        bool Assign(int i)
+        {
+            if (i == wants.Count) return true;
+            for (int s = 0; s < slots.Count; s++)
+            {
+                if (used[s] || !slots[s].CouldBe(wants[i].Relic, wants[i].Tolerance)) continue;
+                used[s] = true;
+                if (Assign(i + 1)) return true;
+                used[s] = false;
+            }
+            return false;
+        }
+        return Assign(0);
+    }
+
+    /// <summary>
+    /// Rejects chest requests no seed can satisfy: a relic that a chest can never hold (Shop
+    /// rarity, or a character's own relic — chests draw from the shared bag only), and asking a
+    /// single chest for more relics than it has slots.
+    /// </summary>
+    private static void ValidateChestCriteria(SearchCriteria c)
+    {
+        foreach (var want in c.ChestRelicsWanted)
+        {
+            if (ChestRelics.Find(want.Relic) is null)
+                throw new ArgumentException(
+                    $"'{want.Relic}' is not a relic a treasure chest can offer. Chests roll "
+                    + "Common, Uncommon or Rare from the SHARED pool, so Shop relics and each "
+                    + "character's own relics can never appear in one.");
+
+            if (want.Act < 1 || want.Act > 3)
+                throw new ArgumentException($"act must be 1, 2 or 3; got {want.Act}.");
+
+            if (want.Tolerance < 0)
+                throw new ArgumentException("chest tolerance cannot be negative.");
+        }
+
+        foreach (var byAct in c.ChestRelicsWanted.GroupBy(w => w.Act))
+        {
+            if (byAct.Count() > c.PlayerCount)
+                throw new ArgumentException(
+                    $"Act {byAct.Key}'s chest holds one relic per player, so a {c.PlayerCount}-player "
+                    + $"lobby cannot have {byAct.Count()} named relics in it.");
+
+            var dupes = byAct.GroupBy(w => w.Relic).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+            if (dupes.Count > 0)
+                throw new ArgumentException(
+                    $"Act {byAct.Key}'s chest cannot hold two of {ChestRelics.Display(dupes[0])}: "
+                    + "each relic is pulled out of the shared bag for good.");
+        }
+    }
+
+    /// <summary>
+    /// Rejects shop requests no seed can satisfy. Two ways that happens, and both would
+    /// otherwise scan forever: a relic that is not Shop rarity at all (it will never reach that
+    /// slot, whatever else is true of the seed), and a character's own shop relic asked of a
+    /// player who is not that character.
+    /// </summary>
+    private static void ValidateShopCriteria(SearchCriteria c)
+    {
+        foreach (var want in c.ShopRelicsWanted)
+        {
+            var relic = ShopRelics.Find(want.Relic);
+            if (relic is null)
+                throw new ArgumentException(
+                    $"'{want.Relic}' is not a shop relic. Only RelicRarity.Shop relics reach the "
+                    + "third slot; the other two slots roll a rarity that depends on run state and "
+                    + "cannot be searched. Choose one of: "
+                    + string.Join(", ", ShopRelics.All.Select(r => r.Slug)));
+
+            if (want.Visit < 0)
+                throw new ArgumentException("shop visit must be 1 or higher.");
+
+            if (want.Slot >= c.PlayerCount)
+                throw new ArgumentException(
+                    $"P{want.Slot + 1} is not in a {c.PlayerCount}-player lobby.");
+
+            // A character's own shop relic is only in that character's bag.
+            var owner = ShopRelics.OwnerOf(want.Relic);
+            if (owner is null) continue;
+
+            if (want.Slot >= 0)
+            {
+                if (want.Slot < c.Characters.Count && c.Characters[want.Slot] != owner)
+                    throw new ArgumentException(
+                        $"{ShopRelics.Display(want.Relic)} is {owner}'s own relic, so it can only "
+                        + $"appear in {owner}'s shop. P{want.Slot + 1} is playing {c.Characters[want.Slot]}.");
+            }
+            else if (c.Characters.Count > 0 && !c.Characters.Contains(owner.Value))
+            {
+                throw new ArgumentException(
+                    $"{ShopRelics.Display(want.Relic)} is {owner}'s own relic, and nobody in this "
+                    + "party is playing them.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rejects boss and event requirements that no seed can satisfy, so an impossible search
+    /// says so at once instead of scanning millions of seeds and reporting nothing found.
+    ///
+    /// Act 1 is where this earns its keep, because it is the only act with a choice of map and
+    /// the two maps share neither their bosses nor most of their events. Asking for the
+    /// Overgrowth's boss alongside an Underdocks event is a search with no answers, and the
+    /// map filter would quietly reject every seed rather than say so.
+    /// </summary>
+    private static void ValidateActCriteria(SearchCriteria c)
+    {
+        foreach (var want in c.Bosses)
+            if (!ActCatalog.Bosses(want.Act).Any(b => b.TypeName == want.Boss))
+                throw new ArgumentException(
+                    $"Act {want.Act} never ends with '{ActCatalog.Display(want.Boss)}'. It can be: " +
+                    string.Join(", ", ActCatalog.Bosses(want.Act).Select(b => ActCatalog.Slug(b.TypeName))));
+
+        foreach (var want in c.Events)
+        {
+            if (want.WithinFirst < 1)
+                throw new ArgumentException(
+                    $"an event has to be within at least the first 1 of the order, got {want.WithinFirst}.");
+
+            if (!ActCatalog.EventNames(want.Act).Contains(want.Event))
+                throw new ArgumentException(
+                    $"Act {want.Act} never offers '{ActCatalog.Display(want.Event)}'. It can offer: " +
+                    string.Join(", ", ActCatalog.EventNames(want.Act).Select(ActCatalog.Slug)));
+        }
+
+        // Each act's criteria have to fit on ONE of its maps — checking them one at a time
+        // would pass a boss and an event that are individually reachable but never together.
+        int lastAct = ActData.ByIndex.Length;
+        foreach (var act in ActCatalog.ActNumbers)
+        {
+            var bosses = c.Bosses.Where(b => b.Act == act).ToList();
+            var events = c.Events.Where(e => e.Act == act).ToList();
+            if (bosses.Count == 0 && events.Count == 0) continue;
+
+            // How many bosses this act will actually have: two on the final act at A10+.
+            int slots = act == lastAct && c.Ascension >= AscensionLevels.DoubleBoss ? 2 : 1;
+            var include = bosses.Where(b => !b.Exclude).Select(b => b.Boss).Distinct().ToList();
+            var exclude = bosses.Where(b => b.Exclude).Select(b => b.Boss).ToHashSet();
+
+            if (include.Intersect(exclude).FirstOrDefault() is { } both)
+                throw new ArgumentException(
+                    $"Act {act} cannot both have and not have {ActCatalog.Display(both)}.");
+
+            if (include.Count > slots)
+                throw new ArgumentException(slots == 1
+                    ? $"Act {act} has one boss, so it cannot be all of " +
+                      $"{string.Join(", ", include.Select(ActCatalog.Display))}. " +
+                      "Double Boss (Ascension 10) gives the final act two."
+                    : $"Act {act} has {slots} bosses, so it cannot be all {include.Count} of those.");
+
+            // Maps this act could draw, once the Act 1 choice is honoured.
+            var maps = ActData.ByIndex[act - 1]
+                .Where(m => act != 1 || c.Act1 is null || m.Name.Equals(c.Act1, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            // Excluding more bosses than the act can spare leaves it nothing to draw. Worth
+            // its own message: it is arithmetic about one act, not a map mismatch.
+            if (exclude.Count > 0 && maps.All(m => m.Bosses.Count(x => !exclude.Contains(x.Name)) < slots))
+                throw new ArgumentException(
+                    $"Act {act} draws {slots} boss{(slots == 1 ? "" : "es")} from {maps[0].Bosses.Count()}, " +
+                    $"so ruling out {string.Join(", ", exclude.Select(ActCatalog.Display))} leaves too few.");
+
+            var fitting = maps
+                .Where(m => include.All(b => m.Bosses.Any(x => x.Name == b)))
+                .Where(m => m.Bosses.Count(x => !exclude.Contains(x.Name)) >= slots)
+                .Where(m => events.All(e => m.Events.Contains(e.Event) || ActData.SharedEvents.Contains(e.Event)))
+                .ToList();
+
+            if (fitting.Count > 0) continue;
+
+            var asked = include.Select(ActCatalog.Display)
+                .Concat(exclude.Select(b => "not " + ActCatalog.Display(b)))
+                .Concat(events.Select(e => ActCatalog.Display(e.Event)));
+            var pinned = act == 1 && c.Act1 is not null ? maps[0].Name : null;
+            throw new ArgumentException(
+                $"no Act {act} map has all of {string.Join(", ", asked)}" +
+                (pinned is null ? "" : $" on the {pinned}") + ", so no seed can match." +
+                (act == 1 ? " Act 1's two maps share neither bosses nor most events." : ""));
+        }
+    }
+
+    /// <summary>
+    /// Rejects card requirements no seed can satisfy. Two shapes of impossible:
+    /// a card the slot's character does not have, and more than three cards asked of one slot
+    /// when a reward only ever offers three.
+    /// </summary>
+    private static void ValidateCardCriteria(SearchCriteria c)
+    {
+        foreach (var want in c.Cards)
+        {
+            if (want.Slot >= c.PlayerCount)
+                throw new ArgumentException(
+                    $"there is no P{want.Slot + 1} in a {c.PlayerCount}-player lobby.");
+
+            // "Any player" only needs SOMEONE who could be offered it.
+            var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
+            if (slots.Any(s => CardCatalog.Offerable(c.Characters[s], c.Unlocks)
+                    .Any(e => e.TypeName == want.Card)))
+                continue;
+
+            var who = want.Slot < 0
+                ? "no character in the party"
+                : $"the {c.Characters[want.Slot]}";
+            throw new ArgumentException(
+                $"{CardCatalog.Display(want.Card)} is not in {who}'s card pool, so no seed can offer it.");
+        }
+
+        // A rare is in the pool but out of reach on floor 1, so asking for one there would
+        // otherwise scan the whole range and report nothing found, which reads as a bad seed
+        // range. From fight 2 the pity offset has grown past zero and a rare is reachable, so
+        // this only rejects the first fight.
+        foreach (var want in c.Cards.Where(w => !CardRewardGenerator.CanOfferRare(w.Fight)))
+        {
+            var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
+            if (slots.Any(s => CardCatalog.FirstFightOfferable(c.Characters[s], c.Unlocks)
+                    .Any(e => e.TypeName == want.Card)))
+                continue;
+
+            throw new ArgumentException(
+                $"{CardCatalog.Display(want.Card)} is Rare, and the first fight of a run can never " +
+                "offer one: the rare odds carry a penalty that only wears off over later rewards. " +
+                "Ask for it after fight 2 instead.");
+        }
+
+        foreach (var want in c.Cards)
+            if (want.Fight is < 1 or > CardRewardGenerator.MaxPredictableFight)
+                throw new ArgumentException(
+                    $"fight must be between 1 and {CardRewardGenerator.MaxPredictableFight}; "
+                    + $"got {want.Fight}.");
+
+        // Three cards per reward, so more than three named for one player AND one fight can
+        // never all land. Grouped by fight as well as slot: the same player being offered three
+        // cards in fight 1 and three more in fight 2 is perfectly satisfiable.
+        foreach (var group in c.Cards.GroupBy(x => (x.Slot, x.Fight)).Where(g => g.Key.Slot >= 0))
+        {
+            var distinct = group.Select(x => x.Card).Distinct().Count();
+            if (distinct > 3)
+                throw new ArgumentException(
+                    $"a card reward offers three cards, so P{group.Key.Slot + 1} cannot be offered all " +
+                    $"{distinct} of those at once.");
+        }
+    }
+
+    private static IReadOnlyList<int> ResolveRequiredSlots(SearchCriteria criteria) => criteria.Requirement switch
+    {
+        SlotRequirement.All => Enumerable.Range(0, criteria.PlayerCount).ToArray(),
+        SlotRequirement.Specific => criteria.RequiredSlots,
+        _ => Array.Empty<int>(),
+    };
+}

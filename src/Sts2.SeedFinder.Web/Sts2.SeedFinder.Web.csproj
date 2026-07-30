@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sts2.SeedFinder.Web</RootNamespace>
+    <AssemblyName>sts2seedweb</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sts2.SeedFinder.Core\Sts2.SeedFinder.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    Copy the UI next to the exe on build, not just on publish. Without this the
+    built exe can only serve the UI in Development, where the static-web-assets
+    manifest points back at the project folder; in Production it finds nothing
+    and every page 404s. Copying makes the output directory self-contained, so
+    the exe runs correctly from any working directory.
+  -->
+  <ItemGroup>
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    The recorded baseline travels with the exe: both the CLI and the web app read it from
+    AppContext.BaseDirectory, and `accept` writes it back. Kept at the repo root so a human
+    bumping it after a repair edits one obvious file.
+  -->
+  <ItemGroup>
+    <None Include="../../baselines/verified-build.json" Link="verified-build.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StS2 Co-op Seed Finder</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header>
+  <h1>Slay the Spire 2 <span>Co-op Seed Finder</span></h1>
+  <span class="meta" id="meta"></span>
+</header>
+
+<p class="credit">
+  Huge shoutout to <b>the creator of searchthespire</b> for strong UI and functionality references.
+  Check out their site for single player seeds
+  <a href="https://searchthespire.app/" target="_blank" rel="noopener noreferrer">SearchTheSpire</a>
+</p>
+
+<div class="layout">
+  <form class="criteria" id="form" autocomplete="off">
+
+    <fieldset>
+      <legend>Lobby</legend>
+      <div class="row">
+        <label>Players</label>
+        <div class="seg" id="players">
+          <button type="button" data-n="2" aria-pressed="true">2</button>
+          <button type="button" data-n="3" aria-pressed="false">3</button>
+          <button type="button" data-n="4" aria-pressed="false">4</button>
+        </div>
+      </div>
+      <div class="row" id="characters"></div>
+      <div class="row">
+        <label>Ascension</label>
+        <div id="ascension"></div>
+      </div>
+      <p class="hint">Lobby order matters, with P1 being whoever joins first. Swapping who joins
+        first swaps their offers. Characters are needed for anything about Acts 2&ndash;3.</p>
+      <p class="hint" id="ascensionHint"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Act 1 map</legend>
+      <div class="row">
+        <label>Which map</label>
+        <div id="act1"></div>
+      </div>
+      <p class="hint">Rolled on its own RNG, separate from everything else, so narrowing to one
+        map costs almost nothing as it is the first thing each seed is tested against.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Neow (Act 1)</legend>
+      <div class="row">
+        <label>Offers this relic</label>
+        <button type="button" class="relic-field" id="neowRelic" data-slug="">
+          <span class="icon mono">?</span>
+          <span class="name">Any relic</span>
+          <span class="clear" data-clear="1" title="Clear">&times;</span>
+        </button>
+      </div>
+      <!-- Which branch a relic comes from is decided by the relic, not by the user: Neow's
+           curse and positive pools share no relic. So this states the fact rather than
+           offering a choice that could only agree or error. -->
+      <p class="branch" id="neowBranch" hidden></p>
+      <div class="row">
+        <label>Who must get it</label>
+        <div id="require"></div>
+      </div>
+    </fieldset>
+
+    <!-- Directly under Neow: the Ancients are the same kind of thing one act later, and each
+         act's relic offer reads in order down the column. -->
+    <fieldset>
+      <legend>Ancients (Acts 2 &amp; 3)</legend>
+      <div id="ancients"></div>
+      <button type="button" class="icon-btn" id="addAncient" style="width:100%">+ Add a requirement</button>
+      <p class="hint" id="ancientHint">Pick a character for every player to enable these.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Fight card rewards</legend>
+      <div id="cards"></div>
+      <p class="hint" id="cardHint"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Shop relic (third slot)</legend>
+      <div id="shops"></div>
+      <p class="hint" id="shopHint"></p>
+    </fieldset>
+
+    <!-- Run-level, so no player column: the chest is a shared pick and the party decides who
+         takes what. One chest per act, at a map row no route can avoid. -->
+    <fieldset>
+      <legend>Treasure chest</legend>
+      <div id="chests"></div>
+      <button type="button" class="icon-btn" id="addChest" style="width:100%">+ Add a relic</button>
+      <p class="hint" id="chestHint"></p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Bosses</legend>
+      <div id="bosses"></div>
+      <button type="button" class="icon-btn" id="addBoss" style="width:100%">+ Add a boss</button>
+      <p class="hint warn" id="bossWarn" hidden></p>
+      <p class="hint" id="bossHint">Pick a character for every player to enable these.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Events</legend>
+      <div id="events"></div>
+      <button type="button" class="icon-btn" id="addEvent" style="width:100%">+ Add an event</button>
+      <p class="hint" id="eventHint">Pick a character for every player to enable these.</p>
+    </fieldset>
+
+  </form>
+
+  <main class="results">
+    <!-- Scan settings and Inspect share the top row: both are about running a search rather
+         than describing one, and keeping them out of the criteria column leaves that column
+         free to grow. -->
+    <div class="top-bar">
+      <div class="scan-bar">
+        <div class="row">
+          <label for="results">Stop after</label>
+          <input type="number" id="results" value="25" min="1" max="500">
+        </div>
+        <div class="row">
+          <label for="count">Seeds to scan</label>
+          <input type="number" id="count" value="5000000" min="1000" step="1000">
+        </div>
+        <div class="row">
+          <label for="start">Start index</label>
+          <input type="text" id="start" placeholder="random">
+        </div>
+        <!-- Outside the form, so `form="form"` is what still fires its submit handler and
+             keeps the Enter key working from the criteria fields. -->
+        <button type="submit" form="form" class="primary" id="go">Search</button>
+        <button type="button" class="icon-btn" id="clear"
+                title="Reset every criterion, the scan settings and the results">Clear</button>
+      </div>
+      <div class="inspect-bar">
+        <label for="inspectSeed">Already have a seed?</label>
+        <input type="text" id="inspectSeed" placeholder="paste a seed, e.g. 1EMQY13NZN03" maxlength="14">
+        <button type="button" class="icon-btn" id="inspectGo">Inspect</button>
+        <!-- Pulls the seed out of the run you are currently playing, along with the party and
+             ascension the breakdown needs to say anything past Neow. -->
+        <button type="button" class="icon-btn" id="fromRun" title="Read the seed of the run you are playing">From my current run</button>
+      </div>
+    </div>
+    <!-- Only ever shown when the installed game's logic differs from the build this checkout
+         was verified against, or when mods are installed. Both make results wrong in a way
+         that otherwise looks entirely fine. -->
+    <div class="alert" id="drift" hidden></div>
+    <div class="status-bar" id="status"></div>
+    <div id="out">
+      <div class="empty">
+        Set what you want, then hit <b>Search</b>.<br>
+        Or paste a seed above to look at just that one.
+      </div>
+    </div>
+  </main>
+</div>
+
+<footer class="disclaimer">
+  <b>Unofficial fan project.</b>
+  Not affiliated with, endorsed by, or sponsored by Mega Crit.
+  <i>Slay the Spire 2</i>, its artwork and its trademarks are the property of Mega Crit.
+  Relic, card and event art and descriptions are read from your own installed copy of the game at
+  runtime; none of it is distributed with this tool.
+</footer>
+
+<dialog class="picker" id="picker">
+  <div class="picker-head">
+    <div class="picker-title-row">
+      <h2 id="pickerTitle">Choose a relic</h2>
+      <button type="button" class="picker-close" id="pickerClose" aria-label="Close" title="Close">&times;</button>
+    </div>
+    <input type="text" id="pickerSearch" placeholder="Search&hellip;">
+  </div>
+  <div class="picker-body" id="pickerBody"></div>
+</dialog>
+
+<!-- One shared tooltip, moved next to whatever is hovered. It has to live inside the dialog
+     while that is open: showModal() promotes the dialog to the browser's top layer, which no
+     z-index outside it can reach. -->
+<div class="tip" id="tip" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>

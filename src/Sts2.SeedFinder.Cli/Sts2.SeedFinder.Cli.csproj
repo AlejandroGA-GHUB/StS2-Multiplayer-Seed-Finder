@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Sts2.SeedFinder.Cli</RootNamespace>
+    <AssemblyName>sts2seed</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sts2.SeedFinder.Core\Sts2.SeedFinder.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    The recorded baseline travels with the exe: both the CLI and the web app read it from
+    AppContext.BaseDirectory, and `accept` writes it back. Kept at the repo root so a human
+    bumping it after a repair edits one obvious file.
+  -->
+  <ItemGroup>
+    <None Include="../../baselines/verified-build.json" Link="verified-build.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../baselines/method-snapshots.json" Link="method-snapshots.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ICSharpCode.Decompiler" Version="10.1.1.8388" />
+  </ItemGroup>
+
+</Project>

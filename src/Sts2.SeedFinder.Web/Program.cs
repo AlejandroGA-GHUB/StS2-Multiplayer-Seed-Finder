@@ -1,0 +1,395 @@
+using System.Text;
+using System.Text.Json;
+using Sts2.SeedFinder.Core;
+using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Ancients;
+using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Neow;
+using Sts2.SeedFinder.Core.Saves;
+using Sts2.SeedFinder.Web;
+using Sts2.SeedFinder.Web.Assets;
+using Sts2.SeedFinder.Core.Install;
+
+// One-time export: decode every relic icon out of a local game install into a folder, so a
+// deployed instance can serve art with the `bundled` provider and no game present.
+// Read docs/web_app_specs.md section 4 before publishing the output anywhere.
+if (args is [var flag, var target, ..] && flag is "--export-assets")
+    return await AssetExport.RunAsync(target, args.Skip(2).FirstOrDefault());
+
+// Anchor the content root to the exe rather than the working directory. The default is
+// wherever you happened to launch from, which means the UI serves from `dotnet run` (that
+// sets the working directory to the project folder) and 404s from every other entry point.
+// The csproj copies wwwroot into the output directory to make this hold.
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
+});
+
+// Pin the port so the address in the README is always the address you get. Without this the
+// framework default (5000) applies, which is also whatever else on the machine grabbed it
+// first. ASPNETCORE_URLS and --urls still win, so this is a default rather than a decree.
+if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"))
+    && string.IsNullOrEmpty(builder.Configuration["urls"]))
+{
+    builder.WebHost.UseUrls("http://localhost:5173");
+}
+
+builder.Services.AddSingleton(AssetProviderFactory.Create(builder.Configuration));
+var app = builder.Build();
+
+// Serve the page ourselves so its links to app.js / app.css can carry a stamp of when those
+// files last changed.
+//
+// Cache-Control alone is not enough to fix this. A browser that cached app.js *before* this
+// app started sending cache headers applies its own heuristic freshness and will not even ask
+// the server, so an update arrives as new HTML wired to old script and styling — which looks
+// like the update half-landed rather than like a caching problem. A stamped URL is a different
+// URL, so a changed file can never be answered from the cache of the old one.
+app.Use(async (ctx, next) =>
+{
+    var root = app.Environment.WebRootPath;
+    var index = root is null ? null : Path.Combine(root, "index.html");
+
+    if (ctx.Request.Path != "/" && ctx.Request.Path != "/index.html"
+        || index is null || !File.Exists(index))
+    {
+        await next();
+        return;
+    }
+
+    long stamp = 0;
+    foreach (var name in (string[])["app.js", "app.css"])
+    {
+        var path = Path.Combine(root!, name);
+        if (File.Exists(path)) stamp = Math.Max(stamp, File.GetLastWriteTimeUtc(path).Ticks);
+    }
+    var v = stamp.ToString("x");
+
+    var html = (await File.ReadAllTextAsync(index, ctx.RequestAborted))
+        .Replace("\"app.js\"", $"\"app.js?v={v}\"")
+        .Replace("\"app.css\"", $"\"app.css?v={v}\"");
+
+    ctx.Response.Headers.CacheControl = "no-store";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(html, ctx.RequestAborted);
+});
+
+app.UseDefaultFiles();
+
+// Make the browser revalidate the UI files on every load. Without this it caches app.js
+// heuristically, and a rebuilt or updated copy silently keeps running the old one — a
+// confusing failure, since the server is serving the new file the whole time. "no-cache"
+// still returns 304 when nothing changed, so this costs a conditional request, not a
+// download.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
+});
+
+// Decode the icons up front rather than on first paint, when the browser asks for sixty at once.
+if (app.Services.GetRequiredService<IGameAssetProvider>() is LocalGameAssetProvider local)
+    local.WarmCache(app.Lifetime.ApplicationStopping);
+
+// Predictions are computed for one game build. A patch can resize the content pools, pool size
+// sets how many draws each shuffle costs, and every draw after that lands somewhere else — so
+// the output stays plausible and stops being true. Silence is the worst outcome here, because
+// art and descriptions keep updating from the user's install and a stale build looks healthy.
+var installDir = GameInstall.Find(app.Configuration["Assets:GameDirectory"]);
+var release = GameInstall.ReadRelease(installDir);
+var verified = VerifiedBuild.Load();
+var drift = DriftReport.For(release, verified);
+var GameVersion = release.Version ?? verified.Version;
+var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+// ---- Catalog: everything the UI needs to build its pickers, in one request ----------------
+
+app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
+{
+    string? Describe(string slug) => assets.TryGetText(slug)?.Description;
+
+    RelicDto Neow(NeowRelic r, string group) => new(
+        r.Slug, r.Name, group, RelicNotes.For(r),
+        assets.AvailableSlugs.Contains(r.Slug), Describe(r.Slug));
+
+    var ancients = Enum.GetValues<Ancient>().Select(a => new AncientDto(
+        a.ToString(),
+        a.ToString(),
+        RelicNotes.ActsFor(a),
+        RelicNotes.IsSeedDetermined(a),
+        RelicNotes.DeckNoteFor(a),
+        AncientOffers.AllRelics(a)
+            .Select(r => new RelicDto(
+                AncientOffers.Slug(r), AncientOffers.Display(r), a.ToString(),
+                RelicNotes.ForAncientRelic(a, r),
+                assets.AvailableSlugs.Contains(AncientOffers.Slug(r)),
+                Describe(AncientOffers.Slug(r))))
+            .OrderBy(r => r.Name).ToArray()))
+        .ToArray();
+
+    // Bosses and events, grouped so the pickers can show which Act 1 map each belongs to.
+    // Nothing about these is per-player: one boss and one event order serve the whole lobby.
+    // `text` is supplied for events only. Where the install has a title it wins over our
+    // name-splitter, which is the same call cards make: splitting on capitals gets "Doors Of
+    // Light And Dark" and "Welcome To Wongos", where the game says "Doors of Light and Dark"
+    // and "Welcome to Wongo's".
+    static ActThingDto[] Group(
+        IEnumerable<(string TypeName, string Map)> pool,
+        Func<string, AssetText?>? text = null) =>
+        pool.GroupBy(x => x.TypeName)
+            .Select(g =>
+            {
+                var slug = ActCatalog.Slug(g.Key);
+                var loc = text?.Invoke(slug);
+                return new ActThingDto(
+                    slug,
+                    string.IsNullOrWhiteSpace(loc?.Title) ? ActCatalog.Display(g.Key) : loc.Value.Title!,
+                    g.Select(x => x.Map).Distinct().ToArray(),
+                    string.IsNullOrWhiteSpace(loc?.Description) ? null : loc.Value.Description);
+            })
+            .OrderBy(x => x.Name)
+            .ToArray();
+
+    var actContent = ActCatalog.ActNumbers.Select(act => new ActContentDto(
+        act,
+        ActData.ByIndex[act - 1].Select(m => m.Name).ToArray(),
+        Group(ActCatalog.Bosses(act)),
+        Group(ActCatalog.Events(act), assets.TryGetEventText))).ToArray();
+
+    // Singleplayer-only relics can never appear in co-op, so they are never offered as
+    // choices — Silver Crucible in the curse branch and Winged Boots in the positive pool
+    // both gate on Players.Count == 1. Offering them would let a user build a search that
+    // cannot match by construction.
+    static bool InCoop(NeowRelic r) => r.Availability != RelicAvailability.SingleplayerOnly;
+
+    // One pool per character, because the card a player can be offered depends entirely on who
+    // they picked. The game's own title is preferred over our name-splitter wherever the
+    // install has one, since a few cards do not split on capitals the way a reader expects.
+    //
+    // The WHOLE reward pool, rares included. Rares used to be omitted because the only card
+    // feature was the first fight, which can never roll one — but fight 2 can, so hiding them
+    // here would make a reachable search unexpressible. The picker greys them out while the row
+    // is still on fight 1, which is the same information without the dead end.
+    var cardPools = CardCatalog.Characters.Select(c => new CardPoolDto(
+        c.ToString(),
+        CardCatalog.Offerable(c).Select(card =>
+        {
+            var slug = CardCatalog.Slug(card.TypeName);
+            var text = assets.TryGetCardText(slug);
+            return new CardDto(
+                slug,
+                text?.Title ?? CardCatalog.Display(card.TypeName),
+                card.Rarity.ToString(),
+                assets.AvailableCardSlugs.Contains(slug),
+                text?.Description);
+        }).ToArray())).ToArray();
+
+    // Shop relics share the relic art and text tables with Neow's, so they need no new asset
+    // path. The game's own title wins over our name-splitter, which loses apostrophes.
+    var shopRelics = ShopRelics.All.Select(r =>
+    {
+        var text = assets.TryGetText(r.Slug);
+        return new ShopRelicDto(
+            r.Slug,
+            text?.Title ?? ShopRelics.Display(r.Slug),
+            ShopRelics.OwnerOf(r.Slug)?.ToString(),
+            assets.AvailableSlugs.Contains(r.Slug),
+            text?.Description);
+    }).ToArray();
+
+    // Chest relics are the shared pool's Common/Uncommon/Rare entries. No Character field: a
+    // chest draws from the shared bag only, so nobody's own relic can reach one.
+    var chestRelics = ChestRelics.All.Select(r =>
+    {
+        var text = assets.TryGetText(r.Slug);
+        return new ChestRelicDto(
+            r.Slug,
+            text?.Title ?? ChestRelics.Display(r.Slug),
+            r.Rarity,
+            assets.AvailableSlugs.Contains(r.Slug),
+            text?.Description);
+    }).ToArray();
+
+    return Results.Json(new CatalogDto(
+        GameVersion,
+        drift.Warn ? drift.Message : null,
+        assets.Kind.ToString().ToLowerInvariant(),
+        assets.Status,
+        NeowRelics.Curses.Where(InCoop).Select(r => Neow(r, "curse")).ToArray(),
+        NeowRelics.Positives.Where(InCoop).Select(r => Neow(r, "positive")).ToArray(),
+        NeowRelics.CoinFlips.Where(InCoop).Select(r => Neow(r, "coinflip")).ToArray(),
+        ancients,
+        // The slug is just the lowercased enum name, which is what the game names its
+        // character-select art by, so no mapping table is needed.
+        Enum.GetNames<Character>()
+            .Select(n => new CharacterDto(n, n.ToLowerInvariant(),
+                assets.AvailableCharacterSlugs.Contains(n.ToLowerInvariant())))
+            .ToArray(),
+        ActData.ByIndex[0].Select(a => a.Name).ToArray(),
+        actContent,
+        cardPools,
+        shopRelics,
+        chestRelics,
+        // Lowercased, which is both what /api/asset/ancient serves by and what the UI keys on.
+        assets.AvailableAncientSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
+        // Events carry their art the same way: a flat list rather than a flag on each event,
+        // since an event appears once per act it can turn up in and the art does not.
+        assets.AvailableEventSlugs.Select(s => s.ToLowerInvariant()).ToArray()), json);
+});
+
+// ---- The player's own profile --------------------------------------------------------------
+
+// Reads progress.save so a search can be run against the account's real unlock state instead of
+// the fully-unlocked guess. That guess is right for most players and quietly wrong for new ones:
+// a locked epoch removes relics, a smaller relic bag costs fewer shuffle draws, and every draw
+// after it lands somewhere else. The result is not slightly off, it is a different run.
+//
+// Also reports the run in progress, when there is one, because its lobby is exactly the set of
+// inputs a search needs and would otherwise be retyped.
+app.MapGet("/api/profile", (IConfiguration config) =>
+{
+    var configured = config["Saves:Directory"];
+    var profile = ProfileReader.Read(configured);
+    var run = ProfileReader.CurrentRun(configured);
+
+    if (profile is null)
+    {
+        return Results.Json(new ProfileDto(
+            Found: false,
+            Path: null,
+            SearchedIn: SaveLocations.Roots(configured).ToArray(),
+            OverrideVariable: SaveLocations.OverrideVariable,
+            RevealedEpochs: 0, TotalEpochs: 0, FullyUnlocked: false,
+            DiscoveredActs: [], Lobby: null), json);
+    }
+
+    return Results.Json(new ProfileDto(
+        Found: true,
+        Path: profile.Path,
+        SearchedIn: [],
+        OverrideVariable: SaveLocations.OverrideVariable,
+        RevealedEpochs: profile.RevealedEpochs,
+        TotalEpochs: profile.TotalEpochs,
+        FullyUnlocked: profile.FullyUnlocked,
+        DiscoveredActs: profile.DiscoveredActs.ToArray(),
+        Lobby: run is null ? null : new LobbyDto(
+            run.Seed, run.Characters.ToArray(), run.Ascension, run.IsMultiplayer)), json);
+});
+
+// ---- Relic and card art -------------------------------------------------------------------
+
+app.MapGet("/api/asset/relic/{slug}", async (string slug, IGameAssetProvider assets, CancellationToken ct) =>
+{
+    var img = await assets.TryGetAsync(Path.GetFileNameWithoutExtension(slug), ct);
+    return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
+});
+
+app.MapGet("/api/asset/card/{slug}", async (string slug, IGameAssetProvider assets, CancellationToken ct) =>
+{
+    var img = await assets.TryGetCardAsync(Path.GetFileNameWithoutExtension(slug), ct);
+    return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
+});
+
+app.MapGet("/api/asset/character/{slug}", async (string slug, IGameAssetProvider assets, CancellationToken ct) =>
+{
+    var img = await assets.TryGetCharacterAsync(Path.GetFileNameWithoutExtension(slug), ct);
+    return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
+});
+
+app.MapGet("/api/asset/ancient/{slug}", async (string slug, IGameAssetProvider assets, CancellationToken ct) =>
+{
+    var img = await assets.TryGetAncientAsync(Path.GetFileNameWithoutExtension(slug), ct);
+    return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
+});
+
+app.MapGet("/api/asset/event/{slug}", async (string slug, IGameAssetProvider assets, CancellationToken ct) =>
+{
+    var img = await assets.TryGetEventAsync(Path.GetFileNameWithoutExtension(slug), ct);
+    return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
+});
+
+// ---- Inspect a single seed ---------------------------------------------------------------
+
+app.MapGet("/api/explain", (HttpContext http, IConfiguration config, string seed, int players, string? characters) =>
+{
+    var canonical = SeedCodec.Canonicalize(seed);
+    if (!SeedCodec.IsValid(canonical))
+        return Results.BadRequest(new { error = $"'{seed}' is not a valid seed. Allowed characters: {SeedCodec.Alphabet}" });
+
+    try
+    {
+        return Results.Json(Predictions.Describe(
+            canonical, players, Query.Characters(characters), null, Query.Ascension(http.Request.Query),
+            Query.Unlocks(http.Request.Query, config["Saves:Directory"]),
+            Query.Int(http.Request.Query, "extraChests") ?? 0), json);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
+// ---- Search, streamed --------------------------------------------------------------------
+// Results arrive over Server-Sent Events so a long scan shows progress instead of hanging,
+// and so cancelling actually stops the work rather than just abandoning the response.
+
+app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
+{
+    var q = http.Request.Query;
+    var ct = http.RequestAborted;
+
+    http.Response.Headers.ContentType = "text/event-stream";
+    http.Response.Headers.CacheControl = "no-cache";
+    http.Response.Headers["X-Accel-Buffering"] = "no";
+
+    async Task Send(string evt, object payload)
+    {
+        await http.Response.WriteAsync($"event: {evt}\ndata: {JsonSerializer.Serialize(payload, json)}\n\n", ct);
+        await http.Response.Body.FlushAsync(ct);
+    }
+
+    SearchCriteria criteria;
+    int players;
+    IReadOnlyList<Character> chars;
+    try
+    {
+        (criteria, players, chars) = Query.BuildCriteria(q, config["Saves:Directory"]);
+    }
+    catch (ArgumentException ex)
+    {
+        await Send("error", new { error = ex.Message });
+        return;
+    }
+
+    ulong start = Query.ULong(q, "start") ?? Query.RandomStart();
+    ulong count = Query.ULong(q, "count") ?? 5_000_000;
+    int max = (int)(Query.ULong(q, "results") ?? 25);
+
+    await Send("start", new { start, count, results = max });
+
+    int found = 0;
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        foreach (var hit in SeedSearcher.Search(criteria, start, count, max, ct))
+        {
+            if (ct.IsCancellationRequested) break;
+            found++;
+            await Send("hit", Predictions.Describe(
+                hit.Seed, players, chars, hit, criteria.Ascension, criteria.Unlocks,
+                criteria.ExtraChestPicks));
+        }
+    }
+    catch (OperationCanceledException) { /* client navigated away or hit cancel */ }
+    catch (ArgumentException ex)
+    {
+        await Send("error", new { error = ex.Message });
+        return;
+    }
+
+    if (!ct.IsCancellationRequested)
+        await Send("done", new { found, seconds = sw.Elapsed.TotalSeconds });
+});
+
+app.Run();
+return 0;

@@ -1,0 +1,121 @@
+{
+  "gameVersion": "v0.109.1",
+  "decompilerVersion": "10.1.1.8388",
+  "methods": {
+    "MegaCrit.Sts2.Core.Random.MegaRandom.NextULong": {
+      "key": "MegaCrit.Sts2.Core.Random.MegaRandom.NextULong",
+      "hash": "42D680C36F2A1B24",
+      "lines": 4
+    },
+    "MegaCrit.Sts2.Core.Random.MegaRandom.NextInt": {
+      "key": "MegaCrit.Sts2.Core.Random.MegaRandom.NextInt",
+      "hash": "60CCE884169DC8A7",
+      "lines": 4
+    },
+    "MegaCrit.Sts2.Core.Random.MegaRandom.NextDouble": {
+      "key": "MegaCrit.Sts2.Core.Random.MegaRandom.NextDouble",
+      "hash": "9B35AAB61E02F106",
+      "lines": 6
+    },
+    "MegaCrit.Sts2.Core.Random.Rng.NextInt": {
+      "key": "MegaCrit.Sts2.Core.Random.Rng.NextInt",
+      "hash": "1A82AD2DB3F3F9C3",
+      "lines": 15
+    },
+    "MegaCrit.Sts2.Core.Random.Rng.NextItem": {
+      "key": "MegaCrit.Sts2.Core.Random.Rng.NextItem",
+      "hash": "5915A0B1E3EB04C8",
+      "lines": 13
+    },
+    "MegaCrit.Sts2.Core.Helpers.StringHelper.GetDeterministicHashCode": {
+      "key": "MegaCrit.Sts2.Core.Helpers.StringHelper.GetDeterministicHashCode",
+      "hash": "C86E590A2BB78241",
+      "lines": 17
+    },
+    "MegaCrit.Sts2.Core.Helpers.StringHelper.Slugify": {
+      "key": "MegaCrit.Sts2.Core.Helpers.StringHelper.Slugify",
+      "hash": "46C4D317DE1F0D88",
+      "lines": 6
+    },
+    "MegaCrit.Sts2.Core.Extensions.ListExtensions.UnstableShuffle": {
+      "key": "MegaCrit.Sts2.Core.Extensions.ListExtensions.UnstableShuffle",
+      "hash": "FFA90FCC8176A03B",
+      "lines": 18
+    },
+    "MegaCrit.Sts2.Core.Runs.RunManager.GenerateRooms": {
+      "key": "MegaCrit.Sts2.Core.Runs.RunManager.GenerateRooms",
+      "hash": "CEC52DBD49F64AFD",
+      "lines": 33
+    },
+    "MegaCrit.Sts2.Core.Runs.RunManager.InitializeNewRun": {
+      "key": "MegaCrit.Sts2.Core.Runs.RunManager.InitializeNewRun",
+      "hash": "68FFB068F6B33AA3",
+      "lines": 20
+    },
+    "MegaCrit.Sts2.Core.Models.ActModel.GenerateRooms": {
+      "key": "MegaCrit.Sts2.Core.Models.ActModel.GenerateRooms",
+      "hash": "2D177A551B95528D",
+      "lines": 81
+    },
+    "MegaCrit.Sts2.Core.Models.ActModel.AddWithoutRepeatingTags": {
+      "key": "MegaCrit.Sts2.Core.Models.ActModel.AddWithoutRepeatingTags",
+      "hash": "0E9573AD99898377",
+      "lines": 19
+    },
+    "MegaCrit.Sts2.Core.Models.ActModel.GetRandomList": {
+      "key": "MegaCrit.Sts2.Core.Models.ActModel.GetRandomList",
+      "hash": "7B36E8178888BC51",
+      "lines": 34
+    },
+    "MegaCrit.Sts2.Core.Runs.RelicGrabBag.Populate": {
+      "key": "MegaCrit.Sts2.Core.Runs.RelicGrabBag.Populate",
+      "hash": "BB405A57F9DAF9CF",
+      "lines": 62
+    },
+    "MegaCrit.Sts2.Core.Helpers.GrabBag\u00601.GrabIndex": {
+      "key": "MegaCrit.Sts2.Core.Helpers.GrabBag\u00601.GrabIndex",
+      "hash": "FA0CF58FB8912D34",
+      "lines": 35
+    },
+    "MegaCrit.Sts2.Core.Helpers.GrabBag\u00601.GrabAndRemove": {
+      "key": "MegaCrit.Sts2.Core.Helpers.GrabBag\u00601.GrabAndRemove",
+      "hash": "0368EC9832E30C22",
+      "lines": 13
+    },
+    "MegaCrit.Sts2.Core.Models.Events.Neow.GenerateInitialOptions": {
+      "key": "MegaCrit.Sts2.Core.Models.Events.Neow.GenerateInitialOptions",
+      "hash": "4BFEF0F04A7B2775",
+      "lines": 113
+    },
+    "MegaCrit.Sts2.Core.Entities.Players.Player.PlayerRng": {
+      "key": "MegaCrit.Sts2.Core.Entities.Players.Player.PlayerRng",
+      "hash": "525ADE25260FFEA6",
+      "lines": 2
+    },
+    "MegaCrit.Sts2.Core.Rewards.RewardsSet.GenerateRewardsFor": {
+      "key": "MegaCrit.Sts2.Core.Rewards.RewardsSet.GenerateRewardsFor",
+      "hash": "C6737EACE36B34D5",
+      "lines": 46
+    },
+    "MegaCrit.Sts2.Core.Factories.CardFactory.CreateForReward": {
+      "key": "MegaCrit.Sts2.Core.Factories.CardFactory.CreateForReward",
+      "hash": "D7492C18101DCE58",
+      "lines": 76
+    },
+    "MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory.PopulateRelicEntries": {
+      "key": "MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory.PopulateRelicEntries",
+      "hash": "CA42F46492A51671",
+      "lines": 16
+    },
+    "MegaCrit.Sts2.Core.Factories.RelicFactory.PullNextRelicFromBack": {
+      "key": "MegaCrit.Sts2.Core.Factories.RelicFactory.PullNextRelicFromBack",
+      "hash": "EFC052FC3618100B",
+      "lines": 20
+    },
+    "MegaCrit.Sts2.Core.Factories.RelicFactory.RollRarity": {
+      "key": "MegaCrit.Sts2.Core.Factories.RelicFactory.RollRarity",
+      "hash": "3B4620BD98F9FC40",
+      "lines": 19
+    }
+  }
+}

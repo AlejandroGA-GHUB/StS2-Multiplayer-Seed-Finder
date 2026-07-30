@@ -1,0 +1,45 @@
+# Build output
+bin/
+obj/
+*.user
+
+# Editor and IDE state. None of these exist today; they are listed so the first one to appear
+# does not get committed by a `git add .`.
+.vs/
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Decompiled game source — NEVER commit this. It is MegaCrit's copyrighted code.
+# Decompile locally with:  ilspycmd -p -o <dir> "<install>\data_sts2_windows_x86_64\sts2.dll"
+sts2src/
+decompiled/
+*.pck
+sts2.dll
+
+# Game art — NEVER commit this either. The web UI's "bundled" asset provider reads from
+# assets/, which the operator populates locally. Extracted icons are cached to a temp dir
+# outside the repo. See docs/web_app_specs.md section 4.
+#
+# The two extension globs are deliberately unscoped. Narrowing them to assets/ would let art
+# through from anywhere else, and the cost of the broad rule is only that a screenshot in one of
+# these formats needs `git add -f`. Wrong in the safe direction.
+assets/
+*.ctex
+*.webp
+
+# Save files, in case one is ever copied in for debugging. These carry a Steam ID and a profile
+# path, so they are personal data as well as game data.
+*.save
+
+# Personal dev notes. The queue and its reasoning are mine; docs/web_app_specs.md is NOT here,
+# because the source comments point at its section 4 for the asset-provenance boundary and a
+# clone needs to be able to read it.
+docs/plan.md
+
+# Local Claude settings. Load-bearing: settings.local.json records approved paths, which include
+# a Steam ID and a home directory.
+.claude/

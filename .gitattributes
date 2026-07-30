@@ -1,0 +1,36 @@
+# Normalise line endings so a contributor on another platform cannot break the launchers.
+#
+# Git's own heuristic decides what is text; everything below only overrides the ENDINGS it
+# checks out with.
+* text=auto
+
+# The .bat launchers must be CRLF in the working tree. cmd.exe tolerates LF unevenly: a LF-only
+# batch file can split a line mid-token and run something other than what it reads as, and the
+# failure looks like a broken script rather than a line-ending problem. These are the files a
+# non-technical user double-clicks, so they are the last place to accept that risk.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts must be LF for the opposite reason: a CRLF #! line makes the interpreter part of
+# the name and the kernel reports "not found". None ship today; this is here so the first one
+# added cannot arrive broken.
+*.sh text eol=lf
+
+# Source and docs are left to `text=auto`, which stores LF and checks out per platform.
+*.cs text
+*.csproj text
+*.sln text eol=crlf
+*.md text
+*.json text
+*.html text
+*.css text
+*.js text
+
+# Binary, so Git never tries to normalise or diff them as text. Nothing here is committed today
+# (see .gitignore) but a stray one must not be corrupted by newline translation.
+*.png binary
+*.webp binary
+*.ctex binary
+*.pck binary
+*.dll binary
+*.save binary

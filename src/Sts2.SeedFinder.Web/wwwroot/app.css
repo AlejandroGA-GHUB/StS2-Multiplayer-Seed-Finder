@@ -1,0 +1,499 @@
+/* Dark theme tokens — see web_app_specs.md section 5. */
+:root {
+  --bg-0: #14131a;
+  --bg-1: #1c1b24;
+  --bg-2: #26242f;
+  --bg-3: #302d3b;
+  --border: #35323f;
+  --text-0: #e8e6ef;
+  --text-1: #a09cb0;
+  --text-2: #6f6b7e;
+  --accent: #d4a24c;
+  --accent-dim: #8a6a31;
+  --curse: #b06a9e;
+  --good: #6ba86b;
+  --warn: #c98a4b;
+  --radius: 6px;
+  --gap: 8px;
+
+  /* Without this the browser draws every native widget it still owns in light mode —
+     number spinners, the <select> popup list, scrollbars — as white boxes on a dark page. */
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+/* The shell is exactly one viewport tall and never scrolls itself: the two panels inside it
+   do. Previously .layout subtracted a hard-coded header height, which was a few pixels short
+   of the real one, so the window scrolled a sliver — putting a second, useless scrollbar
+   immediately right of the one that actually moves through seeds. Measuring with flex instead
+   of guessing means there is only ever one scrollbar on the right. */
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-0);
+  color: var(--text-0);
+  font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- Shell ---------------------------------------------------------------------------- */
+
+header {
+  flex: none;
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--bg-1);
+}
+header h1 { margin: 0; font-size: 17px; letter-spacing: .2px; }
+header h1 span { color: var(--accent); }
+header .meta { color: var(--text-2); font-size: 12px; }
+
+/* min-height:0 lets the grid children shrink below their content and scroll internally;
+   without it they grow to fit and push the scrolling back out to the window. */
+.layout { display: grid; grid-template-columns: 380px 1fr; flex: 1; min-height: 0; }
+
+/* Sits below both columns for the life of the page. `flex: none` for the same reason the credit
+   banner needs it: the body is a flex column whose only growing child is .layout, and without it
+   this would be shrunk away at short viewport heights, which is exactly when a legal notice must
+   not quietly vanish. */
+.disclaimer {
+  flex: none; padding: 8px 20px;
+  background: var(--bg-0); border-top: 1px solid var(--border);
+  color: var(--text-2); font-size: 11px; line-height: 1.5;
+}
+.disclaimer b { color: var(--text-1); font-weight: 600; }
+.criteria { overflow-y: auto; border-right: 1px solid var(--border); padding: 16px; }
+.results { overflow-y: auto; padding: 16px 20px; }
+
+/* ---- Criteria panel ------------------------------------------------------------------- */
+
+/* Panels are drawn as a plain box with the title inside it. A real <legend> straddles the
+   top border and is vertically centred on it using the inherited line-height, which reads as
+   the title floating above the panel. Keeping the element for semantics but taking it out of
+   the border flow gives predictable alignment. */
+fieldset {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0 12px 12px; margin: 0 0 14px; background: var(--bg-1);
+}
+legend {
+  float: left; width: 100%; padding: 0; margin: 0 0 10px;
+  color: var(--accent); font-size: 11px; line-height: 1;
+  text-transform: uppercase; letter-spacing: .8px;
+  border-bottom: 1px solid var(--border);
+  padding-block: 9px 8px;
+}
+/* float:left on a legend leaves the following content beside it without this. */
+legend + * { clear: both; }
+
+label { display: block; margin-bottom: 4px; color: var(--text-1); font-size: 12px; }
+.row { margin-bottom: 10px; }
+.row:last-child { margin-bottom: 0; }
+.hint { color: var(--text-2); font-size: 11.5px; margin-top: 4px; line-height: 1.45; }
+
+/* Credit banner, directly under the header and spanning both columns. `flex: none` because the
+   body is a flex column whose one growing child is .layout — without it this would be a flex
+   item eligible for shrinking and lose its padding at short viewport heights. */
+.credit {
+  flex: none; margin: 0; padding: 9px 20px;
+  background: var(--bg-1); border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--accent-dim);
+  color: var(--text-1); font-size: 12.5px; line-height: 1.5;
+}
+.credit b { color: var(--text-0); font-weight: 600; }
+.credit a { color: var(--accent); text-decoration: none; white-space: nowrap; }
+.credit a:hover { text-decoration: underline; }
+
+/* Which of Neow's three options a relic arrives as. A statement, not a control: the relic
+   decides its own branch. Sized and coloured like .hint so it reads as annotation on the
+   relic field above it rather than as another thing to set. */
+.branch {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  color: var(--text-2); font-size: 11.5px; line-height: 1.45; margin-top: 7px;
+}
+.branch[hidden] { display: none; }
+.branch-tag {
+  flex: none; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .5px;
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1);
+}
+/* The curse branch is the one with a cost attached, so it borrows the colour the result
+   pills already use for curses. */
+.branch.is-curse .branch-tag { border-color: var(--curse); color: #e6b8d8; }
+/* A criterion no seed can satisfy. Said next to the control that caused it, rather than
+   leaving Search to be the thing that explains. */
+.hint.warn { color: var(--warn); }
+
+select, input[type=text], input[type=number] {
+  width: 100%; padding: 7px 8px; background: var(--bg-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+select:hover, input:hover { border-color: var(--bg-3); }
+
+/* Our own <select>. The trigger is styled to match the plain inputs beside it, so the panel
+   reads as one set of controls whichever kind a given row happens to use. */
+.dd {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+  cursor: pointer; text-align: left;
+}
+/* An author `display` beats the UA stylesheet's `[hidden] { display: none }`, so without this
+   every dropdown that hides itself until something is picked stays visible. A native <select>
+   needed no such rule, which is why the fight and shop pickers regressed on being converted. */
+.dd[hidden] { display: none; }
+.dd:hover:not(:disabled) { border-color: var(--bg-3); }
+.dd[aria-expanded=true] { border-color: var(--accent-dim); }
+.dd:disabled { cursor: default; opacity: .5; }
+.dd-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-caret { color: var(--text-2); font-size: 10px; flex: none; }
+
+/* Positioned against the viewport rather than the button, so the scrolling criteria panel
+   cannot clip it. app.js closes the list on scroll, which keeps that honest. */
+/* max-height is a fallback only: app.js measures the space actually available above and
+   below the trigger and sets it per open, because a fixed cap either wastes room or pushes
+   entries off a viewport that does not scroll. */
+.dd-list {
+  position: fixed; z-index: 60; max-height: 60vh; overflow-y: auto; padding: 4px;
+  background: var(--bg-2); border: 1px solid var(--bg-3); border-radius: var(--radius);
+  box-shadow: 0 8px 24px #0009;
+}
+/* Flex rather than block so an option carrying an icon lines its label up with the plain
+   ones. Options without an icon are unaffected. */
+.dd-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+/* The point of the whole component: a highlight from our own palette rather than the
+   system accent the browser paints over a native popup. */
+.dd-opt.is-active { background: var(--bg-3); color: var(--text-0); }
+.dd-opt.is-chosen { color: var(--accent); }
+.dd-opt.is-disabled { color: var(--text-2); cursor: default; }
+.dd-opt.is-disabled.is-active { background: none; }
+.dd-group {
+  padding: 8px 8px 4px; color: var(--text-2); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .6px;
+}
+
+/* The native spinner is a fixed browser widget that no amount of theming reaches. Drop it
+   everywhere: fields you type a big number into are better without one, and the fields that
+   want stepping get .stepper below instead. */
+input[type=number] { appearance: textfield; -moz-appearance: textfield; }
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
+
+/* Our own -/+ control. The border lives on the wrapper so the whole thing reads as one
+   field, the way the plain inputs beside it do. */
+.stepper {
+  display: flex; align-items: stretch; overflow: hidden;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.stepper:hover { border-color: var(--bg-3); }
+.stepper:focus-within { border-color: var(--accent-dim); }
+.stepper input {
+  width: 44px; padding: 7px 0; text-align: center;
+  background: none; border: none; border-radius: 0;
+}
+.stepper input:focus { outline: none; }
+.stepper input:hover { border: none; }
+.stepper .step {
+  width: 30px; padding: 0; flex: none; cursor: pointer;
+  background: var(--bg-3); border: none; color: var(--text-1);
+  font-size: 15px; line-height: 1;
+}
+.stepper .step:hover:not(:disabled) { background: var(--accent-dim); color: var(--text-0); }
+.stepper .step:disabled { color: var(--text-2); cursor: default; }
+
+.seg { display: flex; gap: 4px; }
+.seg button {
+  flex: 1; padding: 7px 0; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer; color: var(--text-1);
+}
+.seg button[aria-pressed=true] { background: var(--accent-dim); border-color: var(--accent); color: #fff; }
+
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
+
+/* Relic selector button, shows current pick as icon + name */
+.relic-field {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 8px; cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius); text-align: left;
+}
+.relic-field:hover { border-color: var(--accent-dim); }
+.relic-field .name { flex: 1; }
+.relic-field .clear { color: var(--text-2); padding: 0 4px; }
+.relic-field .clear:hover { color: var(--text-0); }
+.relic-field:disabled { cursor: default; opacity: .5; }
+.relic-field:disabled:hover { border-color: var(--border); }
+
+.icon { width: 28px; height: 28px; border-radius: 4px; flex: none; object-fit: contain; background: var(--bg-3); }
+/* Relic icons are square and drawn to fit their box. Card portraits are wide paintings and
+   character portraits are tall ones, so `contain` would letterbox either down to a couple of
+   legible pixels; crop instead. Characters are pulled up because the art is head-and-shoulders
+   and a centred square crop cuts the face. */
+.icon.is-card { object-fit: cover; }
+.icon.is-character { object-fit: cover; object-position: 50% 22%; }
+/* Event art arrives already cropped to a square around its subject — the server picks that
+   window per event, because these are 2.1:1 scenes with no consistent place the subject sits.
+   So `cover` here is only guarding against a future non-square one. */
+.icon.is-event { object-fit: cover; }
+
+/* Map-node art is a white silhouette with an alpha channel, not coloured artwork — the game
+   tints it at runtime. Drawn as-is it is a flat white blob, so use it as a mask and paint the
+   colour ourselves, per Ancient, off the same hue the monograms use. */
+.icon.is-ancient-mask {
+  mask: var(--art) center / contain no-repeat;
+  -webkit-mask: var(--art) center / contain no-repeat;
+  background: var(--tint); border-radius: 0;
+}
+.icon.mono {
+  display: grid; place-items: center; font-size: 11px; font-weight: 600; color: #0007;
+  text-transform: uppercase;
+}
+/* "Any relic". Monograms are tinted per relic and use dark text for contrast on them; this
+   one is deliberately outside that scheme, because it stands for no relic at all. */
+.icon.mono.is-any { background: var(--bg-3); color: var(--text-1); font-size: 16px; font-weight: 500; }
+.relic-field:hover .is-any { color: var(--text-0); }
+
+/* Which Ancient, then its remove button, then everything else on its own full-width line.
+   The relic field carries a 28px icon and a full relic name, so it cannot share a line with
+   the Ancient dropdown inside a 380px sidebar without one of them truncating. */
+.ancient-row {
+  display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;
+  margin-bottom: 8px; padding: 8px; background: var(--bg-0);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.ancient-row .span, .ancient-row .note { grid-column: 1 / -1; }
+.ancient-row .note { margin-top: 1px; }
+
+/* "Within the first [n]" reads as one sentence, so the label and the box sit on one line
+   and the box is only as wide as a two-digit number needs. */
+.within { display: flex; align-items: center; gap: 8px; }
+.within label { margin: 0; white-space: nowrap; }
+.icon-btn {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+  cursor: pointer; padding: 7px 10px; color: var(--text-1);
+}
+.icon-btn:hover { border-color: var(--accent-dim); color: var(--text-0); }
+
+.primary {
+  width: 100%; padding: 10px; margin-top: 4px; cursor: pointer; font-weight: 600;
+  background: var(--accent); color: #201a0c; border: none; border-radius: var(--radius);
+}
+.primary:hover { filter: brightness(1.08); }
+.primary:disabled { background: var(--bg-3); color: var(--text-2); cursor: default; filter: none; }
+.danger { background: #7d3a3a; color: #fff; }
+
+/* ---- Results -------------------------------------------------------------------------- */
+
+/* Scan settings on the left, Inspect on the right. Both belong to running a search rather
+   than describing one, so they sit above the results instead of at the foot of the criteria
+   column, which needs its height for the growing list of things you can ask for. */
+.top-bar {
+  display: flex; align-items: flex-end; gap: 22px; flex-wrap: wrap;
+  margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.scan-bar { display: flex; align-items: flex-end; gap: 12px; }
+.scan-bar .row { margin-bottom: 0; }
+.scan-bar label { margin-bottom: 4px; white-space: nowrap; }
+.scan-bar input { width: 118px; }
+/* .primary is full-width by default, for the foot of the criteria column it used to live in. */
+.scan-bar .primary { width: auto; margin-top: 0; padding: 8px 26px; }
+/* Matches Search's height so the pair sits on one baseline, but stays a secondary control: it
+   throws work away, and should not compete with the button that starts it. One pixel less
+   padding than .primary's 8px, because this one also carries a 1px border. */
+.scan-bar .icon-btn { padding: 7px 16px; }
+.scan-bar .row:last-child input {
+  width: 150px; font-family: ui-monospace, Consolas, monospace;
+}
+
+/* Pushed to the far end so the two groups read as separate jobs rather than one long form. */
+.inspect-bar { display: flex; align-items: flex-end; gap: 9px; margin-left: auto; }
+.inspect-bar label { margin-bottom: 4px; white-space: nowrap; }
+.inspect-bar input {
+  width: 240px; font-family: ui-monospace, Consolas, monospace; letter-spacing: 1px; text-transform: uppercase;
+}
+
+/* Reserved for the two things that silently invalidate every prediction: a game build we have
+   not verified against, and mods. Loud on purpose, and absent the rest of the time. */
+.alert {
+  border: 1px solid #7d5a3a; border-left-width: 3px; border-radius: var(--radius);
+  background: rgba(125, 90, 58, .16); color: var(--text-0);
+  padding: 9px 12px; margin-bottom: 12px; font-size: 12.5px; line-height: 1.5;
+}
+.alert[hidden] { display: none; }
+.alert div + div { margin-top: 6px; }
+
+/* Narrow enough that the relic field beside it keeps most of the row. */
+.visit { width: 104px; flex: none; }
+/* Both rows stack — label, then the relic or card field, then the narrowing dropdown under it.
+   The shop row used to be a flex line with its visit box beside the field, which made the two
+   panels read as different kinds of control when they are the same shape of question. */
+#cards .visit, #shops .visit { margin-top: 6px; }
+
+.status-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; color: var(--text-1); font-size: 13px; min-height: 20px; }
+.spinner {
+  width: 13px; height: 13px; border: 2px solid var(--bg-3); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+.empty { color: var(--text-2); text-align: center; padding: 60px 20px; line-height: 1.7; }
+.empty code { background: var(--bg-2); padding: 2px 5px; border-radius: 3px; color: var(--text-1); }
+
+.hit { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-1); margin-bottom: 14px; }
+.hit-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
+}
+.seed { font-family: ui-monospace, Consolas, monospace; font-size: 16px; letter-spacing: 1.5px; color: var(--accent); }
+.copy { margin-left: auto; }
+
+.act { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.act:last-child { border-bottom: none; }
+.act-head { color: var(--text-1); font-size: 12px; margin-bottom: 8px; }
+.act-head b { color: var(--text-0); font-weight: 600; }
+
+/* The Ancient's icon sits inline in the header, so the line has to align on its centre rather
+   than the text baseline or the icon drags the row's height around. */
+.act-head-line { display: inline-flex; align-items: center; gap: 4px; }
+.act-head-line .icon { flex: none; }
+
+.slot { display: grid; grid-template-columns: 34px 1fr; gap: 8px; margin-bottom: 7px; }
+.slot.is-fight { grid-template-columns: 64px 1fr; }
+.slot-label { color: var(--text-2); font-size: 12px; padding-top: 5px; }
+.offer { display: flex; flex-wrap: wrap; gap: 5px; }
+
+/* A second set of per-player rows inside one act, for the first fight's reward. Indented and
+   ruled so it reads as part of Act 1 rather than as another act. */
+.sub { margin: 10px 0 2px; padding-left: 10px; border-left: 2px solid var(--bg-3); }
+.sub-head {
+  color: var(--text-2); font-size: 11px; text-transform: uppercase; letter-spacing: .7px;
+  margin-bottom: 6px;
+}
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 4px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 999px; font-size: 12.5px;
+}
+.pill .icon { width: 20px; height: 20px; }
+.pill.is-curse { border-color: var(--curse); color: #e6b8d8; }
+.pill.is-match { border-color: var(--accent); background: #3a2f18; }
+
+/* Events have no art, so the pill closes up on the left and carries its queue position
+   instead of an icon. The number is the point: it says how far down the order this is. */
+.pill.is-event { padding-left: 4px; }
+.pill .ord {
+  min-width: 18px; padding: 1px 4px; border-radius: 999px; text-align: center;
+  background: var(--bg-3); color: var(--text-2); font-size: 11px;
+}
+.pill.is-match .ord { color: var(--text-0); }
+
+/* The potion is not an item we can name, only a yes: the roll that decides it is the same one
+   that shifts the card draws, so it earns a place beside them but not an icon. */
+.pill.is-potion { color: var(--text-2); border-style: dashed; padding-left: 9px; }
+
+details.branches { margin-top: 2px; }
+details.branches > summary { cursor: pointer; color: var(--warn); font-size: 12px; list-style: none; }
+/* The deck-dependent branches use the warning colour because they are a caveat. The event
+   order is not one, it is just folded away, so it stays quiet. */
+details.branches.is-order > summary { color: var(--text-2); }
+details.branches.is-order > .offer { margin-top: 6px; }
+details.branches > summary::before { content: "▸ "; }
+details.branches[open] > summary::before { content: "▾ "; }
+.branch { margin: 6px 0 0 12px; }
+.branch .cond { color: var(--text-2); font-size: 11.5px; margin-bottom: 3px; }
+
+/* ---- Relic picker modal --------------------------------------------------------------- */
+
+dialog.picker {
+  width: min(680px, 92vw); max-height: 82vh; padding: 0; color: var(--text-0);
+  background: var(--bg-1); border: 1px solid var(--accent-dim); border-radius: 10px;
+}
+dialog::backdrop { background: #0009; }
+.picker-head { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.picker-title-row { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.picker-head h2 { margin: 0; font-size: 14px; flex: 1; }
+.picker-close {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text-1); cursor: pointer; font-size: 18px; line-height: 1; padding: 3px 10px 5px;
+}
+.picker-close:hover { border-color: var(--accent); color: var(--text-0); }
+.picker-body { overflow-y: auto; max-height: 60vh; padding: 12px 14px; }
+.group-title {
+  color: var(--accent); font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+  margin: 12px 0 7px;
+}
+.group-title:first-child { margin-top: 0; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.tile {
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px; cursor: pointer; text-align: left;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.tile:hover, .tile:focus-visible { border-color: var(--accent); background: var(--bg-3); }
+.tile .label { flex: 1; min-width: 0; }
+.tile .label b { display: block; font-weight: 500; font-size: 12.5px; }
+.tile .label small { color: var(--text-2); font-size: 10.5px; }
+
+.err { color: #e08b8b; background: #3a2020; border: 1px solid #6b3434; padding: 9px 12px; border-radius: var(--radius); margin-bottom: 12px; }
+
+/* ---- Tooltip -------------------------------------------------------------------------- */
+/* Fixed-position and script-placed. It gets reparented into the picker while that dialog is
+   open, because showModal() puts the dialog in the browser's top layer and nothing outside
+   that layer can be stacked above it — no z-index reaches. */
+.tip {
+  position: fixed; z-index: 50; max-width: 300px; pointer-events: none;
+  background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: var(--radius);
+  padding: 9px 11px; box-shadow: 0 8px 22px rgb(0 0 0 / .55);
+  font-size: 12.5px; line-height: 1.5;
+}
+.tip[hidden] { display: none; }
+.tip b { display: block; margin-bottom: 4px; font-weight: 600; }
+/* `pre-line` because event text is written as paragraphs and relies on its own line breaks —
+   without it a whole event arrival reads as one run-on blob. Spaces still collapse and lines
+   still wrap, so only the newlines the game wrote are honoured. */
+.tip-body { color: var(--text-1); white-space: pre-line; }
+.tip-note { margin-top: 6px; color: var(--text-2); font-size: 11.5px; }
+
+/* The game's own emphasis colours, kept recognisable rather than literal. */
+.mk-gold { color: var(--accent); }
+.mk-blue { color: #7fb2e8; }
+.mk-red { color: #d97b7b; }
+.mk-purple { color: #b98fd8; }
+.mk-green { color: var(--good); }
+.mk-shake { font-style: italic; }
+.mk-orange { color: #dd9a5c; }
+.mk-aqua { color: #6fc7c1; }
+.mk-b { font-weight: 600; color: var(--text-0); }
+/* The game animates this one through the spectrum. A static warm gold is the honest still. */
+.mk-rainbow { color: #d8a657; }
+
+/* ---- Scrollbars ----------------------------------------------------------------------- */
+/* The stock Windows scrollbar is a light grey slab that reads as a piece of another
+   application sitting on top of a dark page. These are the same width and drag the same way,
+   just drawn in the page's own palette.
+
+   Two mechanisms, because no single one is portable: Firefox takes `scrollbar-width` and
+   `scrollbar-color`, everything Chromium and WebKit takes the ::-webkit-scrollbar parts.
+   Declaring both means neither browser falls back to the OS look. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-3) transparent;
+}
+
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-3);
+  border-radius: 999px;
+  /* A transparent border plus padding-box clipping insets the thumb without needing to know
+     what colour the track sits on — which varies between the sidebar, the results and the
+     picker. */
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #454152; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:active { background: var(--accent-dim); background-clip: padding-box; }
