@@ -172,7 +172,7 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
 ### Finding the player's files, for people who are not this user
 Two separate lookups, both needed for an open-source release and both with an override:
 
-- **Install** (art, descriptions, version) — `Web/Assets/GameInstall.cs`. Steam lets users put
+- **Install** (art, descriptions, version) — `Core/Install/GameInstall.cs`. Steam lets users put
   games on any drive, so this reads `libraryfolders.vdf` and the registry rather than guessing.
   Override: `Assets:GameDirectory`.
 - **Saves** (unlock state, run in progress, history) — `Core/Saves/SaveLocations.cs`. Godot's

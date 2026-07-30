@@ -24,10 +24,16 @@ sts2.dll
 # assets/, which the operator populates locally. Extracted icons are cached to a temp dir
 # outside the repo. See docs/web_app_specs.md section 4.
 #
-# The two extension globs are deliberately unscoped. Narrowing them to assets/ would let art
-# through from anywhere else, and the cost of the broad rule is only that a screenshot in one of
-# these formats needs `git add -f`. Wrong in the safe direction.
-assets/
+# LEADING SLASH IS LOAD-BEARING. Written unanchored, this rule matches a folder called assets at
+# ANY depth, and Git on Windows defaults to core.ignorecase=true, so it also matched
+# src/Sts2.SeedFinder.Web/Assets/ — nine C# source files silently absent from the first push, and
+# a clone that failed to build with three CS0234s naming a namespace that was right there on the
+# author's disk. Anchor it to the one folder that actually holds art.
+/assets/
+
+# The two extension globs are deliberately unscoped, unlike the folder above. Narrowing them to
+# /assets/ would let art through from anywhere else, and the cost of the broad rule is only that a
+# screenshot in one of these formats needs `git add -f`. Wrong in the safe direction.
 *.ctex
 *.webp
 
