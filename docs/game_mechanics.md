@@ -495,6 +495,15 @@ Three properties follow, and they are what make this worth having:
    stock (removed when the shop is POPULATED, not when bought), relic events. Those removals land
    at arbitrary positions, because the shared bag and each player's bag are independent shuffles.
    So `ChestSlot.Candidates` carries the ordered fallbacks and the criterion takes a tolerance.
+
+   **That tolerance is a claim about the RUN, not about a relic** (corrected 2026-08-01). How far
+   the bag had drained by a given chest is one number per rarity, shared by every slot of that
+   rarity in that chest, so two relics named for one chest must be read at the SAME index. Asking
+   each want separately whether its relic appears anywhere in the first n+1 entries accepts pairs
+   that are individually reachable at drain counts which cannot both be true, and therefore can
+   never share a chest. `ChestSlot.At(drained)` takes one index for this reason; there is
+   deliberately no range-scanning helper. The loop over drain counts lives in
+   `SeedSearcher.ChestSatisfies`, one per distinct rarity in the chest.
 2. **A `?` room can become a treasure room.** `UnknownMapPointOdds` rolls Treasure at a 2% base
    that grows 2% each time it is not rolled (reset per act), and that runs `BeginRelicPicking`
    too — a full player-count of draws, shifting every later chest. Hence `--extra-chests`.

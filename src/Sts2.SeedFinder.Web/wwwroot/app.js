@@ -24,15 +24,32 @@ function defaultState() {
   return {
     players: 2, characters: ['Ironclad', 'Silent'], relic: '', act1: 'any', ascension: 0,
     require: 'any', ancients: [], bosses: [], events: [], cards: [], shops: [], chests: [],
+    // Keyed by act, NOT stored on each chest row. How far the shared bag had been drained when
+    // the party reached a chest is one fact about the run, so every relic named for that chest
+    // has to be read at the same drain count. See ChestSatisfies.
+    chestTolerance: {},
     extraChests: 0,
   };
 }
 
 let state = defaultState();
 
-/** Ascension 10 is the only level that changes generation. */
+/**
+ * The two ascension levels a prediction can depend on, and they are not interchangeable.
+ * Ascension 10 is the only one that changes RUN generation, by adding the final act's second
+ * boss. Ascension 7 leaves generation alone and moves the card rarity odds, so it shows up in
+ * rewards from the second fight onward rather than anywhere in the acts.
+ */
 const DOUBLE_BOSS = 10;
+const SCARCITY = 7;
 const MAX_ASCENSION = 10;
+
+/**
+ * How many consecutive fights a card criterion can name. Reported by the catalog rather than
+ * written here, because it is CardRewardGenerator.MaxPredictableFight and the two drifting apart
+ * would show as a picker that lets you ask for something the server then rejects.
+ */
+let MAX_FIGHT = 3;
 
 /** How many bosses an act ends with under the current settings. */
 function bossSlots(act) {
@@ -487,10 +504,34 @@ window.addEventListener('scroll', () => hideTip(), true);
 // ---- Relic picker --------------------------------------------------------------------------
 
 let pickerResolve = null;
+// Set only while a multi-select picker is open. Its presence is what makes closing the dialog
+// COMMIT the picks rather than discard them, which is the behaviour that lets someone name two
+// fights and simply leave.
+let pickerMulti = null;
 
-function openPicker(title, groups, kind = 'relic') {
+/**
+ * Opens the picker.
+ *
+ * Single-select by default: one click resolves with the item and closes. Passing `multi` turns
+ * it into a running list instead, resolving with an array of slugs in click order.
+ *
+ * @param multi `{ max, initial, disableFirst }` or null.
+ *   `disableFirst` is a predicate on an item: true means it cannot be the FIRST pick. Cards use
+ *   it for rares, which fight 1 can never roll, and it has to be re-evaluated on every render
+ *   because taking a pick back changes which fight the remaining ones mean.
+ */
+function openPicker(title, groups, kind = 'relic', multi = null) {
   $('#pickerTitle').textContent = title;
   $('#pickerSearch').value = '';
+
+  pickerMulti = multi ? { ...multi, chosen: [...(multi.initial ?? [])] } : null;
+
+  const hint = $('#pickerHint');
+  hint.hidden = !multi;
+  if (multi) hint.textContent =
+    `Click up to ${multi.max} cards. The first is fight 1, the next fight 2, and so on. `
+    + 'Close this when you have the ones you want.';
+
   render('');
 
   // Must be wired before the return, not after it. `render` is a hoisted function declaration
@@ -521,12 +562,47 @@ function openPicker(title, groups, kind = 'relic') {
         label.appendChild(el('b', null, r.name));
         if (g.sub) label.appendChild(el('small', null, g.sub));
         tile.appendChild(label);
-        tile.onclick = () => { $('#picker').close(); pickerResolve?.(r); pickerResolve = null; };
+
+        if (pickerMulti) {
+          const at = pickerMulti.chosen.indexOf(r.slug);
+          if (at >= 0) {
+            tile.classList.add('is-picked');
+            tile.appendChild(el('span', 'fight-badge', String(at + 1)));
+          }
+          // Disabled only while nothing is chosen: the next pick would be fight 1 then. Once
+          // something holds fight 1 the same card is a legal fight 2 or 3.
+          tile.disabled = at < 0 && pickerMulti.chosen.length === 0
+            && (pickerMulti.disableFirst?.(r) ?? false);
+          tile.onclick = () => toggle(r, filter);
+        } else {
+          tile.onclick = () => { $('#picker').close(); pickerResolve?.(r); pickerResolve = null; };
+        }
         grid.appendChild(withTip(tile, r.slug, r.name, kind));
       }
       body.appendChild(grid);
     }
     if (!body.children.length) body.appendChild(el('div', 'empty', 'Nothing matches that.'));
+  }
+
+  /**
+   * Adds or removes one pick. Order IS the fight number, so removing an earlier one renumbers
+   * everything after it, and reaching the cap closes the dialog rather than making the user
+   * find the close button for a choice they have finished making.
+   */
+  function toggle(item, filter) {
+    const chosen = pickerMulti.chosen;
+    const at = chosen.indexOf(item.slug);
+
+    if (at >= 0) chosen.splice(at, 1);
+    else if (chosen.length < pickerMulti.max) chosen.push(item.slug);
+
+    // Renumbering can push a card that was legal at fight 2 into fight 1, and rares cannot be
+    // there. Dropping it is the only consistent answer: the alternative is refusing a removal
+    // for a reason that happens two rows further down.
+    while (chosen.length && pickerMulti.disableFirst?.(pickerMulti.itemFor?.(chosen[0]))) chosen.shift();
+
+    if (chosen.length >= pickerMulti.max) { $('#picker').close(); return; }
+    render(filter);
   }
 }
 
@@ -534,8 +610,12 @@ $('#picker').addEventListener('close', () => {
   hideTip();
   // Hand the tooltip back to the page, or it goes with the dialog when that hides.
   document.body.appendChild($('#tip'));
-  pickerResolve?.(null);
+  // A multi-select picker COMMITS on close, however it was closed. Escape, the backdrop and the
+  // × all mean "done", because stopping at one or two picks is the ordinary case rather than a
+  // cancellation. Single-select still resolves null, where closing really is a cancel.
+  pickerResolve?.(pickerMulti ? [...pickerMulti.chosen] : null);
   pickerResolve = null;
+  pickerMulti = null;
 });
 $('#pickerClose').onclick = () => $('#picker').close();
 
@@ -581,8 +661,20 @@ $('#updateBtn').onclick = async () => {
   note.hidden = false;
   note.className = 'update-note';
   note.replaceChildren();
+  note.removeAttribute('title');
 
   const say = (text, cls) => { if (cls) note.classList.add(cls); note.append(text); };
+
+  // Dismissable, because the answer is a one-time thing to read and the header is on screen for
+  // the rest of the session. Appended after the text below, so it always sits at the end.
+  const dismiss = () => {
+    const x = el('button', 'update-dismiss', '×');
+    x.type = 'button';
+    x.title = 'Dismiss';
+    x.setAttribute('aria-label', 'Dismiss update result');
+    x.onclick = () => { note.hidden = true; btn.textContent = 'Check for updates'; };
+    note.append(x);
+  };
 
   if (r.status === 'Current') {
     say(`Up to date${r.latest ? ` (${r.latest})` : ''}`, 'ok');
@@ -600,6 +692,8 @@ $('#updateBtn').onclick = async () => {
   } else {
     say(r.message ?? 'Could not check.', 'bad');
   }
+
+  dismiss();
 };
 
 // ---- Relic fields --------------------------------------------------------------------------
@@ -727,52 +821,63 @@ function renderCards() {
 
   for (let i = 0; i < state.players; i++) {
     const pool = cardPoolFor(i);
-    const want = state.cards[i] || (state.cards[i] = { card: '', fight: 1 });
+    const want = state.cards[i] || (state.cards[i] = { picks: [] });
     // Changing character strands whatever was picked for the old one.
-    if (want.card && !pool.some(c => c.slug === want.card)) want.card = '';
+    want.picks = (want.picks ?? []).filter(slug => pool.some(c => c.slug === slug));
 
     const row = el('div', 'row');
     row.appendChild(el('label', null, `P${i + 1} is offered`));
 
     // A slot with no character has no pool to choose from, and saying so beats an empty
     // control that just refuses to open.
-    const field = fillRelicField(
-      newRelicField(), pool.find(c => c.slug === want.card) ?? null,
-      pool.length ? 'Any card' : 'Pick a character first', 'card');
+    const field = el('button', 'relic-field card-field');
+    field.type = 'button';
     field.disabled = pool.length === 0;
+
+    if (!want.picks.length) {
+      field.appendChild(anyIcon(28));
+      field.appendChild(el('span', 'name', pool.length ? 'Any card' : 'Pick a character first'));
+    } else {
+      // One chip per pick, each carrying the fight it stands for. The badge is the whole point
+      // of the multi-select: it replaces what used to be a per-fight dropdown on every row.
+      const list = el('span', 'picks');
+      want.picks.forEach((slug, k) => {
+        const card = pool.find(c => c.slug === slug);
+        const chip = el('span', 'pick');
+        chip.appendChild(el('span', 'fight-badge', String(k + 1)));
+        chip.appendChild(iconFor(slug, card?.name ?? slug, 22, 'card'));
+        chip.appendChild(el('span', null, card?.name ?? slug));
+        list.appendChild(withTip(chip, slug, card?.name ?? slug, 'card'));
+      });
+      field.appendChild(list);
+      const clear = el('span', 'clear', '×');
+      clear.dataset.clear = '1';
+      clear.title = 'Clear';
+      field.appendChild(clear);
+    }
+
     field.onclick = async e => {
-      if (e.target.dataset.clear) { want.card = ''; renderCards(); return; }
-      const picked = await openPicker(`P${i + 1}'s ${state.characters[i]} is offered…`,
+      if (e.target.dataset.clear) { want.picks = []; renderCards(); return; }
+      const picked = await openPicker(
+        `P${i + 1}'s ${state.characters[i]} is offered…`,
         // Grouped by rarity because that is what decides how likely the search is to land:
         // roughly two thirds of draws are Common, so an Uncommon takes noticeably longer.
-        // Rares are listed but disabled on fight 1, which can never roll one — showing them
-        // greyed says "not here" where hiding them would just look like a missing card.
+        // Rares are listed rather than hidden even where they cannot land, since a greyed tile
+        // says "not here" where a missing one just looks like a gap in the pool.
         ['Common', 'Uncommon', 'Rare'].map(r => ({
-          title: r === 'Rare' && want.fight < 2 ? 'Rare (not on fight 1)' : r,
-          items: pool.filter(c => c.rarity === r)
-                     .map(c => r === 'Rare' && want.fight < 2 ? { ...c, disabled: true } : c),
-        })), 'card');
-      if (picked) { want.card = picked.slug; renderCards(); }
+          title: r === 'Rare' ? 'Rare (never on fight 1)' : r,
+          items: pool.filter(c => c.rarity === r),
+        })),
+        'card',
+        {
+          max: MAX_FIGHT,
+          initial: want.picks,
+          itemFor: slug => pool.find(c => c.slug === slug),
+          disableFirst: c => c?.rarity === 'Rare',
+        });
+      if (picked) { want.picks = picked; renderCards(); }
     };
     row.appendChild(field);
-
-    // Which fight. Hidden until a card is chosen, like the shop visit and chest tolerance.
-    // Our own dropdown rather than a <select>, so the open list is themed like the rest of the
-    // panel instead of the browser painting the system accent over it.
-    const fight = dropdown(
-      [{ label: 'Fight 1', value: 1 }, { label: 'Fight 2', value: 2 }],
-      want.fight,
-      v => {
-        want.fight = v;
-        // Dropping back to fight 1 strands a rare, which that fight can never offer.
-        const picked = pool.find(c => c.slug === want.card);
-        if (picked?.rarity === 'Rare' && want.fight < 2) want.card = '';
-        renderCards();
-      });
-    fight.classList.add('visit');
-    fight.title = 'Which fight, counting monster rooms from the start of the run';
-    fight.hidden = !want.card;
-    row.appendChild(fight);
 
     box.appendChild(row);
   }
@@ -781,10 +886,12 @@ function renderCards() {
   // at a time rather than all at once.
   $('#cardHint').textContent = state.characters.some(Boolean)
     ? 'The first room of a run is always a fight, and each player rolls their own reward for it, '
-      + 'so fight 1 needs no assumptions. Fight 2 assumes you walk straight into a second monster '
-      + 'room, with no shop, elite, event or rest between. Fight 1 can never offer a Rare; fight 2 '
-      + 'can. Taking Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll Boxes or Neow’s Bones '
-      + 'draws from the same stream first and shifts both.'
+      + `so fight 1 needs no assumptions. Pick up to ${MAX_FIGHT} cards per player: the first is `
+      + 'fight 1, the next fight 2, then fight 3. Every fight after the first assumes you walk '
+      + 'straight into the next monster room, with no shop, elite, event or rest between, so all '
+      + `${MAX_FIGHT} have to be consecutive. Fight 1 can never offer a Rare; later ones can. `
+      + 'Taking Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll Boxes or Neow’s Bones draws '
+      + 'from the same stream first and shifts all of them.'
     : 'Pick a character to choose from their card pool.';
 }
 
@@ -910,17 +1017,23 @@ function renderChests() {
     };
     row.appendChild(field);
 
-    // How much drain to forgive. Hidden until a relic is chosen, since alone it constrains
-    // nothing — same rule the shop visit selector follows.
-    if (crit.relic) {
-      const wrap = el('div', 'row span within');
-      wrap.appendChild(el('label', null, 'Allow taken earlier'));
-      wrap.appendChild(stepper(crit.tolerance || 0, 0, 10, v => { crit.tolerance = v; }));
-      row.appendChild(wrap);
-    }
-
     box.appendChild(row);
   });
+
+  // One drain allowance per CHEST, below the rows rather than on them. It used to sit on each
+  // relic, which let two relics in one chest be accepted at drain counts that cannot both be
+  // true of the same run — so the search returned chests that can never hold both. It is a
+  // claim about how much of the shared bag was gone by that floor, which is a fact about the
+  // act, so there is exactly one of it per act.
+  for (const act of catalog.actContent.map(c => c.act)) {
+    if (!state.chests.some(c => c.act === act && c.relic)) continue;
+
+    const wrap = el('div', 'row within chest-tol');
+    wrap.appendChild(el('label', null, `Act ${act}: allow taken earlier`));
+    wrap.appendChild(stepper(state.chestTolerance[act] || 0, 0, 10,
+      v => { state.chestTolerance[act] = v; renderChests(); }));
+    box.appendChild(wrap);
+  }
 
   // Asking one chest for more relics than it has slots can never match, so say so here rather
   // than letting the server reject the search.
@@ -942,11 +1055,15 @@ function renderChests() {
     + 'per player on the table and the whole party votes, so this asks what is in the chest, not '
     + 'who gets it. The rarity is exact; the relic itself assumes nobody has pulled one out of '
     + 'the shared bag yet, since an elite reward, a merchant’s stock or a relic event each '
-    + 'remove one. Raise "allow taken earlier" to accept the next relics of that rarity instead.';
+    + 'remove one. Raise "allow taken earlier" to accept the next relics of that rarity instead. '
+    + 'That setting belongs to the chest rather than to one relic: it says how much of the bag '
+    + 'was already gone by that floor, so naming two relics for one chest asks for both of them '
+    + 'to be there after the same amount of drain.';
 }
 
 $('#addChest').onclick = () => {
-  state.chests.push({ act: 1, relic: '', tolerance: 0 });
+  // No tolerance on the row: it lives in state.chestTolerance, keyed by act.
+  state.chests.push({ act: 1, relic: '' });
   renderChests();
 };
 
@@ -1286,8 +1403,9 @@ function firstFightBlock(rewards) {
     const offer = el('div', 'offer');
     for (const slug of r.cards) {
       const name = cardNames.get(slug) ?? slug;
-      const hit = state.cards[r.slot]?.card === slug
-        && (state.cards[r.slot]?.fight || 1) === (r.fight || 1);
+      // The pick's position in the list is the fight it was asked for, so a match is the slug
+      // sitting at that fight's index and nowhere else.
+      const hit = state.cards[r.slot]?.picks?.[(r.fight || 1) - 1] === slug;
       const p = el('span', 'pill is-card' + (hit ? ' is-match' : ''));
       p.appendChild(iconFor(slug, name, 20, 'card'));
       p.appendChild(el('span', null, name));
@@ -1370,9 +1488,7 @@ function chestBlock(chest) {
   // rather than trivia, so highlight any that their search actually accepted.
   for (const slot of chest.slots) {
     if (!slot.alternates?.length) continue;
-    const tol = Math.max(0, ...state.chests
-      .filter(c => c.act === chest.act && slot.alternates.includes(c.relic))
-      .map(c => c.tolerance || 0));
+    const tol = state.chestTolerance[chest.act] || 0;
 
     const line = el('div', 'offer');
     line.appendChild(el('div', 'slot-label', `then (${slot.rarity})`));
@@ -1531,9 +1647,12 @@ function buildQuery() {
     if (b.boss) q.append('boss', `${b.act}:${b.exclude ? '!' : ''}${b.boss}`);
   for (const e of state.events) if (e.event) q.append('event', `${e.act}:${e.event}:${e.within}`);
 
-  // Slots go out 1-based, matching the P1..P4 labels rather than the internal index.
+  // Slots go out 1-based, matching the P1..P4 labels rather than the internal index. One
+  // parameter per pick: position in the list IS the fight, which is what the badges show.
   state.cards.forEach((want, i) => {
-    if (want?.card) q.append('card', `${i + 1}:${want.card}:${want.fight || 1}`);
+    (want?.picks ?? []).forEach((slug, k) => {
+      if (slug) q.append('card', `${i + 1}:${slug}:${k + 1}`);
+    });
   });
   state.shops.forEach((want, i) => {
     if (want?.relic) q.append('shop', `${i + 1}:${want.relic}:${want.visit || 1}`);
@@ -1542,7 +1661,7 @@ function buildQuery() {
   // No player index: a chest is a shared pick, so the seed fixes what is on the table and the
   // party decides who takes it.
   for (const c of state.chests)
-    if (c.relic) q.append('chest', `${c.act}:${c.relic}:${c.tolerance || 0}`);
+    if (c.relic) q.append('chest', `${c.act}:${c.relic}:${state.chestTolerance[c.act] || 0}`);
   if (state.extraChests > 0) q.set('extraChests', state.extraChests);
 
   // Only A10 changes anything, but send whatever is set so the answer matches the lobby.
@@ -1639,7 +1758,7 @@ async function loadCurrentRun() {
   if (lobby.characters?.length >= 2) {
     const n = Math.min(lobby.characters.length, 4);
     state.players = n;
-    for (const x of $('#players').children) x.setAttribute('aria-pressed', String(+x.dataset.n === n));
+    renderPlayers();
     state.characters = lobby.characters.slice(0, n);
     state.ascension = lobby.ascension || 0;
     rebuildRequire();
@@ -1668,7 +1787,7 @@ $('#players').onclick = e => {
   const b = e.target.closest('button[data-n]');
   if (!b) return;
   state.players = +b.dataset.n;
-  for (const x of $('#players').children) x.setAttribute('aria-pressed', String(x === b));
+  renderPlayers();
   // Every per-player control has to be rebuilt, not just the character list — the Neow
   // requirement and each Ancient row also enumerate player slots.
   rebuildRequire();
@@ -1786,9 +1905,19 @@ function renderAscension() {
 }
 
 function syncAscensionHint() {
+  // Two levels matter and they matter for different things, which is why this is not simply
+  // "set 10 or ignore it". Saying so at every level is cheaper than a user working out which of
+  // the two their search happens to depend on.
+  const ADVICE = ' Simplest is to set the ascension you will actually play.';
+
   $('#ascensionHint').textContent = state.ascension >= DOUBLE_BOSS
-    ? 'Double Boss: the final act has two. It is the last draw generation makes, so nothing else about the run changes.'
-    : 'Only Ascension 10 changes what a seed generates, by giving the final act a second boss.';
+    ? 'Double Boss: the final act has two. It is the last draw generation makes, so nothing else '
+      + 'about the run changes. Being at 7 or above, the card rarity odds are tightened too.'
+    : state.ascension >= SCARCITY
+      ? 'Ascension 7 tightens the card rarity odds, which moves every card reward from the second '
+        + 'fight on. Ascension 10 would also give the final act a second boss.' + ADVICE
+      : 'Two levels change what a seed gives you: Ascension 7 tightens the card rarity odds from '
+        + 'the second fight on, and Ascension 10 gives the final act a second boss.' + ADVICE;
 }
 
 $('#start').oninput = () => { startIsUserSet = $('#start').value.trim() !== ''; };
@@ -1869,6 +1998,8 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
     relicNames.set(r.slug, r.name);
   }
 
+  MAX_FIGHT = catalog.maxFight || MAX_FIGHT;
+
   // The tool's own version sits first because it is the one the user can act on: the update
   // button compares exactly this number against GitHub. It comes off the catalog rather than
   // that check, so it is on screen without anything having left the machine.
@@ -1899,10 +2030,24 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
 })();
 
 /**
+ * Syncs the player-count buttons to `state.players`.
+ *
+ * Its own function because the count lives in two places, `state` and the pressed button, and
+ * three things set it: the buttons themselves, syncing from a run, and Clear. Clear used to be
+ * the one that did not, since it only calls renderCriteria — leaving four players lit above a
+ * lobby that had been reset to two.
+ */
+function renderPlayers() {
+  for (const b of $('#players').children)
+    b.setAttribute('aria-pressed', String(+b.dataset.n === state.players));
+}
+
+/**
  * Redraws every panel from `state`. Boot and Clear both go through here, so a criterion added
  * later cannot end up rendered on load but missed on reset.
  */
 function renderCriteria() {
+  renderPlayers();
   renderAct1();
   rebuildRequire();
   renderCharacters();

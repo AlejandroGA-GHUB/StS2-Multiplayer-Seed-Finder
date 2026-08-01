@@ -17,20 +17,23 @@ namespace Sts2.SeedFinder.Core.Acts;
 public sealed record ChestSlot(int Act, string Rarity, IReadOnlyList<PoolRelic> Candidates)
 {
     /// <summary>The relic offered when the shared bag is undisturbed. Null only if the pool ran dry.</summary>
-    public PoolRelic? Expected => Candidates.Count > 0 ? Candidates[0] : null;
+    public PoolRelic? Expected => At(0);
 
     /// <summary>
-    /// Whether <paramref name="slug"/> could be this slot's relic, allowing for
-    /// <paramref name="tolerance"/> relics of the same rarity having been taken ahead of it.
-    /// Tolerance 0 means "the shared bag is untouched", which is the exact prediction.
+    /// What this slot offers if EXACTLY <paramref name="drained"/> relics of its rarity were
+    /// pulled out of the shared bag before this chest, by anything other than the chests
+    /// themselves. Null when the deque does not reach that far.
+    ///
+    /// A single index, not a range, and that is the whole point. <paramref name="drained"/> is a
+    /// property of the RUN: elite rewards, a merchant's stock and relic events emptied the bag by
+    /// some amount before the party arrived, and every slot of the same rarity in the same chest
+    /// shifted by that same amount together. Asking instead whether a relic appears ANYWHERE in
+    /// the first n+1 entries answers a different and weaker question, one each relic can answer
+    /// with a different n, which is how two relics that can never share a chest were both
+    /// reported as being in one. The caller fixes the index once and tests every want against it.
     /// </summary>
-    public bool CouldBe(string slug, int tolerance = 0)
-    {
-        int limit = Math.Min(Candidates.Count, tolerance + 1);
-        for (int i = 0; i < limit; i++)
-            if (Candidates[i].Slug == slug) return true;
-        return false;
-    }
+    public PoolRelic? At(int drained) =>
+        drained >= 0 && drained < Candidates.Count ? Candidates[drained] : null;
 }
 
 /// <summary>Every chest in a run, in the order the party opens them.</summary>

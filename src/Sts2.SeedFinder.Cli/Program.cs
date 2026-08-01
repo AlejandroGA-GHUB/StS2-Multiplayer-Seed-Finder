@@ -143,9 +143,11 @@ internal static class Program
                 Console.WriteLine("    " + line);
 
         Console.WriteLine();
-        Console.WriteLine("  Fight 1 is forced by the map. Fight 2 assumes you walk straight into a second");
-        Console.WriteLine("  monster room, with no shop, elite, event or rest between them.");
-        Console.WriteLine("  Both assume the Neow pick took no cards. Arcane Scroll, Hefty Tablet, Massive");
+        Console.WriteLine($"  Fight 1 is forced by the map. Fights 2 to {CardRewardGenerator.MaxPredictableFight} "
+                          + "assume you walk straight into");
+        Console.WriteLine("  the next monster room each time, with no shop, elite, event or rest between");
+        Console.WriteLine("  them, so they have to be consecutive.");
+        Console.WriteLine("  All assume the Neow pick took no cards. Arcane Scroll, Hefty Tablet, Massive");
         Console.WriteLine("  Scroll, Scroll Boxes and Neow's Bones draw off the same stream first.");
     }
 
@@ -939,14 +941,15 @@ internal static class Program
 
             // For "any", the card only has to be in someone's pool; the search then accepts a
             // match from whichever player can actually be offered it.
-            // Which fight, 1-based. Fight 1 is forced by the map; fight 2 assumes the party
-            // walks straight into a second Monster room.
+            // Which fight, 1-based. Fight 1 is forced by the map; every fight after it assumes
+            // the party walks straight into the next Monster room.
             int fight = 1;
             if (parts.Length == 3
                 && (!int.TryParse(parts[2], out fight)
                     || fight < 1 || fight > CardRewardGenerator.MaxPredictableFight))
                 throw new ArgumentException(
-                    $"card fight must be 1 or {CardRewardGenerator.MaxPredictableFight}, got '{parts[2]}'");
+                    $"card fight must be between 1 and {CardRewardGenerator.MaxPredictableFight}, "
+                    + $"got '{parts[2]}'");
 
             var pools = slot < 0 ? Enumerable.Range(0, o.PlayerCount) : [slot];
             foreach (var i in pools)

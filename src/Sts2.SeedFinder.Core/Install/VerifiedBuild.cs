@@ -111,9 +111,14 @@ public sealed record DriftReport(
         if (release.Missing)
             return new DriftReport(Drift.Unknown, null, verified.Version, release.HasMods, null);
 
+        // Presence of the folder is all that can be seen from here, and the two kinds of mod
+        // differ completely: content mods resize the pools and invalidate everything past Neow,
+        // cosmetic ones touch nothing a seed decides. So this names the distinction and leaves
+        // the call to the reader rather than declaring the predictions wrong.
         var mods = release.HasMods
-            ? "A mods folder is present. Mods add relics, events or encounters, which changes pool "
-              + "sizes and shifts every draw after them, so predictions will not match your game."
+            ? "A mods folder is present. Mods that add relics, cards, events or encounters change "
+              + "pool sizes and shift every draw after them, so predictions will not match your "
+              + "game. Purely cosmetic mods, such as art and reskins, are fine."
             : null;
 
         Drift drift;

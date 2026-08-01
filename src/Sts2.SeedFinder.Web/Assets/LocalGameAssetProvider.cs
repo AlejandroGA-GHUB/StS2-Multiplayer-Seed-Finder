@@ -66,6 +66,22 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
         ("the_lantern_key", "images/packed/card_portraits/quest/lantern_key.png.import"),
     };
 
+    /// <summary>
+    /// Relics the game draws more than once, so no image carries the bare slug the flat basename
+    /// lookup wants. Named here as slug pairs rather than pck paths, because the source is a
+    /// relic image already resolved by the ordinary route.
+    ///
+    /// Yummy Cookie is the only one: it is cut per character (yummy_cookie_ironclad and four
+    /// more), and a picker shows one icon per relic regardless of who would be offered it. The
+    /// Ironclad cut is the stand-in. Serving the icon for the slot's own character is possible
+    /// and would mean passing the character down to the asset request, which is more plumbing
+    /// than one relic's flavour is worth.
+    /// </summary>
+    private static readonly (string Slug, string Source)[] BorrowedRelicArt =
+    {
+        ("yummy_cookie", "yummy_cookie_ironclad"),
+    };
+
     // The .import file names the exact imported texture. Cards and characters are resolved
     // through it rather than by basename (as relics are) because a card and a relic can share a
     // slug, and their imported files differ only by a content hash we could not tell apart.
@@ -187,6 +203,16 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
 
             if (tex.Value.Kind is "webp" or "png" or "rgba8" or "bc7" or "dxt1" or "dxt5") servable.Add(slug);
             else undecodable++;
+        }
+
+        // Point the multi-cut relics at their stand-in, after the probe so the alias inherits a
+        // source already known to decode. Skipped if the game ever ships the bare slug itself,
+        // which would then win on its own.
+        foreach (var (slug, source) in BorrowedRelicArt)
+        {
+            if (servable.Contains(slug) || !servable.Contains(source)) continue;
+            chosen[slug] = chosen[source];
+            servable.Add(slug);
         }
 
         // The .pck holds the description templates; the numbers that go in them live in the

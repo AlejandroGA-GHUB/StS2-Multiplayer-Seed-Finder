@@ -213,12 +213,17 @@ public static class CardRewardGenerator
     /// <summary>
     /// How deep into a hallway the tool will predict.
     ///
-    /// Capped at 2 on purpose rather than by any limit in the maths. Each extra fight is another
-    /// room the party has to actually walk into for the answer to hold, so the assumption gets
-    /// less likely with every one — and a prediction that is quietly conditional on a four-room
-    /// hallway is worse than no prediction. Two consecutive Monster rooms is the common opening.
+    /// The cap is a product decision, not a limit in the maths: <see cref="Hallway"/> walks as
+    /// far as it is asked to. What each extra fight costs is ASSUMPTION. Fight 1 is free, since
+    /// row 1 of the map is forced to Monster. Every fight after it assumes the party walked
+    /// straight into the next Monster room, with no shop, elite, event or rest breaking the
+    /// chain, and that gets less likely with each one.
+    ///
+    /// Three is where that stops paying: a three-room opening hallway is still an ordinary route
+    /// and the UI states the assumption plainly, where a prediction quietly conditional on a
+    /// four-room one would be worse than no prediction at all.
     /// </summary>
-    public const int MaxPredictableFight = 2;
+    public const int MaxPredictableFight = 3;
 
     /// <summary>
     /// Advance the stream without caring about the value. Every draw method on Rng consumes

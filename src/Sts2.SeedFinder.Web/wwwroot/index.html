@@ -189,6 +189,9 @@
       <h2 id="pickerTitle">Choose a relic</h2>
       <button type="button" class="picker-close" id="pickerClose" aria-label="Close" title="Close">&times;</button>
     </div>
+    <!-- Shown only for a multi-select picker, where clicking does something other than the one
+         thing every other picker does. -->
+    <p class="picker-hint" id="pickerHint" hidden></p>
     <input type="text" id="pickerSearch" placeholder="Search&hellip;">
   </div>
   <div class="picker-body" id="pickerBody"></div>
@@ -221,7 +224,8 @@
       their character, so a last-minute switch changes what that player is offered.</p>
 
     <p><b>Ascension.</b> Ascension 10 gives the final act a second boss. From Ascension 7 the card
-      rarity odds tighten, which moves the second fight&rsquo;s reward but not the first.</p>
+      rarity odds tighten, which moves every card reward after the first fight. Set the level you
+      are actually going to play and both take care of themselves.</p>
 
     <p><b>What everybody has unlocked.</b> A relic pool is filtered by what that player has
       revealed, and the run uses everyone&rsquo;s unlocks combined. Only your own save is readable
@@ -231,14 +235,18 @@
     <p><b>The game version.</b> Predictions are computed for one build. A patch resizes the content
       pools, pool size decides how many draws a shuffle costs, and everything after that lands
       somewhere else. A banner appears above the results when your install and this tool disagree.
-      Mods do the same thing and are called out the same way.</p>
+      Mods that <i>add content</i> do the same thing, so relic, card, event or encounter mods are
+      called out the same way. Purely cosmetic ones are fine: art replacements and reskins change
+      nothing a seed decides. The banner cannot tell which kind you have, so it warns whenever a
+      mods folder exists at all.</p>
 
     <h3>Once you are playing</h3>
 
-    <p><b>The second fight&rsquo;s cards need a second fight.</b> Fight 1 is safe: the first room
-      after the Ancient is always a monster room, whichever way you go. Fight 2 assumes you walk
-      straight into another one, with no shop, elite, event or rest between. Take a detour and the
-      prediction is for a fight you never had.</p>
+    <p><b>Card rewards past the first fight need those fights back to back.</b> Fight 1 is safe:
+      the first room after the Ancient is always a monster room, whichever way you go. Fights 2
+      and 3 assume you walk straight into the next monster room each time, with no shop, elite,
+      event or rest in between. Take a detour and the prediction is for a fight you never had, and
+      the further along it is the easier that is to do by accident.</p>
 
     <p><b>Neow options that hand out cards.</b> Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll
       Boxes and Neow&rsquo;s Bones draw from the same stream the fight rewards use, so taking one

@@ -30,7 +30,7 @@ dotnet build -c Release
 
 ### Platforms
 
-I've only run this on Windows, so that's what I can currently vouch for at the moment.
+I've only run/tesed this on Windows as of now, so that's what I can currently vouch for at the moment.
 
 I didn't build it Windows-only though. Everything targets plain `net10.0` with no Windows-only
 dependencies, and the code that goes looking for your files already knows about the other
@@ -152,9 +152,10 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --help
 | What each Ancient offers (Acts 2–3) | Verified against the game's own RNG |
 | The order each act hands out its events | Verified against a real run |
 | The card reward from fights 1 and 2, per player | Confirmed in play |
+| The card reward from fight 3 | Same draw chain, not yet seen in a played run |
 | Every shop's third relic, per player, in order | Confirmed against real co-op runs |
 | Each act's treasure chest | Confirmed against a real co-op run |
-| Card rewards from fight 3 on | Not supported yet |
+| Card rewards from fight 4 on | Not supported yet |
 | A shop's other two relics, cards or potions | Not supported yet |
 | Relics from elite fights | Not supported yet |
 | Card payloads (Hefty Tablet's rares, Arcane Scroll's rare) | Not supported yet |
@@ -179,7 +180,7 @@ four rewards outright — two players, two fights, all matching.
 ### What you can search on
 
 Neow's relic, the Act 1 map, each act's **boss**, each act's **events**, which **Ancient** opens
-Acts 2 and 3 (optionally offering a particular relic), the **card reward from fights 1 and 2**,
+Acts 2 and 3 (optionally offering a particular relic), the **card reward from fights 1 to 3**,
 the **third relic in a shop**, and each act's **treasure chest**. Combine as many as you like in
 one search.
 
@@ -191,25 +192,27 @@ takes it.
 Boss requirements can be inverted: **does not end with** finds every seed that keeps a boss
 you would rather skip out of the run.
 
-### Card rewards, fights 1 and 2
+### Card rewards, fights 1 to 3
 
 The first room of a run is always a normal fight — row 1 of the map is forced to it and can't be
 anything else — and every player rolls their own reward for it off their own stream. So each
 player can ask for a specific card, and "P1 opens with Anger while P2 opens with Deflect" is one
 search.
 
-Fight 2 works the same way and is the last one you can pin. Pick the fight in the picker, or
-add `:2` on the command line.
+Fights 2 and 3 work the same way, and 3 is as far as this goes. In the picker you click up to
+three cards and each one is badged with the fight it stands for: first click is fight 1, second
+is fight 2, third is fight 3. On the command line, add `:2` or `:3`.
 
 Things to know:
 
-- **Fight 1 needs no assumption. Fight 2 does.** It assumes you walk straight from the first
-  fight into a second monster room, with no shop, elite, event or rest in between. Take a
-  detour and the prediction is for a different draw.
-- **A Rare never appears in fight 1**, but can in fight 2. The rare odds start with a penalty
+- **Fight 1 needs no assumption. Fights 2 and 3 do.** They assume you walk straight into the
+  next monster room each time, with no shop, elite, event or rest in between, so all three have
+  to be consecutive. Take a detour and the prediction is for a fight you never had, and the
+  further along it is the easier that is to do by accident.
+- **A Rare never appears in fight 1**, but can after it. The rare odds start with a penalty
   that only wears off across rewards, so rares are held out of the first fight entirely and the
   picker refuses them there.
-- **Ascension matters from fight 2.** At A7 and up, Scarcity roughly halves the rare odds, so
+- **Ascension matters from fight 2 on.** At A7 and up, Scarcity roughly halves the rare odds, so
   set your ascension if you're searching for one.
 - **Nothing is upgraded in Act 1.** Upgrade odds scale with the act.
 - **Five Neow options change the answer.** Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll
@@ -217,8 +220,8 @@ Things to know:
   hand you. Every other Neow pick, Silken Tress included, leaves it alone. The prediction
   assumes you took one of those.
 
-Past fight 2 it stops being predictable, because from there it depends on the route you took —
-see [What the seed cannot decide](#what-the-seed-cannot-decide).
+Past fight 3 it stops, because each further room makes the unbroken-hallway assumption less
+likely than it is worth — see [What the seed cannot decide](#what-the-seed-cannot-decide).
 
 ### Treasure chests
 
@@ -244,7 +247,7 @@ Two things to know:
 Two ascension levels change what a seed gives you, and nothing in between them does.
 
 **A7 (Scarcity)** roughly halves the odds of a Rare card reward. Fight 1 can't offer a Rare
-anyway, so this only shows up from fight 2, and only if you're searching for a Rare.
+anyway, so this only shows up from fight 2 on, and only if you're searching for a Rare.
 
 **A10 (Double Boss)** gives the **final act a second boss**, drawn from that act's other two.
 It's the last decision generation makes, so everything else about the run is identical whether
@@ -281,8 +284,15 @@ Get one of these wrong and the prediction is for a different run. The tool canno
 - **No run modifiers.** Predictions assume an ordinary run. Ticking anything on the Custom Run
   screen changes how the game generates a run, so none of this holds for one. Typing a seed in
   doesn't make a run custom, only the modifiers do.
-- **Mods.** Anything adding relics, events or encounters changes pool sizes and invalidates
-  Act 2/3 predictions.
+- **Mods that add content.** Anything adding relics, cards, events or encounters changes pool
+  sizes and invalidates Act 2/3 predictions.
+
+  **Cosmetic mods are completely fine.** Art replacements and reskins touch nothing a seed
+  decides, and I've verified that myself by playing full runs with the Chaos Zero Nightmare
+  mods (which you should go check out by the way, they're very good). Everything still matched.
+
+  The tool warns whenever a mods folder is present at all, because it can't tell the two kinds
+  apart from the outside. Read that banner as "check what you have installed", not as a verdict.
 
 ## What the seed cannot decide
 

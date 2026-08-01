@@ -213,6 +213,7 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
     return Results.Json(new CatalogDto(
         GameVersion,
         AppVersion.Load().Version,
+        CardRewardGenerator.MaxPredictableFight,
         drift.Warn ? drift.Message : null,
         assets.Kind.ToString().ToLowerInvariant(),
         assets.Status,

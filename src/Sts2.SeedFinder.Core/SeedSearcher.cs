@@ -562,9 +562,13 @@ public static class SeedSearcher
 
     private static void Validate(SearchCriteria c)
     {
+        // Named by criterion rather than by flag: this runs in the web app as well as the CLI,
+        // and a list of command-line switches is not an instruction anyone can follow there.
         if (c.Relic is null && c.Act1 is null && !c.NeedsCharacters)
             throw new ArgumentException(
-                "nothing to search for — give --relic, --act1, --boss, --event, --card and/or --ancient.");
+                "Nothing to search for. Set at least one criterion: a Neow relic, the Act 1 map, "
+                + "an Ancient's offer, a boss, an event, a card reward, a shop relic or a "
+                + "treasure chest.");
 
         if (c.Act1 is not null && !ActData.ByIndex[0].Any(a => a.Name.Equals(c.Act1, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException(
@@ -615,27 +619,70 @@ public static class SeedSearcher
     /// chest holds one relic per player, so "Vajra and War Paint in Act 2" needs both to be there
     /// at once rather than either one twice.
     ///
-    /// An exhaustive assignment search, which is free at these sizes: at most four criteria
-    /// against at most four slots, and it exits on the first success.
+    /// The tolerance is a claim about the RUN, not about a relic: it says how far the shared bag
+    /// had already been drained when the party reached this chest. So it is chosen ONCE here and
+    /// every want is tested against that one choice, rather than each want picking the drain
+    /// count that happens to suit it. Testing them separately accepts contradictions — two relics
+    /// that are each reachable, at drain counts that cannot both be true of the same run, and so
+    /// can never share a chest.
+    ///
+    /// One count per RARITY rather than one for the whole chest, because the deques drain
+    /// independently: a run that lost two Commons to elite rewards need not have lost a single
+    /// Rare. Slots sharing a rarity DO shift together, and each slot's own candidate list already
+    /// has the earlier slots' pulls removed, so the same index reads correctly across all of them.
+    ///
+    /// Cost is (max tolerance + 1) ^ (distinct rarities in the chest), which is 1 for the default
+    /// tolerance of 0 and at most a few dozen otherwise, against at most four slots.
     /// </summary>
     private static bool ChestSatisfies(IReadOnlyList<ChestSlot> slots, IReadOnlyList<ChestRelicCriterion> wants)
     {
         if (wants.Count > slots.Count) return false;
-        var used = new bool[slots.Count];
 
-        bool Assign(int i)
+        // Folded to one number for the chest. A per-relic tolerance is not expressible against a
+        // single drain count, and the highest is the permissive reading of a mixed request.
+        int max = 0;
+        foreach (var w in wants) max = Math.Max(max, w.Tolerance);
+
+        var rarities = new List<string>(3);
+        foreach (var s in slots)
+            if (!rarities.Contains(s.Rarity)) rarities.Add(s.Rarity);
+
+        // Odometer over one drain count per rarity, every combination up to `max`.
+        var drained = new int[rarities.Count];
+        while (true)
         {
-            if (i == wants.Count) return true;
-            for (int s = 0; s < slots.Count; s++)
-            {
-                if (used[s] || !slots[s].CouldBe(wants[i].Relic, wants[i].Tolerance)) continue;
-                used[s] = true;
-                if (Assign(i + 1)) return true;
-                used[s] = false;
-            }
-            return false;
+            if (SatisfiedAt(slots, wants, rarities, drained)) return true;
+
+            int k = 0;
+            while (k < drained.Length && ++drained[k] > max) drained[k++] = 0;
+            if (k == drained.Length) return false;
         }
-        return Assign(0);
+    }
+
+    /// <summary>
+    /// Whether the wants are all met with the drain counts fixed. Each slot now holds exactly ONE
+    /// relic, so this is multiset containment and a greedy walk is sufficient: slots holding the
+    /// same relic are interchangeable, and slots holding a different one can never help.
+    /// </summary>
+    private static bool SatisfiedAt(
+        IReadOnlyList<ChestSlot> slots, IReadOnlyList<ChestRelicCriterion> wants,
+        List<string> rarities, int[] drained)
+    {
+        Span<bool> used = stackalloc bool[slots.Count];
+
+        foreach (var want in wants)
+        {
+            bool matched = false;
+            for (int s = 0; s < slots.Count && !matched; s++)
+            {
+                if (used[s]) continue;
+                if (slots[s].At(drained[rarities.IndexOf(slots[s].Rarity)])?.Slug != want.Relic) continue;
+                used[s] = true;
+                matched = true;
+            }
+            if (!matched) return false;
+        }
+        return true;
     }
 
     /// <summary>

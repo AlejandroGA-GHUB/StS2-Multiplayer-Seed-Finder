@@ -78,8 +78,13 @@ public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 /// This tool's version, so the header can state it without anyone pressing the update button.
 /// The check against GitHub is a separate, opt-in call: see <c>/api/update</c>.
 /// </param>
+/// <param name="MaxFight">
+/// <see cref="Sts2.SeedFinder.Core.Cards.CardRewardGenerator.MaxPredictableFight"/>, so the card
+/// picker offers exactly the fights the search will accept instead of carrying its own copy of
+/// the number.
+/// </param>
 public sealed record CatalogDto(
-    string GameVersion, string AppVersion,
+    string GameVersion, string AppVersion, int MaxFight,
     string? DriftWarning, string AssetProvider, string AssetStatus,
     RelicDto[] NeowCurses, RelicDto[] NeowPositives, RelicDto[] NeowCoinFlip,
     AncientDto[] Ancients, CharacterDto[] Characters, string[] Act1Maps, ActContentDto[] ActContent,
