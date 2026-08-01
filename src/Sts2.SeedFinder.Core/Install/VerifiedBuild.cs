@@ -36,8 +36,12 @@ public sealed record VerifiedBuild(string Version, long? AssemblyHash, string? V
     /// <summary>
     /// Fallback when the file is missing, so a broken checkout degrades to "assume the build we
     /// shipped against" rather than crashing on startup.
+    ///
+    /// Keep this in step with <c>baselines/verified-build.json</c> when releasing. It is the only
+    /// copy that cannot be updated by repair.bat, so if it falls behind, the users who see it are
+    /// exactly the ones whose install is already broken enough to have lost the file.
     /// </summary>
-    public static readonly VerifiedBuild Fallback = new("v0.109.1", 195020890, "2026-07-28");
+    public static readonly VerifiedBuild Fallback = new("v0.110.1", -959015736, "2026-07-31");
 
     public static VerifiedBuild Load(string? directory = null)
     {

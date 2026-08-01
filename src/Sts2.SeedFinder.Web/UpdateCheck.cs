@@ -59,9 +59,12 @@ public static class UpdateCheck
     {
         try
         {
-            // Deliberately NOT /releases/latest. That endpoint excludes prereleases, and every
-            // release of this tool so far is one, so it answers 404 and the check would report a
-            // permanent failure. The list is newest first and includes them.
+            // Deliberately NOT /releases/latest. That endpoint excludes prereleases entirely, so
+            // it answers 404 for a repository whose only releases are prereleases, and the check
+            // would report a permanent failure rather than an answer. This list is newest first
+            // and includes both kinds, which also means a prerelease published after a stable one
+            // is what gets compared. That is the intent: it is the newest thing a user could
+            // install, and the response carries LatestIsPrerelease so the UI can say which it is.
             var url = $"https://api.github.com/repos/{repo}/releases?per_page=10";
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.Add("Accept", "application/vnd.github+json");

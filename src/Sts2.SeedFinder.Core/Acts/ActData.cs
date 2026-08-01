@@ -39,7 +39,41 @@ public enum EncounterTag
 
 public sealed record Encounter(string Name, RoomType RoomType, bool IsWeak, EncounterTag[] Tags)
 {
-    public bool SharesTagsWith(Encounter? other) => other is not null && Tags.Intersect(other.Tags).Any();
+    /// <summary>
+    /// <see cref="Tags"/> as a bit per tag. There are 15 of them, so one ulong holds any set.
+    ///
+    /// Computed once per encounter, lazily, because encounters are static data. The race between
+    /// threads is benign: both compute the same value and the write is atomic. Zero is not a
+    /// valid "computed" state (an encounter with no tags would produce it), hence the separate
+    /// flag rather than treating 0 as "not yet done".
+    /// </summary>
+    private ulong _tagMask;
+    private bool _maskReady;
+
+    private ulong TagMask
+    {
+        get
+        {
+            if (_maskReady) return _tagMask;
+            ulong m = 0;
+            foreach (var t in Tags) m |= 1UL << (int)t;
+            _tagMask = m;
+            _maskReady = true;
+            return m;
+        }
+    }
+
+    /// <summary>
+    /// Whether these two encounters have any tag in common, which is what the game's
+    /// repeat-avoidance predicate asks.
+    ///
+    /// This was <c>Tags.Intersect(other.Tags).Any()</c>. Intersect builds a HashSet internally
+    /// on every call, and the encounter draw calls this for every entry still in the bag on every
+    /// draw, roughly 700 times per act. Same question, one AND, nothing allocated.
+    /// </summary>
+    public bool SharesTagsWith(Encounter? other) =>
+        other is not null && (TagMask & other.TagMask) != 0;
+
     public override string ToString() => Name;
 }
 
@@ -48,10 +82,72 @@ public sealed record ActDefinition(
     Encounter[] Encounters, string[] Events, string[] Ancients,
     IReadOnlyDictionary<string, string> AncientEpochGates)
 {
-    public IEnumerable<Encounter> Weak => Encounters.Where(e => e.RoomType == RoomType.Monster && e.IsWeak);
-    public IEnumerable<Encounter> Regular => Encounters.Where(e => e.RoomType == RoomType.Monster && !e.IsWeak);
-    public IEnumerable<Encounter> Elites => Encounters.Where(e => e.RoomType == RoomType.Elite);
-    public IEnumerable<Encounter> Bosses => Encounters.Where(e => e.RoomType == RoomType.Boss);
+    // Computed once per act rather than per access. These were IEnumerable properties that re-ran
+    // their Where over the whole Encounters array every time they were touched, and a search
+    // touches them several times per act per seed: three DrawEncounters pools, the boss list, and
+    // once more for every boss criterion. The acts are static data, so the answer never changes.
+    //
+    // The lazy fields race harmlessly under Parallel.For: two threads can both compute, both get
+    // an identical array, and a reference assignment is atomic, so a reader sees either null or a
+    // complete array. Filtering with Where preserves order, so the draw order is untouched.
+    private Encounter[]? _weak, _regular, _elites, _bosses;
+
+    public IReadOnlyList<Encounter> Weak =>
+        _weak ??= Encounters.Where(e => e.RoomType == RoomType.Monster && e.IsWeak).ToArray();
+    public IReadOnlyList<Encounter> Regular =>
+        _regular ??= Encounters.Where(e => e.RoomType == RoomType.Monster && !e.IsWeak).ToArray();
+    public IReadOnlyList<Encounter> Elites =>
+        _elites ??= Encounters.Where(e => e.RoomType == RoomType.Elite).ToArray();
+    public IReadOnlyList<Encounter> Bosses =>
+        _bosses ??= Encounters.Where(e => e.RoomType == RoomType.Boss).ToArray();
+
+    /// <summary>
+    /// A cached answer together with the unlock state it was computed for, as ONE object.
+    ///
+    /// The pairing has to be atomic. Two fields would let a thread publish a new array before its
+    /// matching unlock state, and a reader could then take an array computed for someone else's
+    /// unlocks as its own. A single reference assignment cannot be seen half-done.
+    /// </summary>
+    private sealed record Filtered(UnlockState Unlocks, string[] Values);
+
+    private Filtered? _events;
+    private Filtered? _ancients;
+
+    /// <summary>
+    /// This act's events plus the shared ones, minus anything an unrevealed epoch gates, in pool
+    /// order and ready to be copied and shuffled.
+    ///
+    /// Depends only on the act and the unlock state, so it is the same for every seed in a search.
+    /// Recomputing it per act per seed was a Concat, a Where and a ToList over roughly forty
+    /// entries, which is 24% of act generation.
+    /// </summary>
+    public string[] EventsFor(UnlockState unlocks)
+    {
+        var cached = _events;
+        if (cached is not null && ReferenceEquals(cached.Unlocks, unlocks)) return cached.Values;
+
+        var values = Events.Concat(ActData.SharedEvents)
+            .Where(e => !ActData.EventEpochGates.TryGetValue(e, out var epoch) || unlocks.IsEpochRevealed(epoch))
+            .ToArray();
+        _events = new Filtered(unlocks, values);
+        return values;
+    }
+
+    /// <summary>
+    /// This act's OWN Ancients after epoch gating. The shared ones are appended per run, since
+    /// which of them an act receives is a per-seed draw.
+    /// </summary>
+    public string[] AncientsFor(UnlockState unlocks)
+    {
+        var cached = _ancients;
+        if (cached is not null && ReferenceEquals(cached.Unlocks, unlocks)) return cached.Values;
+
+        var values = Ancients
+            .Where(a => !AncientEpochGates.TryGetValue(a, out var epoch) || unlocks.IsEpochRevealed(epoch))
+            .ToArray();
+        _ancients = new Filtered(unlocks, values);
+        return values;
+    }
     public int GetNumberOfRooms(bool isMultiplayer) => BaseNumberOfRooms - (isMultiplayer ? 1 : 0);
     public int GetNumberOfFloors(bool isMultiplayer) => GetNumberOfRooms(isMultiplayer) + 2;
     public override string ToString() => Name;

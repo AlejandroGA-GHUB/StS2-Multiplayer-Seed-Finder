@@ -36,8 +36,17 @@ public static class HistoryVerifier
     /// Game builds this profile's data tables were generated from. History goes back many
     /// patches and older runs were generated from pools we no longer model, so anything else
     /// is skipped rather than reported as a failure.
+    ///
+    /// The build we are currently verified against is always compatible with itself, so it joins
+    /// the list rather than having to be hand-added. Without that, the run that proves a new patch
+    /// is fine gets skipped as "different build" the moment repair.bat records the patch, which is
+    /// precisely the run worth checking. The hand-written entries stay because logic-identical
+    /// builds share these tables, and only a person reading both patches can say that.
     /// </summary>
-    private static readonly string[] CompatibleBuilds = ["v0.109.0", "v0.109.1"];
+    private static readonly string[] KnownCompatibleBuilds = ["v0.109.0", "v0.109.1"];
+
+    private static readonly string[] CompatibleBuilds =
+        KnownCompatibleBuilds.Append(VerifiedBuild.Load().Version).Distinct().ToArray();
 
     private sealed record Visited(
         List<string> Acts,

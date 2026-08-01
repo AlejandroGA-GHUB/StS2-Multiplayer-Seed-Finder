@@ -12,7 +12,7 @@ that space.
 > Check out their website here for single player seeds -> ([SearchTheSpire](https://searchthespire.app/)) 
 
 
-> Updated At **Slay the Spire 2 v0.109.1**. Predictions are version-specific — see
+> Updated At **Slay the Spire 2 v0.110.1**. Predictions are version-specific — see
 > [After a game patch](#after-a-game-patch).
 
 > Can reach out via aga.personal.dev@gmail.com with any queries regarding the app.
@@ -406,6 +406,13 @@ a stale copy looks perfectly healthy.
 
 So the app tells you. If your game's logic differs from the build this checkout was verified
 against, a banner appears above the results.
+
+**This is not tied to one Steam branch.** The main release branch and the beta branch are both
+supported: nothing here assumes which one you are on, it only cares whether the build in front of
+it matches the build the data tables were read from. Whichever branch you play, if yours is ahead
+of the recorded one, `repair.bat` reads the tables back out of your own install and brings this
+copy into line with it. Switching branches is the same situation as a patch, and has the same
+one-step fix.
 
 **To fix it, double-click `repair.bat`.** It checks by layer, offers to regenerate what can be
 regenerated, rebuilds, verifies against runs you have already played, and records the result.

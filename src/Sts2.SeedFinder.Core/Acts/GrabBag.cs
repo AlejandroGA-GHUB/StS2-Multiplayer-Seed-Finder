@@ -10,8 +10,17 @@ namespace Sts2.SeedFinder.Core.Acts;
 /// </summary>
 public sealed class GrabBag<T>
 {
-    private readonly List<(T Item, double Weight)> _entries = new();
+    private readonly List<(T Item, double Weight)> _entries;
     private double _totalWeight;
+
+    public GrabBag() : this(0) { }
+
+    /// <param name="capacity">
+    /// Expected entry count. Purely an allocation hint: the bag is refilled with the whole pool
+    /// each time it empties, so without it every refill re-grows the backing array from scratch.
+    /// It changes no behaviour and no draw.
+    /// </param>
+    public GrabBag(int capacity) => _entries = new List<(T, double)>(capacity);
 
     public int Count => _entries.Count;
     public bool Any() => _entries.Count > 0;
@@ -35,8 +44,16 @@ public sealed class GrabBag<T>
     {
         // The game bails out before drawing at all when nothing can satisfy the predicate.
         // That early return is load-bearing: without it we would consume an extra draw.
-        if (predicate is not null && !_entries.Any(e => predicate(e.Item)))
-            return -1;
+        //
+        // Written as a loop rather than _entries.Any(e => predicate(e.Item)): that overload
+        // allocated a closure to capture `predicate` plus a boxed enumerator, on every draw, and
+        // this runs tens of times per seed. Same test, same short-circuit, no allocation.
+        if (predicate is not null)
+        {
+            bool any = false;
+            for (int i = 0; i < _entries.Count && !any; i++) any = predicate(_entries[i].Item);
+            if (!any) return -1;
+        }
 
         int index;
         do

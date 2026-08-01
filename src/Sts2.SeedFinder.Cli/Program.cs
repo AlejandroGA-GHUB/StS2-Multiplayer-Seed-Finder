@@ -3,13 +3,24 @@ using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Install;
 using Sts2.SeedFinder.Core.Neow;
 
 namespace Sts2.SeedFinder.Cli;
 
 internal static class Program
 {
-    private const string GameVersion = "v0.109.1";
+    /// <summary>
+    /// The game build results are stamped with: the one this checkout was last CONFIRMED against,
+    /// not the one that last changed the data tables.
+    ///
+    /// Those two drift apart routinely. A patch that leaves every pool untouched still moves what
+    /// we are verified against, and refresh reports "unchanged" and rewrites nothing, so a
+    /// constant here would keep naming an older version indefinitely. Reading the baseline instead
+    /// means repair.bat's "record your game version as verified" updates this too, and a stamp can
+    /// never claim a build the checkout was never checked against.
+    /// </summary>
+    private static string GameVersion => VerifiedBuild.Load().Version;
 
     /// <summary>How much of each act's event order to print. The whole thing is ~28 entries.</summary>
     private const int EventsShown = 8;

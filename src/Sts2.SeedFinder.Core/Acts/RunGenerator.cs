@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace Sts2.SeedFinder.Core.Acts;
 
 /// <summary>
@@ -213,24 +215,29 @@ public static class RunGenerator
             PopulateRelicGrabBags(rng, characters, unlocks, playerUnlocks, withShopRelics, withChestRelics);
 
         // Shared Ancients (Darv) are shuffled, then a prefix is handed to each act after the first.
+        // One array, shuffled once, then handed out as windows over itself. The Take/Skip/ToList
+        // version rebuilt two lists per act to express "the next `take`, then the rest"; an
+        // offset says the same thing and the draws are identical, since `take` is still rolled
+        // against how many remain.
         var shared = ActData.SharedAncients
             .Where(_ => unlocks.IsEpochRevealed(ActData.SharedAncientEpoch))
-            .ToList();
+            .ToArray();
         Shuffle(shared, rng);
 
-        var sharedSubsets = new List<string>[acts.Length];
-        for (int i = 0; i < acts.Length; i++) sharedSubsets[i] = new List<string>();
+        var sharedSubsets = new ArraySegment<string>[acts.Length];
+        for (int i = 0; i < acts.Length; i++) sharedSubsets[i] = ArraySegment<string>.Empty;
 
+        int offset = 0;
         for (int i = 1; i < acts.Length; i++)
         {
-            int take = rng.NextInt(shared.Count + 1);
-            sharedSubsets[i] = shared.Take(take).ToList();
-            shared = shared.Skip(take).ToList();
+            int take = rng.NextInt(shared.Length - offset + 1);
+            sharedSubsets[i] = new ArraySegment<string>(shared, offset, take);
+            offset += take;
         }
 
         var generated = new List<GeneratedAct>(acts.Length);
-        foreach (var (act, i) in acts.Select((a, i) => (a, i)))
-            generated.Add(GenerateAct(act, rng, unlocks, isMultiplayer, sharedSubsets[i]));
+        for (int i = 0; i < acts.Length; i++)
+            generated.Add(GenerateAct(acts[i], rng, unlocks, isMultiplayer, sharedSubsets[i]));
 
         // A10+ gives the FINAL act a second boss, drawn from that act's bosses minus the one
         // already picked (RunManager.cs:731). It is the last thing generation does, after that
@@ -288,35 +295,44 @@ public static class RunGenerator
 
     /// <summary>ActModel.GenerateRooms — the per-act draw sequence, in order.</summary>
     private static GeneratedAct GenerateAct(
-        ActDefinition act, Rng rng, UnlockState unlocks, bool isMultiplayer, List<string> sharedAncients)
+        ActDefinition act, Rng rng, UnlockState unlocks, bool isMultiplayer,
+        IReadOnlyList<string> sharedAncients)
     {
         // 1. Events: the act's own plus shared, minus epoch-locked, then shuffled.
         //    We only need the draws, not the result — but the count must be exact.
-        var events = act.Events.Concat(ActData.SharedEvents)
-            .Where(e => !ActData.EventEpochGates.TryGetValue(e, out var epoch) || unlocks.IsEpochRevealed(epoch))
-            .ToList();
+        //    The filtered set depends only on the act and the unlocks, so it is cached on the
+        //    act; the copy here exists because the shuffle scrambles it and the result is handed
+        //    out in GeneratedAct.
+        var events = new List<string>(act.EventsFor(unlocks));
         Shuffle(events, rng);
 
         // 2. Weak, then regular encounters — both accumulate into the same list, so the
         //    tag-repeat check for the first regular draw sees the last weak encounter.
+        //    The pools are read, never mutated, so they are passed straight through.
         var normals = new List<Encounter>();
-        DrawEncounters(normals, act.Weak.ToList(), act.NumberOfWeakEncounters, rng);
-        DrawEncounters(normals, act.Regular.ToList(),
+        DrawEncounters(normals, act.Weak, act.NumberOfWeakEncounters, rng);
+
+        DrawEncounters(normals, act.Regular,
             act.GetNumberOfRooms(isMultiplayer) - act.NumberOfWeakEncounters, rng);
 
         // 3. Elites — always 15, into their own list.
         var elites = new List<Encounter>();
-        DrawEncounters(elites, act.Elites.ToList(), 15, rng);
+        DrawEncounters(elites, act.Elites, 15, rng);
 
         // 4. Boss, then 5. Ancient.
-        var bosses = act.Bosses.ToList();
-        var boss = bosses[rng.NextInt(0, bosses.Count)];
+        var boss = act.Bosses[rng.NextInt(0, act.Bosses.Count)];
 
-        var ancients = act.Ancients
-            .Where(a => !act.AncientEpochGates.TryGetValue(a, out var epoch) || unlocks.IsEpochRevealed(epoch))
-            .Concat(sharedAncients)
-            .ToList();
-        var ancient = ancients.Count == 0 ? "(none)" : ancients[rng.NextInt(0, ancients.Count)];
+        // The list this used to build existed only to be indexed once. Its contents were the
+        // act's own gated Ancients followed by the shared ones it was handed, so the same index
+        // reads out of whichever of the two it falls in. Concat order is what makes that safe.
+        var own = act.AncientsFor(unlocks);
+        int total = own.Length + sharedAncients.Count;
+        string ancient = "(none)";
+        if (total > 0)
+        {
+            int at = rng.NextInt(0, total);
+            ancient = at < own.Length ? own[at] : sharedAncients[at - own.Length];
+        }
 
         return new GeneratedAct(act, boss, ancient, normals, elites, events);
     }
@@ -326,19 +342,26 @@ public static class RunGenerator
     /// with the whole pool whenever it empties, and each draw first tries to avoid repeating
     /// the previous encounter's tags before falling back to any entry.
     /// </summary>
-    private static void DrawEncounters(List<Encounter> into, List<Encounter> pool, int count, Rng rng)
+    private static void DrawEncounters(List<Encounter> into, IReadOnlyList<Encounter> pool, int count, Rng rng)
     {
         if (pool.Count == 0) return;
 
-        var bag = new GrabBag<Encounter>();
+        var bag = new GrabBag<Encounter>(pool.Count);
+
+        // The predicate is built ONCE and reads a captured local that the loop reassigns, rather
+        // than being rebuilt each iteration. A lambda closes over the variable, not its value, so
+        // this sees each new `last` while costing one closure per call instead of one per draw.
+        // Elites alone are 15 draws an act.
+        Encounter? last = null;
+        Func<Encounter, bool> avoidsLast = e => !e.SharesTagsWith(last) && e != last;
+
         for (int i = 0; i < count; i++)
         {
             if (!bag.Any())
-                foreach (var e in pool) bag.Add(e, 1.0);
+                for (int p = 0; p < pool.Count; p++) bag.Add(pool[p], 1.0);
 
-            var last = into.Count > 0 ? into[^1] : null;
-            var picked = bag.GrabAndRemove(rng, e => !e.SharesTagsWith(last) && e != last)
-                         ?? bag.GrabAndRemove(rng);
+            last = into.Count > 0 ? into[^1] : null;
+            var picked = bag.GrabAndRemove(rng, avoidsLast) ?? bag.GrabAndRemove(rng);
             if (picked is not null) into.Add(picked);
         }
     }
@@ -385,53 +408,49 @@ public static class RunGenerator
             Rng rng, IReadOnlyList<Character> characters, UnlockState unlocks,
             IReadOnlyList<UnlockState>? playerUnlocks, bool withShopRelics, bool withChestRelics)
     {
-        // The shared bag is filtered by the run's (superset) state, not by any one player's.
-        var sharedRun = Unlocked(RelicPoolData.SharedRelics, "Shared", unlocks);
+        // Everything except the shuffling is the same for every seed in a search, so it is built
+        // once and reused. What remains here is exactly the RNG consumption and the copies that
+        // the shuffles have to own.
+        var plan = PlanFor(characters, unlocks, playerUnlocks, withShopRelics, withChestRelics);
 
         // Shared bag: populated through the overload that skips the rarity filter, so it holds
         // every rarity and its deques are shuffled in first-seen order like any other bag.
         Dictionary<string, IReadOnlyList<PoolRelic>>? sharedDeques =
             withChestRelics ? new Dictionary<string, IReadOnlyList<PoolRelic>>(StringComparer.Ordinal) : null;
 
-        foreach (var (rarity, count) in DequeSizes(sharedRun, filtered: false))
+        for (int i = 0; i < plan.Shared.Length; i++)
         {
-            if (withChestRelics && ChestRarities.Contains(rarity))
+            var source = plan.SharedSources[i];
+            if (source is not null)
             {
-                var deque = sharedRun.Where(r => r.Rarity == rarity).ToList();
+                var deque = new List<PoolRelic>(source);
                 Shuffle(deque, rng);
-                sharedDeques![rarity] = deque;   // chests pull from the FRONT, so no reverse
+                sharedDeques![plan.Shared[i].Rarity] = deque;   // chests pull from the FRONT, so no reverse
             }
             else
             {
-                BurnShuffle(rng, count);
+                BurnShuffle(rng, plan.Shared[i].Count);
             }
         }
 
         var result = withShopRelics ? new List<IReadOnlyList<PoolRelic>>(characters.Count) : null;
 
-        for (int p = 0; p < characters.Count; p++)
+        for (int p = 0; p < plan.Players.Length; p++)
         {
-            var character = characters[p];
-            var mine = playerUnlocks is not null && p < playerUnlocks.Count ? playerUnlocks[p] : unlocks;
-
-            var shared = ReferenceEquals(mine, unlocks)
-                ? sharedRun
-                : Unlocked(RelicPoolData.SharedRelics, "Shared", mine);
-            var own = Unlocked(RelicPoolData.RelicsFor(character), RelicPoolData.PoolKey(character), mine);
-            var bag = shared.Concat(own).ToList();
-
-            foreach (var (rarity, count) in DequeSizes(bag, filtered: true))
+            var bag = plan.Players[p];
+            for (int i = 0; i < bag.Layout.Length; i++)
             {
-                if (withShopRelics && rarity == "Shop")
+                var source = bag.Sources[i];
+                if (source is not null)
                 {
-                    var deque = bag.Where(r => r.Rarity == "Shop").ToList();
+                    var deque = new List<PoolRelic>(source);
                     Shuffle(deque, rng);
                     deque.Reverse();   // shops pull from the BACK, one per visit
                     result!.Add(deque);
                 }
                 else
                 {
-                    BurnShuffle(rng, count);
+                    BurnShuffle(rng, bag.Layout[i].Count);
                 }
             }
         }
@@ -442,6 +461,135 @@ public static class RunGenerator
     /// deques a chest ever reads.</summary>
     private static readonly HashSet<string> ChestRarities =
         new(StringComparer.Ordinal) { "Common", "Uncommon", "Rare" };
+
+    /// <summary>
+    /// Everything about the relic bags that does NOT depend on the seed: which deques exist, in
+    /// which order, how large each is, and the exact relics in the ones we materialise.
+    ///
+    /// All of that is a function of the party, the unlock states and which deques were asked for,
+    /// so it is the same for every seed in a search. It used to be rebuilt per seed: three walks
+    /// building a List and a Dictionary, plus a Concat().ToList() of the whole relic pool for each
+    /// player. Only the shuffling is actually per seed.
+    /// </summary>
+    private sealed class BagPlan
+    {
+        public required Character[] Characters;
+        public required UnlockState Unlocks;
+        public required IReadOnlyList<UnlockState>? PlayerUnlocks;
+        public required bool WithShop;
+        public required bool WithChest;
+
+        /// <summary>Shared bag deques, in first-seen rarity order.</summary>
+        public required (string Rarity, int Count)[] Shared;
+
+        /// <summary>
+        /// Parallel to <see cref="Shared"/>. Non-null only where a deque is materialised rather
+        /// than burned, holding its relics in pool order ready to be copied and shuffled.
+        /// </summary>
+        public required PoolRelic[]?[] SharedSources;
+
+        public required PlayerBag[] Players;
+
+        public bool Matches(
+            IReadOnlyList<Character> characters, UnlockState unlocks,
+            IReadOnlyList<UnlockState>? playerUnlocks, bool withShop, bool withChest)
+        {
+            if (WithShop != withShop || WithChest != withChest) return false;
+            if (!ReferenceEquals(Unlocks, unlocks) || !ReferenceEquals(PlayerUnlocks, playerUnlocks)) return false;
+            if (Characters.Length != characters.Count) return false;
+            for (int i = 0; i < Characters.Length; i++)
+                if (Characters[i] != characters[i]) return false;
+            return true;
+        }
+    }
+
+    /// <summary>One player's bag deques and, for any that get materialised, their contents.</summary>
+    private sealed class PlayerBag
+    {
+        public required (string Rarity, int Count)[] Layout;
+        public required PoolRelic[]?[] Sources;
+    }
+
+    /// <summary>
+    /// One cached plan per thread, matched by reference on the unlock states.
+    ///
+    /// Per thread rather than shared, for two reasons: the search runs under Parallel.For and a
+    /// shared entry would be contended, and the web app can have two searches with different
+    /// parties in flight at once, which on a single shared slot would thrash. Thread-local also
+    /// bounds the memory by worker count, where a keyed cache would grow with every request,
+    /// since UnlockState holds sets that compare by reference.
+    ///
+    /// A miss simply rebuilds, which is what every seed used to do, so the worst case is today.
+    /// </summary>
+    [ThreadStatic] private static BagPlan? _bagPlan;
+
+    private static BagPlan PlanFor(
+        IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks, bool withShop, bool withChest)
+    {
+        var cached = _bagPlan;
+        if (cached is not null && cached.Matches(characters, unlocks, playerUnlocks, withShop, withChest))
+            return cached;
+
+        var sharedRun = Unlocked(RelicPoolData.SharedRelics, "Shared", unlocks);
+
+        var sharedLayout = DequeSizes(sharedRun, filtered: false).ToArray();
+        var sharedSources = new PoolRelic[]?[sharedLayout.Length];
+        for (int i = 0; i < sharedLayout.Length; i++)
+            if (withChest && ChestRarities.Contains(sharedLayout[i].Rarity))
+                sharedSources[i] = OfRarity(sharedRun, sharedLayout[i].Rarity);
+
+        var players = new PlayerBag[characters.Count];
+
+        var plan = new BagPlan
+        {
+            Characters = characters.ToArray(),
+            Unlocks = unlocks,
+            PlayerUnlocks = playerUnlocks,
+            WithShop = withShop,
+            WithChest = withChest,
+            Shared = sharedLayout,
+            SharedSources = sharedSources,
+            Players = players,
+        };
+
+        for (int p = 0; p < characters.Count; p++)
+        {
+            var mine = playerUnlocks is not null && p < playerUnlocks.Count ? playerUnlocks[p] : unlocks;
+            var shared = ReferenceEquals(mine, unlocks)
+                ? sharedRun
+                : Unlocked(RelicPoolData.SharedRelics, "Shared", mine);
+            var own = Unlocked(RelicPoolData.RelicsFor(characters[p]), RelicPoolData.PoolKey(characters[p]), mine);
+
+            var bag = new PoolRelic[shared.Count + own.Count];
+            for (int i = 0; i < shared.Count; i++) bag[i] = shared[i];
+            for (int i = 0; i < own.Count; i++) bag[shared.Count + i] = own[i];
+
+            var layout = DequeSizes(bag, filtered: true).ToArray();
+            var sources = new PoolRelic[]?[layout.Length];
+            for (int i = 0; i < layout.Length; i++)
+                if (withShop && layout[i].Rarity == "Shop")
+                    sources[i] = OfRarity(bag, layout[i].Rarity);
+
+            players[p] = new PlayerBag { Layout = layout, Sources = sources };
+        }
+
+        _bagPlan = plan;
+        return plan;
+    }
+
+    /// <summary>The pool's entries of one rarity, in pool order. Plain loop rather than LINQ so
+    /// the result is a right-sized array with no intermediate.</summary>
+    private static PoolRelic[] OfRarity(IReadOnlyList<PoolRelic> pool, string rarity)
+    {
+        int n = 0;
+        for (int i = 0; i < pool.Count; i++) if (pool[i].Rarity == rarity) n++;
+
+        var result = new PoolRelic[n];
+        for (int i = 0, at = 0; i < pool.Count; i++)
+            if (pool[i].Rarity == rarity) result[at++] = pool[i];
+        return result;
+    }
 
     /// <summary>Drops the relics an unrevealed epoch gates, keeping the surviving pool order.</summary>
     private static IReadOnlyList<PoolRelic> Unlocked(
@@ -490,14 +638,26 @@ public static class RunGenerator
     }
 
     /// <summary>ListExtensions.UnstableShuffle — reverse Fisher-Yates, exact draw order.</summary>
-    private static void Shuffle<T>(List<T> list, Rng rng)
+    /// <summary>
+    /// Reverse Fisher-Yates, matching <c>ListExtensions.UnstableShuffle</c>. Descending, so the
+    /// BACK of the list settles first and the FRONT settles last, which is why shop relics (drawn
+    /// from the back) and chest relics (drawn from the front) behave differently under a partial
+    /// pass. Oracle-verified.
+    ///
+    /// Takes a span so arrays and lists share one implementation, and so the list case indexes
+    /// backing storage directly rather than through List's bounds-checked indexer twice a swap.
+    /// </summary>
+    private static void Shuffle<T>(Span<T> items, Rng rng)
     {
-        int n = list.Count;
+        int n = items.Length;
         while (n > 1)
         {
             n--;
             int k = rng.NextInt(n + 1);
-            (list[k], list[n]) = (list[n], list[k]);
+            (items[k], items[n]) = (items[n], items[k]);
         }
     }
+
+    private static void Shuffle<T>(List<T> list, Rng rng) =>
+        Shuffle(CollectionsMarshal.AsSpan(list), rng);
 }

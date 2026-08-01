@@ -179,12 +179,15 @@ public static class CardRewardGenerator
             for (int i = 0; i < 3; i++)
             {
                 // CardFactory.CreateForReward blacklists the cards already offered, so each draw
-                // indexes into a slightly shorter list than the last.
-                var available = pool.Where(c => !taken.Contains(c.TypeName)).ToList();
-                var rarity = RollRarity(rng, ref rarityOffset, available, ascension);
+                // sees a slightly shorter pool than the last. That used to be expressed by
+                // materialising the shorter list, twice per draw — once for the blacklist and
+                // once for the rarity — which is nine times a fight over a ninety-card pool.
+                // Counting and indexing in place asks the same questions of the same entries in
+                // the same order, and allocates nothing.
+                var rarity = RollRarity(rng, ref rarityOffset, pool, taken, ascension);
 
-                var candidates = available.Where(c => c.Rarity == rarity).ToList();
-                var picked = candidates[rng.NextInt(0, candidates.Count)];
+                int count = CountAvailable(pool, taken, rarity);
+                var picked = NthAvailable(pool, taken, rarity, rng.NextInt(0, count));
 
                 // The upgrade draw is taken outside the IsUpgradable check, so it always happens.
                 // In Act 1 the odds are 0 (they scale with the act index), so it never lands.
@@ -239,7 +242,8 @@ public static class CardRewardGenerator
     /// CardRarityOdds.Roll for a regular encounter, including the pity offset it maintains:
     /// a rare resets it to the floor, anything else nudges it up toward the cap.
     /// </summary>
-    private static CardRarity RollRarity(Rng rng, ref float offset, List<CardEntry> available, int ascension)
+    private static CardRarity RollRarity(
+        Rng rng, ref float offset, CardEntry[] pool, List<string> taken, int ascension)
     {
         float roll = rng.NextFloat();
         float rareThreshold = RegularRareOdds(ascension) + offset;
@@ -252,7 +256,7 @@ public static class CardRewardGenerator
             ? BaseRarityOffset
             : Math.Min(offset + RarityGrowth(ascension), MaxRarityOffset);
 
-        return NextAllowedRarity(rarity, available);
+        return NextAllowedRarity(rarity, pool, taken);
     }
 
     /// <summary>
@@ -260,16 +264,51 @@ public static class CardRewardGenerator
     /// the pool can actually satisfy is found. A full pool never needs this, but a pool drained
     /// by the blacklist could.
     /// </summary>
-    private static CardRarity NextAllowedRarity(CardRarity rarity, List<CardEntry> available)
+    private static CardRarity NextAllowedRarity(CardRarity rarity, CardEntry[] pool, List<string> taken)
     {
-        var seen = new List<CardRarity> { rarity };
-        while (rarity != CardRarity.None && !available.Any(c => c.Rarity == rarity))
+        // The "already tried" set is a bitmask rather than a List, since this runs once per draw
+        // and the ladder has at most four rungs.
+        int seen = 1 << (int)rarity;
+        while (rarity != CardRarity.None && CountAvailable(pool, taken, rarity) == 0)
         {
             rarity = NextHighest(rarity);
-            if (seen.Contains(rarity)) return CardRarity.None;
-            seen.Add(rarity);
+            int bit = 1 << (int)rarity;
+            if ((seen & bit) != 0) return CardRarity.None;
+            seen |= bit;
         }
         return rarity;
+    }
+
+    /// <summary>How many cards of one rarity the pool still offers, ignoring those already drawn
+    /// into this reward.</summary>
+    private static int CountAvailable(CardEntry[] pool, List<string> taken, CardRarity rarity)
+    {
+        int n = 0;
+        for (int i = 0; i < pool.Length; i++)
+            if (pool[i].Rarity == rarity && !Blacklisted(taken, pool[i].TypeName)) n++;
+        return n;
+    }
+
+    /// <summary>
+    /// The <paramref name="index"/>'th still-available card of a rarity, in pool order. Pool order
+    /// is what the game indexes into, so this has to walk rather than sort or hash.
+    /// </summary>
+    private static CardEntry NthAvailable(CardEntry[] pool, List<string> taken, CardRarity rarity, int index)
+    {
+        for (int i = 0; i < pool.Length; i++)
+        {
+            if (pool[i].Rarity != rarity || Blacklisted(taken, pool[i].TypeName)) continue;
+            if (index-- == 0) return pool[i];
+        }
+        throw new InvalidOperationException($"no card of rarity {rarity} left at index {index}.");
+    }
+
+    /// <summary>Linear because the blacklist holds at most two entries when it is consulted.</summary>
+    private static bool Blacklisted(List<string> taken, string typeName)
+    {
+        for (int i = 0; i < taken.Count; i++)
+            if (taken[i] == typeName) return true;
+        return false;
     }
 
     /// <summary>CardRarityExtensions.GetNextHighestRarityWithWrapping — Rare wraps to Common.</summary>
@@ -283,11 +322,40 @@ public static class CardRewardGenerator
     };
 
     /// <summary>
+    /// One cached pool per character per thread, paired with the unlock state it was built for.
+    ///
+    /// The pool depends only on the character and the unlocks, so it is the same for every seed
+    /// in a search, but it was rebuilt on every call: a LINQ filter and a ToList over ninety
+    /// cards, twice per seed in a two-player lobby. Thread-static keeps it uncontended under
+    /// Parallel.For and bounded by worker count; the state is stored WITH the pool so the pair
+    /// can never be read half-updated.
+    /// </summary>
+    private sealed record PoolCache(UnlockState? Unlocks, CardEntry[] Pool);
+
+    [ThreadStatic] private static PoolCache?[]? _pools;
+
+    /// <summary>
+    /// The character's pool as a reward sees it. Callers must treat the result as read-only:
+    /// it is shared with every other caller on this thread.
+    /// </summary>
+    public static CardEntry[] PoolFor(Character character, UnlockState? unlocks = null)
+    {
+        var cache = _pools ??= new PoolCache?[Enum.GetValues<Character>().Length];
+        int slot = (int)character;
+
+        if (cache[slot] is { } hit && ReferenceEquals(hit.Unlocks, unlocks)) return hit.Pool;
+
+        var built = BuildPool(character, unlocks);
+        cache[slot] = new PoolCache(unlocks, built);
+        return built;
+    }
+
+    /// <summary>
     /// The character's pool as a reward sees it: epoch-gated cards removed, then filtered for
     /// run mode. Multiplayer drops singleplayer-only cards; the game currently ships none, but
     /// the filter is what the code does and a patch could add some.
     /// </summary>
-    public static List<CardEntry> PoolFor(Character character, UnlockState? unlocks = null)
+    private static CardEntry[] BuildPool(Character character, UnlockState? unlocks)
     {
         var pool = CardPoolData.For(character).AsEnumerable();
 
@@ -302,7 +370,7 @@ public static class CardRewardGenerator
             if (locked.Count > 0) pool = pool.Where(c => !locked.Contains(c.TypeName));
         }
 
-        return pool.Where(c => c.Mode != CardMode.SingleplayerOnly).ToList();
+        return pool.Where(c => c.Mode != CardMode.SingleplayerOnly).ToArray();
     }
 }
 
