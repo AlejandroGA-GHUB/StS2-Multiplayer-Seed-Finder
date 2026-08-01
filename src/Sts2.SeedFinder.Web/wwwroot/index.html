@@ -11,6 +11,15 @@
 <header>
   <h1>Slay the Spire 2 <span>Co-op Seed Finder</span></h1>
   <span class="meta" id="meta"></span>
+  <!-- Pushed to the right of the header, which never scrolls away, because both are wanted at
+       moments the criteria column is not: one before a run and one after it disappointed you. -->
+  <div class="header-actions">
+    <span class="update-note" id="updateNote" hidden></span>
+    <button type="button" class="icon-btn" id="whyBtn"
+            title="Ways a correct seed still gives you the wrong run">Why did my seed produce unexpected results?</button>
+    <button type="button" class="icon-btn" id="updateBtn"
+            title="Compare this copy with the newest release on GitHub">Check for updates</button>
+  </div>
 </header>
 
 <p class="credit">
@@ -183,6 +192,85 @@
     <input type="text" id="pickerSearch" placeholder="Search&hellip;">
   </div>
   <div class="picker-body" id="pickerBody"></div>
+</dialog>
+
+<!-- Static prose rather than anything generated, because none of it depends on the search. It
+     lives here so the one place a claim about the game is worded is the same place it is read,
+     and every item below is a real difference between what a seed decides and what a run does. -->
+<dialog class="sheet" id="whySheet">
+  <div class="sheet-head">
+    <h2>Why did my seed produce unexpected results?</h2>
+    <button type="button" class="picker-close" id="whyClose" aria-label="Close" title="Close">&times;</button>
+  </div>
+  <div class="sheet-body">
+    <p class="lead">A seed decides what the run <i>generates</i>. It does not decide what you walk
+      into, or who is standing next to you. Almost every report of a wrong seed turns out to be one
+      of these, so it is worth a read before you go looking for a bug.</p>
+
+    <h3>Set the lobby up the same way</h3>
+
+    <p><b>Join order.</b> P1 is whoever joins first. Neow, the Ancients, card rewards and shop
+      relics are all rolled per slot, so two players joining in the other order swaps everything
+      that belongs to them. This is the single most common cause of a seed looking wrong.</p>
+
+    <p><b>Player count.</b> Two, three and four players are different runs from the same seed. The
+      count decides which Ancient opens each act, and a chest puts one relic on the table per
+      player.</p>
+
+    <p><b>Characters.</b> A player&rsquo;s card pool, shop relics and own relic bag all belong to
+      their character, so a last-minute switch changes what that player is offered.</p>
+
+    <p><b>Ascension.</b> Ascension 10 gives the final act a second boss. From Ascension 7 the card
+      rarity odds tighten, which moves the second fight&rsquo;s reward but not the first.</p>
+
+    <p><b>What everybody has unlocked.</b> A relic pool is filtered by what that player has
+      revealed, and the run uses everyone&rsquo;s unlocks combined. Only your own save is readable
+      from this machine, so if a partner has revealed more or less than you, their offers and parts
+      of the run can differ from what you see here.</p>
+
+    <p><b>The game version.</b> Predictions are computed for one build. A patch resizes the content
+      pools, pool size decides how many draws a shuffle costs, and everything after that lands
+      somewhere else. A banner appears above the results when your install and this tool disagree.
+      Mods do the same thing and are called out the same way.</p>
+
+    <h3>Once you are playing</h3>
+
+    <p><b>The second fight&rsquo;s cards need a second fight.</b> Fight 1 is safe: the first room
+      after the Ancient is always a monster room, whichever way you go. Fight 2 assumes you walk
+      straight into another one, with no shop, elite, event or rest between. Take a detour and the
+      prediction is for a fight you never had.</p>
+
+    <p><b>Neow options that hand out cards.</b> Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll
+      Boxes and Neow&rsquo;s Bones draw from the same stream the fight rewards use, so taking one
+      shifts both of that player&rsquo;s fights. It affects only the player who took it. Every other
+      Neow choice is free.</p>
+
+    <p><b>Somebody emptied the chest early.</b> A chest pulls from one bag the whole party shares,
+      and anything anyone picks up is taken out of it: elite rewards, relic events, and a
+      merchant&rsquo;s stock, which is removed when the shop is stocked rather than when something
+      is bought. The rarities stay exact. The relics slide along, which is what the &ldquo;allow
+      taken earlier&rdquo; setting is for.</p>
+
+    <p><b>A <span class="q">?</span> room turned into a treasure room.</b> It happens at a small
+      but growing chance each act, and it runs a full round of chest picks, moving every later
+      chest along. Tell the search about it and the rest lines back up.</p>
+
+    <p><b>Shops are counted by visits, not floors.</b> The third relic slot follows a fixed order,
+      so walking past a merchant moves every later shop up a place.</p>
+
+    <p><b>Events are an order, not a schedule.</b> Each act shuffles its events once and hands them
+      out from the front, but a room gives you the next one you currently qualify for and have not
+      already seen. Health, gold, deck contents and the act you are in all gate entries, so read
+      these as &ldquo;near the front of the queue&rdquo;.</p>
+
+    <p><b>A profile that has not met every boss.</b> If a boss exists that nobody in the lobby has
+      seen yet, the game quietly forces it into the run in place of the one the seed rolled. That
+      is not modelled here, so bosses on a fresh account can differ. It costs no randomness, so
+      nothing else about the run moves with it.</p>
+
+    <p class="sheet-foot">Nothing on this list is a mistake in the seed. In every case the seed
+      generated exactly what it says, and the run asked a different question of it.</p>
+  </div>
 </dialog>
 
 <!-- One shared tooltip, moved next to whatever is hovered. It has to live inside the dialog

@@ -543,6 +543,65 @@ $('#pickerClose').onclick = () => $('#picker').close();
 // click whose target is the dialog is a click outside the panel.
 $('#picker').addEventListener('click', e => { if (e.target === $('#picker')) $('#picker').close(); });
 
+// ---- The two header buttons ------------------------------------------------------------------
+
+// All prose, written in index.html, so opening it is the whole feature. Same close behaviour as
+// the picker rather than a second convention.
+$('#whyBtn').onclick = () => $('#whySheet').showModal();
+$('#whyClose').onclick = () => $('#whySheet').close();
+$('#whySheet').addEventListener('click', e => { if (e.target === $('#whySheet')) $('#whySheet').close(); });
+
+/**
+ * Asks the server to compare this copy with the newest GitHub release.
+ *
+ * On click only. Everything else this tool does is local, and a version check is a request to a
+ * third party, so it happens when somebody asks for it and not on page load. The server caches
+ * the answer, which is why pressing this repeatedly is cheap.
+ */
+$('#updateBtn').onclick = async () => {
+  const btn = $('#updateBtn');
+  const note = $('#updateNote');
+
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  note.hidden = true;
+
+  let r;
+  try {
+    r = await (await fetch('/api/update')).json();
+  } catch {
+    // The server is the thing that failed here, not GitHub, so it gets its own wording: the
+    // usual cause is the window being left open after the console it was launched from closed.
+    r = { status: 'Unreachable', message: 'The seed finder is not responding. Restart it and try again.' };
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Check again';
+
+  note.hidden = false;
+  note.className = 'update-note';
+  note.replaceChildren();
+
+  const say = (text, cls) => { if (cls) note.classList.add(cls); note.append(text); };
+
+  if (r.status === 'Current') {
+    say(`Up to date${r.latest ? ` (${r.latest})` : ''}`, 'ok');
+  } else if (r.status === 'Outdated') {
+    say(`${r.latest} is out · `, 'stale');
+    const a = el('a', null, 'download');
+    a.href = r.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    note.append(a);
+    // Only a version this one can be ordered against is worth a title; the rest is noise.
+    note.title = `You are on ${r.current}. Released ${r.publishedOn ?? 'recently'}.`;
+  } else if (r.status === 'Ahead') {
+    say(`Newer than the latest release (${r.latest})`, 'ok');
+  } else {
+    say(r.message ?? 'Could not check.', 'bad');
+  }
+};
+
 // ---- Relic fields --------------------------------------------------------------------------
 
 /**
@@ -1810,7 +1869,11 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
     relicNames.set(r.slug, r.name);
   }
 
-  $('#meta').textContent = `game ${catalog.gameVersion} · art: ${catalog.assetStatus}`;
+  // The tool's own version sits first because it is the one the user can act on: the update
+  // button compares exactly this number against GitHub. It comes off the catalog rather than
+  // that check, so it is on screen without anything having left the machine.
+  $('#meta').textContent =
+    `v${String(catalog.appVersion).replace(/^v/, '')} · game ${catalog.gameVersion} · art: ${catalog.assetStatus}`;
 
   // A patched or modded game produces output that still looks plausible and is no longer true.
   // It goes at the top of the results rather than in a tooltip, because it is the one failure

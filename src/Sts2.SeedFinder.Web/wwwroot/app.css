@@ -55,6 +55,25 @@ header h1 { margin: 0; font-size: 17px; letter-spacing: .2px; }
 header h1 span { color: var(--accent); }
 header .meta { color: var(--text-2); font-size: 12px; }
 
+/* margin-left:auto rather than a spacer, so the pair sits hard right at any width and the meta
+   line keeps whatever room is left. align-items overrides the header's baseline, which would
+   otherwise hang the buttons off the h1's text baseline and leave their borders misaligned. */
+/* Wraps within itself as well as within the header: the explainer's label is a full question,
+   so on a narrow window the two buttons stack right-aligned instead of pushing the meta line
+   off. */
+.header-actions {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; justify-content: flex-end;
+}
+.header-actions .icon-btn { font-size: 12.5px; padding: 5px 10px; }
+
+.update-note { font-size: 12px; color: var(--text-1); }
+.update-note[hidden] { display: none; }
+.update-note.ok { color: var(--good); }
+.update-note.stale { color: var(--accent); font-weight: 600; }
+.update-note.bad { color: var(--warn); }
+.update-note a { color: inherit; }
+
 /* min-height:0 lets the grid children shrink below their content and scroll internally;
    without it they grow to fit and push the scrolling back out to the window. */
 .layout { display: grid; grid-template-columns: 380px 1fr; flex: 1; min-height: 0; }
@@ -468,6 +487,43 @@ dialog::backdrop { background: #0009; }
 .mk-b { font-weight: 600; color: var(--text-0); }
 /* The game animates this one through the spectrum. A static warm gold is the honest still. */
 .mk-rainbow { color: #d8a657; }
+
+/* ---- "Why did my seed produce unexpected results?" sheet ------------------------------- */
+/* Its own dialog rather than the picker's, because this is prose: it wants a reading measure
+   and paragraph rhythm, where the picker wants a dense scrollable grid. Head and close button
+   are shared so the two modals still dismiss identically. */
+
+dialog.sheet {
+  width: min(640px, 92vw); max-height: 84vh; padding: 0; color: var(--text-0);
+  background: var(--bg-1); border: 1px solid var(--accent-dim); border-radius: 10px;
+}
+.sheet-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-bottom: 1px solid var(--border);
+}
+.sheet-head h2 { margin: 0; font-size: 15px; flex: 1; }
+.sheet-body { overflow-y: auto; max-height: calc(84vh - 50px); padding: 4px 18px 18px; }
+
+.sheet-body h3 {
+  margin: 20px 0 0; font-size: 11px; font-weight: 600; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--accent);
+}
+.sheet-body p { margin: 11px 0 0; font-size: 13px; line-height: 1.55; color: var(--text-1); }
+.sheet-body p b { color: var(--text-0); font-weight: 600; }
+.sheet-body .lead { color: var(--text-0); margin-top: 14px; }
+
+/* The stray glyph in "a ? room": boxed so it reads as the map symbol rather than as the
+   sentence trailing off into a question. */
+.sheet-body .q {
+  display: inline-block; min-width: 17px; text-align: center;
+  background: var(--bg-3); border-radius: 4px; color: var(--text-0);
+  font-weight: 600; padding: 0 3px;
+}
+
+.sheet-foot {
+  margin-top: 18px !important; padding-top: 12px; border-top: 1px solid var(--border);
+  color: var(--text-2) !important; font-size: 12px !important;
+}
 
 /* ---- Scrollbars ----------------------------------------------------------------------- */
 /* The stock Windows scrollbar is a light grey slab that reads as a piece of another

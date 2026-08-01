@@ -362,7 +362,12 @@ so an unreachable boss or event costs a lookup instead of a full run.
 shared event seen in Act 1 is skipped in Acts 2 and 3. Hence the criterion is "within the
 first n", and both the CLI and the UI say why. Never phrase it as a guaranteed position.
 
-### Ascension 10 — Double Boss, the one ascension effect on generation
+### Ascension 10 — Double Boss, the one ascension effect on RUN generation
+Not the only ascension effect the finder models. A7's `AscensionLevel.Scarcity` moves card
+rarity odds, which is why `--ascension` is a real input to card prediction — see "Card rewards,
+fights 1 and 2". The distinction is that Scarcity touches REWARDS; nothing below the acts, map,
+bosses or Ancients moves with ascension except this A10 second-boss draw.
+
 `RunManager.cs:731`, inside the per-act loop of `RunManager.GenerateRooms`:
 ```csharp
 if (i == State.Acts.Count - 1 && AscensionManager.HasLevel(AscensionLevel.DoubleBoss))
@@ -437,8 +442,8 @@ The pity counter belongs to CARD rarity (`CardRarityOdds`), which is a different
 blocker on shop slots 1 and 2 is only the POSITION of `PlayerRng.Rewards` when the merchant is
 built — every combat reward before it has advanced that stream by an amount that depends on the
 route. Given a known route it is computable, which means these two slots are reachable work
-rather than a hard limit. Not built: it needs the same route input the elite relics do, which the
-user declined (see `plan.md`).
+rather than a hard limit. Unbuilt because that route input means modelling the map graph, the
+same dependency elite relics carry.
 
 The rest still holds:
 - They then pull from the Common/Uncommon/Rare deques, which combat and chest rewards have been
@@ -616,7 +621,10 @@ count, different value. Only Orobas reads it.
   16/31/45 exactly. Also corroborated by `RelicModel.IsBeforeAct3TreasureChest`:
   `(Players.Count > 1) ? 38 : 41`.
 - `CardMultiplayerConstraint { None, MultiplayerOnly, SingleplayerOnly }` filters card pools.
-- Neow relic pool differs (no Silver Crucible/Winged Boots; adds Massive Scroll) *(wiki-sourced)*.
+- Neow relic pool differs: no Silver Crucible or Winged Boots, adds Massive Scroll. **No longer
+  wiki-sourced** — these are `IsAllowed => Players.Count == 1` / `> 1` checks read off the game,
+  encoded as `RelicAvailability` in `Core/Neow/NeowRelics.cs`, and confirmed in play across
+  several co-op runs.
 - Golden Compass makes Act 2 a single path 2 floors longer, shifting later floor numbers *(wiki-sourced)*.
 - Runtime MP check elsewhere is `RunState.Players.Count > 1`.
 

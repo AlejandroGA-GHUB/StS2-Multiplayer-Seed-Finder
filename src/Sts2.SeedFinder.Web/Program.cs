@@ -212,6 +212,7 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
 
     return Results.Json(new CatalogDto(
         GameVersion,
+        AppVersion.Load().Version,
         drift.Warn ? drift.Message : null,
         assets.Kind.ToString().ToLowerInvariant(),
         assets.Status,
@@ -275,6 +276,17 @@ app.MapGet("/api/profile", (IConfiguration config) =>
         Lobby: run is null ? null : new LobbyDto(
             run.Seed, run.Characters.ToArray(), run.Ascension, run.IsMultiplayer)), json);
 });
+
+// ---- Is this copy still the newest one? -----------------------------------------------------
+
+// Separate from the drift banner above, and the two are easy to confuse. Drift asks whether the
+// GAME changed under a tool that is already installed. This asks whether the TOOL has moved on,
+// which is the only one of the two a user can act on without understanding either.
+//
+// Behind an explicit request rather than run at startup: this is the one thing here that leaves
+// the machine, so pressing the button is the consent.
+app.MapGet("/api/update", async (IConfiguration config, CancellationToken ct) =>
+    Results.Json(await UpdateCheck.RunAsync(config["Updates:Repository"], ct), json));
 
 // ---- Relic and card art -------------------------------------------------------------------
 

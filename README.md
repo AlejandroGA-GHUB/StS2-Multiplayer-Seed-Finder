@@ -15,6 +15,8 @@ that space.
 > Updated At **Slay the Spire 2 v0.109.1**. Predictions are version-specific — see
 > [After a game patch](#after-a-game-patch).
 
+> Can reach out via aga.personal.dev@gmail.com with any queries regarding the app.
+
 
 ---
 
@@ -443,6 +445,13 @@ Only a real run settles it, which is why `repair.bat` insists on one before reco
 
 ---
 
+# AI File References For Development
+
+If using AI to work on a fork, CLAUDE.md, game_mechanics.md, web_app_specs.md, are the 3 main files to use for context on the app.
+
+If you're using any LLM other than Anthropics models (Haiku/Sonnet/Opus/Fable), you will need to rename the CLAUDE.md file to AGENTS.md or whichever file name
+the LLM is meant to utilize.
+
 ## Layout
 
 | | |
@@ -461,7 +470,7 @@ Only a real run settles it, which is why `repair.bat` insists on one before reco
 
 ## Building on this
 
-Reading the game's code to understand its behaviour is ordinary modding practice — Mega Crit
+Reading the game's code to understand its behaviour is ordinary modding practice, Mega Crit
 ship Harmony inside the game. Redistributing their work is the line this project does not
 cross:
 
@@ -472,3 +481,7 @@ cross:
   © Colin D. Green). That MIT notice stays in the file.
 
 Not affiliated with or endorsed by Mega Crit. Slay the Spire 2 and its assets are theirs.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

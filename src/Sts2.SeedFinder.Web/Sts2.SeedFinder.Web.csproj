@@ -32,4 +32,16 @@
     <None Include="../../baselines/verified-build.json" Link="verified-build.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!--
+    VERSION.txt travels the same way, for the same reason: the update check compares what this
+    copy is against what GitHub has published, and it reads that from beside the exe rather than
+    from a compiled-in constant so cutting a release is a one-file edit at the repo root.
+
+    Guarded on Exists() only because AppVersion.Load already degrades to "unknown" on its own:
+    an absent version belongs in the header, not in a build error.
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)../../VERSION.txt')">
+    <None Include="../../VERSION.txt" Link="VERSION.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

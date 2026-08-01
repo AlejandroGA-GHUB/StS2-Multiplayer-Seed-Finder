@@ -1,10 +1,16 @@
 # Sts2 Multiplayer Seed Finder
 
-A seed finder for **Slay the Spire 2 co-op runs**. Shipped. `docs/plan.md` holds what is still
-open (nothing starts without the user's go-ahead), what was built, and the reasoning behind it.
-**Nothing is queued.** Elite relics were investigated and declined by the user — they need the
-route as an input, which the map graph would otherwise have to supply; see "Elite relics:
-feasible, declined" in `docs/plan.md` before re-deriving any of it.
+A seed finder for **Slay the Spire 2 co-op runs**. Shipped. **Nothing is in progress** — start
+nothing without the user's go-ahead.
+
+**Elite relics and shop relic slots 1 and 2 are PENDING, not rejected.** Both were investigated
+and found feasible; both are deferred on the same dependency, a route input that the map graph
+would have to supply. The analysis is done, so re-deriving it wastes a session: read
+`Core/Acts/` and the shop section of `docs/game_mechanics.md` first, and ask before building.
+
+`docs/plan.md` holds the open queue, what was built, and the reasoning behind each decision.
+**It is gitignored and exists only in the author's checkout** — it is personal working notes, so
+a clone will not have it and nothing here depends on reading it.
 
 ## Scope — read this first
 

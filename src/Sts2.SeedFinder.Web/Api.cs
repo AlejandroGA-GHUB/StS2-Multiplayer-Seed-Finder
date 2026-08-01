@@ -74,8 +74,13 @@ public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 /// against, or when mods are installed. Either makes predictions wrong in a way that looks
 /// fine, so it is stated at the top of the results rather than hidden in a tooltip.
 /// </param>
+/// <param name="AppVersion">
+/// This tool's version, so the header can state it without anyone pressing the update button.
+/// The check against GitHub is a separate, opt-in call: see <c>/api/update</c>.
+/// </param>
 public sealed record CatalogDto(
-    string GameVersion, string? DriftWarning, string AssetProvider, string AssetStatus,
+    string GameVersion, string AppVersion,
+    string? DriftWarning, string AssetProvider, string AssetStatus,
     RelicDto[] NeowCurses, RelicDto[] NeowPositives, RelicDto[] NeowCoinFlip,
     AncientDto[] Ancients, CharacterDto[] Characters, string[] Act1Maps, ActContentDto[] ActContent,
     CardPoolDto[] CardPools, ShopRelicDto[] ShopRelics, ChestRelicDto[] ChestRelics,
