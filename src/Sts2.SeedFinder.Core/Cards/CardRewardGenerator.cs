@@ -156,7 +156,12 @@ public static class CardRewardGenerator
         Burn(rng, priorDraws);
 
         var pool = PoolFor(character, unlocks);
+        var index = PoolIndex.For(pool);
         var results = new List<FirstFightReward>(fights);
+
+        // Hoisted out of the fight loop: three entries is the most a reward can blacklist, and
+        // stackallocating inside the loop would repeat the reservation per fight.
+        Span<int> taken = stackalloc int[3];
 
         // Both pity counters start at their run-start values and persist across fights.
         float rarityOffset = BaseRarityOffset;
@@ -174,7 +179,7 @@ public static class CardRewardGenerator
             if (hasPotion) Burn(rng, 2);           // PotionReward.Populate: rarity roll, then pick
 
             var cards = new List<RewardCard>(3);
-            var taken = new List<string>(3);
+            int takenCount = 0;
 
             for (int i = 0; i < 3; i++)
             {
@@ -184,18 +189,23 @@ public static class CardRewardGenerator
                 // once for the rarity — which is nine times a fight over a ninety-card pool.
                 // Counting and indexing in place asks the same questions of the same entries in
                 // the same order, and allocates nothing.
-                var rarity = RollRarity(rng, ref rarityOffset, pool, taken, ascension);
+                //
+                // The walk is now over one rarity's entries rather than the whole pool, and the
+                // blacklist compares interned type ids rather than strings. Both are bookkeeping
+                // changes: the same entries are visited in the same pool order and the same
+                // draws are taken, so the answer is unchanged. See PoolIndex.
+                var rarity = RollRarity(rng, ref rarityOffset, index, pool, taken[..takenCount], ascension);
 
-                int count = CountAvailable(pool, taken, rarity);
-                var picked = NthAvailable(pool, taken, rarity, rng.NextInt(0, count));
+                int count = CountAvailable(index, pool, taken[..takenCount], rarity);
+                int picked = NthAvailable(index, pool, taken[..takenCount], rarity, rng.NextInt(0, count));
 
                 // The upgrade draw is taken outside the IsUpgradable check, so it always happens.
                 // In Act 1 the odds are 0 (they scale with the act index), so it never lands.
                 float roll = rng.NextFloat();
                 bool upgraded = roll <= 0f;
 
-                cards.Add(new RewardCard(picked.TypeName, picked.Rarity, upgraded));
-                taken.Add(picked.TypeName);
+                cards.Add(new RewardCard(pool[picked].TypeName, pool[picked].Rarity, upgraded));
+                taken[takenCount++] = picked;
             }
 
             results.Add(new FirstFightReward(cards, hasPotion));
@@ -243,7 +253,7 @@ public static class CardRewardGenerator
     /// a rare resets it to the floor, anything else nudges it up toward the cap.
     /// </summary>
     private static CardRarity RollRarity(
-        Rng rng, ref float offset, CardEntry[] pool, List<string> taken, int ascension)
+        Rng rng, ref float offset, PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken, int ascension)
     {
         float roll = rng.NextFloat();
         float rareThreshold = RegularRareOdds(ascension) + offset;
@@ -256,7 +266,7 @@ public static class CardRewardGenerator
             ? BaseRarityOffset
             : Math.Min(offset + RarityGrowth(ascension), MaxRarityOffset);
 
-        return NextAllowedRarity(rarity, pool, taken);
+        return NextAllowedRarity(rarity, index, pool, taken);
     }
 
     /// <summary>
@@ -264,12 +274,13 @@ public static class CardRewardGenerator
     /// the pool can actually satisfy is found. A full pool never needs this, but a pool drained
     /// by the blacklist could.
     /// </summary>
-    private static CardRarity NextAllowedRarity(CardRarity rarity, CardEntry[] pool, List<string> taken)
+    private static CardRarity NextAllowedRarity(
+        CardRarity rarity, PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken)
     {
         // The "already tried" set is a bitmask rather than a List, since this runs once per draw
         // and the ladder has at most four rungs.
         int seen = 1 << (int)rarity;
-        while (rarity != CardRarity.None && CountAvailable(pool, taken, rarity) == 0)
+        while (rarity != CardRarity.None && CountAvailable(index, pool, taken, rarity) == 0)
         {
             rarity = NextHighest(rarity);
             int bit = 1 << (int)rarity;
@@ -281,33 +292,49 @@ public static class CardRewardGenerator
 
     /// <summary>How many cards of one rarity the pool still offers, ignoring those already drawn
     /// into this reward.</summary>
-    private static int CountAvailable(CardEntry[] pool, List<string> taken, CardRarity rarity)
+    private static int CountAvailable(
+        PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken, CardRarity rarity)
     {
-        int n = 0;
-        for (int i = 0; i < pool.Length; i++)
-            if (pool[i].Rarity == rarity && !Blacklisted(taken, pool[i].TypeName)) n++;
+        // The pool cannot change during a reward, so the only thing that moves is the blacklist,
+        // and it holds at most two entries when this is consulted. Subtracting them from a
+        // precomputed total replaces a ninety-entry walk with a loop of two.
+        int n = index.CountOf(rarity);
+        for (int i = 0; i < taken.Length; i++)
+            if (pool[taken[i]].Rarity == rarity) n--;
         return n;
     }
 
     /// <summary>
-    /// The <paramref name="index"/>'th still-available card of a rarity, in pool order. Pool order
-    /// is what the game indexes into, so this has to walk rather than sort or hash.
+    /// The <paramref name="nth"/>'th still-available card of a rarity, in pool order, returned as
+    /// its index into <paramref name="pool"/>. Pool order is what the game indexes into, so this
+    /// walks rather than sorting or hashing; it just walks one rarity's entries instead of all.
     /// </summary>
-    private static CardEntry NthAvailable(CardEntry[] pool, List<string> taken, CardRarity rarity, int index)
+    private static int NthAvailable(
+        PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken, CardRarity rarity, int nth)
     {
-        for (int i = 0; i < pool.Length; i++)
+        var group = index.Of(rarity);
+        for (int i = 0; i < group.Length; i++)
         {
-            if (pool[i].Rarity != rarity || Blacklisted(taken, pool[i].TypeName)) continue;
-            if (index-- == 0) return pool[i];
+            int poolIndex = group[i];
+            if (Blacklisted(index, taken, poolIndex)) continue;
+            if (nth-- == 0) return poolIndex;
         }
-        throw new InvalidOperationException($"no card of rarity {rarity} left at index {index}.");
+        throw new InvalidOperationException($"no card of rarity {rarity} left at index {nth}.");
     }
 
-    /// <summary>Linear because the blacklist holds at most two entries when it is consulted.</summary>
-    private static bool Blacklisted(List<string> taken, string typeName)
+    /// <summary>
+    /// Whether a candidate is one of the cards already offered.
+    ///
+    /// Compares interned type ids rather than the pool positions themselves, because the game
+    /// blacklists by card TYPE. Two pool entries sharing a TypeName would have to exclude each
+    /// other, and comparing positions would let the second one through. See
+    /// <see cref="PoolIndex.TypeIds"/>.
+    /// </summary>
+    private static bool Blacklisted(PoolIndex index, ReadOnlySpan<int> taken, int candidate)
     {
-        for (int i = 0; i < taken.Count; i++)
-            if (taken[i] == typeName) return true;
+        int id = index.TypeIds[candidate];
+        for (int i = 0; i < taken.Length; i++)
+            if (index.TypeIds[taken[i]] == id) return true;
         return false;
     }
 

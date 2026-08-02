@@ -68,6 +68,15 @@ internal static class Program
             if (args.Contains("--doctor"))
                 return Tools.Doctor.Run(verbose: args.Contains("--verbose"));
 
+            // --gpu-verify holds the GPU kernels to Core the way the Oracle holds Core to the
+            // game. It is a separate command rather than part of --doctor because it answers a
+            // different question: --doctor asks whether this checkout still predicts your GAME,
+            // this asks whether the accelerated path still agrees with the checkout.
+            if (args.Contains("--gpu-verify") || args.Contains("--gpu-bench"))
+                return Tools.GpuDoctor.Run(
+                    verbose: args.Contains("--verbose"),
+                    bench: args.Contains("--gpu-bench"));
+
             // --show prints a game method beside the file that mirrors it, which is the whole
             // of the "an algorithm changed" loop that can be automated.
             int sh = Array.IndexOf(args, "--show");
@@ -406,11 +415,22 @@ internal static class Program
             Console.WriteLine($"  Neow rate     : 1 in {1.0 / p:N1} seeds (before act filtering)");
         }
         Console.WriteLine($"  scanning      : {opts.Count:N0} seeds from index {opts.Start:N0}");
+
+        // The GPU only ever narrows which indices get examined; the criteria chain that decides
+        // a match is the same either way. Disposed with the search, since a CLI process runs one.
+        using var planner = Sts2.SeedFinder.Gpu.GpuSearchPlanner.Create();
+        bool accelerated = planner.TryPlan(criteria, opts.Start, opts.Count, CancellationToken.None,
+            out var candidates);
+        if (accelerated)
+            Console.WriteLine($"  engine        : {planner.Status.Backend} ({planner.Status.DeviceName})");
+        else if (planner.Available)
+            Console.WriteLine("  engine        : cpu (these criteria have no GPU pre-filter yet)");
         Console.WriteLine();
 
         var sw = Stopwatch.StartNew();
         int n = 0;
-        foreach (var hit in SeedSearcher.Search(criteria, opts.Start, opts.Count, opts.MaxResults))
+        foreach (var hit in SeedSearcher.Search(criteria, opts.Start, opts.Count, opts.MaxResults,
+                     CancellationToken.None, candidates))
         {
             n++;
             var slots = relic is null
@@ -639,6 +659,15 @@ internal static class Program
             --verify-history needs no live run and covers CO-OP, which --verify cannot
             without a partner: a solo multiplayer lobby refuses to start. Any past co-op
             run exercises both multiplayer branches.
+
+            --gpu-verify       Check the GPU search kernels against Core. Answers a
+                               different question from --doctor: not "does this predict
+                               your game" but "does the accelerated path still agree
+                               with the checkout". Needs no GPU (it falls back to
+                               ILGPU's CPU backend) and needs no run.
+            --gpu-bench        Same checks, then measure throughput on this machine.
+
+            STS2_GPU=off disables the GPU entirely; cuda / opencl / cpu force a backend.
 
           UNLOCK STATE (affects which relics can appear — set these if they apply)
             --not-all-characters   You have NOT unlocked every character.

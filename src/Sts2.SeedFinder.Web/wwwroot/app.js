@@ -345,6 +345,10 @@ let stream = null;
 let startIsUserSet = false;
 let lastStart = null;
 
+// Which engine the last search ran on, or null when it ran on the CPU. Only shown when a GPU
+// took part, because "cpu" is the normal case and naming it every time is noise.
+let lastEngine = null;
+
 // ---- Art, with a generated monogram whenever there is none ----------------------------------
 //
 // Relics and cards are both drawn by everything below, and a card can share a slug with a
@@ -1629,7 +1633,13 @@ function buildQuery() {
   // links, but a relic's branch is decided by the relic, so the server's default is always
   // the right answer.
   q.set('require', state.require);
-  q.set('results', $('#results').value);
+  // Clamped here as well as in the markup, because `max` on a number input only governs the
+  // spinner and native validation: a typed or pasted 2500 sails straight through. Written back
+  // into the field so the correction is visible rather than silent.
+  const resultsField = $('#results');
+  const capped = Math.min(Math.max(parseInt(resultsField.value, 10) || 25, 1), 100);
+  resultsField.value = capped;
+  q.set('results', capped);
   q.set('count', $('#count').value);
   // Only send a start index the user actually typed. Otherwise every search after the first
   // would silently rescan the same range, because the previous run's index is still on screen.
@@ -1691,6 +1701,7 @@ function startSearch() {
   stream.addEventListener('start', e => {
     const d = JSON.parse(e.data);
     lastStart = d.start;
+    lastEngine = (d.engine && d.engine !== 'cpu') ? (d.device || d.engine) : null;
     // Deliberately not written back into the field — see buildQuery.
     setBusy(true, `Scanning ${Number(d.count).toLocaleString()} seeds from ${Number(d.start).toLocaleString()}…`);
   });
@@ -1705,7 +1716,8 @@ function startSearch() {
     const d = JSON.parse(e.data);
     stopSearch(`${d.found} seed${d.found === 1 ? '' : 's'} in ${d.seconds.toFixed(2)}s` +
       (d.found === 0 ? ', so try a larger scan or loosen a requirement' : '') +
-      (lastStart != null ? ` · scanned from ${Number(lastStart).toLocaleString()}` : ''));
+      (lastStart != null ? ` · scanned from ${Number(lastStart).toLocaleString()}` : '') +
+      (lastEngine ? ` · ${lastEngine}` : ''));
   });
 
   stream.addEventListener('error', e => {

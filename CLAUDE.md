@@ -71,6 +71,8 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --che
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 0BUJY7ZRE8TP --players 2
 dotnet run -c Release --project src\Sts2.SeedFinder.Oracle              # differential test vs sts2.dll
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --gpu-verify # GPU kernels vs Core (no GPU needed)
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --gpu-bench  # ... and measure this machine
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --verify     # diff act generation vs the run in progress
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --verify-history --verbose  # ... vs every finished run
 ```
@@ -174,6 +176,14 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   the server serves the new one.
 - `src/Sts2.SeedFinder.Oracle` — loads the real `sts2.dll` by reflection (no compile-time
   reference), so it fails gracefully when the game isn't installed.
+- `src/Sts2.SeedFinder.Gpu` — **optional** accelerator (ILGPU: CUDA, OpenCL, CPU fallback).
+  Measured 4.79 G seeds/s on a discrete card and 177 M/s on an integrated one, against 45.5 M/s
+  for the CPU searcher. Only the Neow curse pre-filter is ported so far; cards and run
+  generation are not. `Core` does NOT reference it, and never should: the accelerator plugs in
+  through `SeedSearcher`'s `candidateIndices` parameter, which may only NARROW which indices get
+  examined. Every candidate still goes through the whole CPU criteria chain, so an accelerated
+  search returns the same set. A GPU is never required to build or run; `STS2_GPU=off` disables
+  it, `cuda`/`opencl`/`cpu` force a backend.
 
 ### Finding the player's files, for people who are not this user
 Two separate lookups, both needed for an open-source release and both with an override:
@@ -195,7 +205,7 @@ any run in progress. When nothing is found it returns the paths it tried, so the
 fix instead of just saying no. Both the CLI verifiers and the web app go through the same code,
 so they cannot disagree about where your saves are.
 
-### The three verification harnesses cover different failure modes
+### The four verification harnesses cover different failure modes
 None replaces the others, and knowing which to reach for saves time:
 
 - **Oracle** — proves each *function* matches. Runs our code and the game's compiled code on
@@ -211,6 +221,15 @@ None replaces the others, and knowing which to reach for saves time:
   entered) but far broader, retrospective, and the only one that reaches co-op or shop relics.
   Its failures need reading rather than trusting: build, unlock state at the time, boss
   discovery order and mods are all unrecorded, and the tool says so.
+
+- **`--gpu-verify`** — proves the *kernels*. The Oracle structurally cannot reach them: they are
+  a second implementation of the same arithmetic, compiled by a different compiler for a
+  different instruction set, so `sts2.dll` has nothing to say about them. They are held to
+  `Core` instead, which the Oracle already vouches for. Needs no GPU (it falls back to ILGPU's
+  CPU accelerator) and no run. **Run it after any change to `Core/MegaRandom.cs`, `Core/Rng.cs`,
+  `Core/GameHash.cs`, `Core/SeedCodec.cs` or `Gpu/`** — those are the files the kernels mirror.
+  It compares hit SETS, not sampled hits, because a kernel that wrongly REJECTS seeds produces
+  a search that is quietly incomplete and looks perfectly healthy.
 
 Correct pieces wired in the wrong order pass the Oracle and fail `--verify`. A patch that
 changes `NextFloat` fails the Oracle immediately. Card rewards are Oracle-only, by necessity —

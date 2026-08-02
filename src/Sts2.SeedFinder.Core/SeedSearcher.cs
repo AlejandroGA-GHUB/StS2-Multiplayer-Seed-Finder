@@ -274,13 +274,26 @@ public static class SeedSearcher
     /// <summary>
     /// Scan a contiguous range of the seed-string space and yield matches.
     /// Ranges are deterministic, so a search can be sharded or resumed by index.
+    ///
+    /// <paramref name="candidateIndices"/> replaces the contiguous walk with a supplied stream
+    /// of indices, which is how an accelerator plugs in without <c>Core</c> knowing one exists.
+    /// The contract is deliberately narrow: a pre-filter may only NARROW which indices get
+    /// looked at, never decide anything. Every index it yields is still put through the whole
+    /// criteria chain here, so a pre-filter that returns too much costs time and a pre-filter
+    /// that returns something wrong is caught. The failure it cannot catch is a pre-filter that
+    /// returns too LITTLE, which is why the GPU path is gated on a differential harness that
+    /// compares hit sets rather than sampling hits.
+    ///
+    /// <paramref name="startIndex"/> and <paramref name="count"/> still describe the range being
+    /// searched when indices are supplied; they are what the caller reports as progress.
     /// </summary>
     public static IEnumerable<SeedHit> Search(
         SearchCriteria criteria,
         ulong startIndex,
         ulong count,
         int maxResults,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IEnumerable<ulong>? candidateIndices = null)
     {
         Validate(criteria);
 
@@ -493,11 +506,11 @@ public static class SeedSearcher
                     MaxDegreeOfParallelism = Environment.ProcessorCount,
                 };
 
-                Parallel.For(0L, (long)count, options, i =>
+                void Evaluate(ulong index)
                 {
                     if (cts.IsCancellationRequested) return;
 
-                    var seed = SeedCodec.FromIndex(startIndex + (ulong)i, criteria.SeedLength);
+                    var seed = SeedCodec.FromIndex(index, criteria.SeedLength);
                     ulong runSeed = SeedCodec.RunSeed(seed);
 
                     // Cheapest filter first: act selection is three draws on its own RNG.
@@ -518,7 +531,12 @@ public static class SeedSearcher
 
                     results.Add(new SeedHit(seed, NeowGenerator.PredictAllOffers(runSeed, ctx), run), cts.Token);
                     if (Interlocked.Increment(ref found) >= maxResults) cts.Cancel();
-                });
+                }
+
+                if (candidateIndices is null)
+                    Parallel.For(0L, (long)count, options, i => Evaluate(startIndex + (ulong)i));
+                else
+                    Parallel.ForEach(candidateIndices, options, Evaluate);
             }
             catch (OperationCanceledException) { /* expected on early exit */ }
             finally { results.CompleteAdding(); }
@@ -914,7 +932,11 @@ public static class SeedSearcher
         }
     }
 
-    private static IReadOnlyList<int> ResolveRequiredSlots(SearchCriteria criteria) => criteria.Requirement switch
+    /// <summary>
+    /// Which slots a Neow criterion has to hold for. Public because an accelerator has to
+    /// build the same slot mask, and a second copy of this rule would be free to drift.
+    /// </summary>
+    public static IReadOnlyList<int> ResolveRequiredSlots(SearchCriteria criteria) => criteria.Requirement switch
     {
         SlotRequirement.All => Enumerable.Range(0, criteria.PlayerCount).ToArray(),
         SlotRequirement.Specific => criteria.RequiredSlots,

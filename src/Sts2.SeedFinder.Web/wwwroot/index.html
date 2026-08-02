@@ -136,7 +136,10 @@
       <div class="scan-bar">
         <div class="row">
           <label for="results">Stop after</label>
-          <input type="number" id="results" value="25" min="1" max="500">
+          <!-- Capped at 100 because every result renders a full run card with art. A few
+               hundred is enough to make the page lag badly, and nobody reads that many. -->
+          <input type="number" id="results" value="25" min="1" max="100"
+                 title="How many seeds to show before stopping. Maximum 100.">
         </div>
         <div class="row">
           <label for="count">Seeds to scan</label>

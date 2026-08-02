@@ -36,6 +36,13 @@ if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"))
 }
 
 builder.Services.AddSingleton(AssetProviderFactory.Create(builder.Configuration));
+
+// One planner for the process. Probing for a device and JIT-compiling the kernels costs far
+// more than a search does, so doing it per request would make the accelerated path the slower
+// one. Create() never throws: a machine with no usable GPU gets a planner that declines every
+// search and the CPU path runs as before.
+builder.Services.AddSingleton(Sts2.SeedFinder.Gpu.GpuSearchPlanner.Create());
+
 var app = builder.Build();
 
 // Serve the page ourselves so its links to app.js / app.css can carry a stamp of when those
@@ -376,15 +383,31 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
 
     ulong start = Query.ULong(q, "start") ?? Query.RandomStart();
     ulong count = Query.ULong(q, "count") ?? 5_000_000;
-    int max = (int)(Query.ULong(q, "results") ?? 25);
+    // Clamped server-side too, not just in the page. Every result streams a full run card with
+    // art, so a few hundred is enough to make the browser crawl, and /api/search is reachable
+    // without the page. The CLI is left uncapped: it prints text and the caller asked for it.
+    int max = Math.Clamp((int)(Query.ULong(q, "results") ?? 25), 1, 100);
 
-    await Send("start", new { start, count, results = max });
+    // The pre-filter only narrows which indices get examined; every one it yields still goes
+    // through the same criteria chain, so an accelerated search and a plain one return the
+    // same set. Reported to the client so the UI can say which engine ran.
+    var planner = app.Services.GetRequiredService<Sts2.SeedFinder.Gpu.GpuSearchPlanner>();
+    bool accelerated = planner.TryPlan(criteria, start, count, ct, out var candidates);
+
+    await Send("start", new
+    {
+        start,
+        count,
+        results = max,
+        engine = accelerated ? planner.Status.Backend.ToLowerInvariant() : "cpu",
+        device = accelerated ? planner.Status.DeviceName : null,
+    });
 
     int found = 0;
     var sw = System.Diagnostics.Stopwatch.StartNew();
     try
     {
-        foreach (var hit in SeedSearcher.Search(criteria, start, count, max, ct))
+        foreach (var hit in SeedSearcher.Search(criteria, start, count, max, ct, candidates))
         {
             if (ct.IsCancellationRequested) break;
             found++;
