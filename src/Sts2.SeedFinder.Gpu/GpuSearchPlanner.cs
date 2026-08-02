@@ -23,7 +23,7 @@ namespace Sts2.SeedFinder.Gpu;
 public sealed class GpuSearchPlanner : IDisposable
 {
     private readonly GpuEngine? _engine;
-    private readonly GpuNeowSearch? _search;
+    private readonly GpuSeedScan? _search;
 
     /// <summary>
     /// A semaphore rather than a lock, because the consumer is <c>Parallel.ForEach</c> and it
@@ -42,7 +42,7 @@ public sealed class GpuSearchPlanner : IDisposable
     {
         _engine = engine;
         Status = status;
-        _search = engine is null ? null : new GpuNeowSearch(engine);
+        _search = engine is null ? null : new GpuSeedScan(engine);
     }
 
     /// <summary>Probe once. Never throws; a machine with no GPU gets an unavailable planner.</summary>
@@ -106,10 +106,17 @@ public sealed class GpuSearchPlanner : IDisposable
         ulong startIndex,
         ulong count,
         CancellationToken cancellationToken,
-        out IEnumerable<ulong>? candidates)
+        out IEnumerable<ulong>? candidates,
+        SearchProgress? progress = null)
     {
         candidates = null;
         if (_engine is null || _search is null) return false;
+
+        // A device that failed once stays failed. The accelerator is built once per process
+        // because compiling the kernel costs more than a search does, so after a driver reset
+        // that handle is dead and every later launch would fail the same way. Declining here
+        // turns "broken until you restart the app" into "searches are slower from now on".
+        if (_search.DeviceLost) return false;
 
         // Seed lengths other than twelve would need a differently shaped hash, and the kernels
         // are specialised to twelve. Searches never use another length, but saying so beats
@@ -150,15 +157,20 @@ public sealed class GpuSearchPlanner : IDisposable
         if (criteria.Cards.Count > 0)
             cardResources = TryBuildCards(criteria, out cards);
 
-        if (actParams.Active == 0 && neow.Active == 0 && cards.Active == 0)
+        var runStage = GpuRunStage.TryCreate(_engine, criteria);
+        var run = runStage?.RunParams ?? default;
+
+        if (actParams.Active == 0 && neow.Active == 0 && cards.Active == 0 && run.Active == 0)
         {
             actResources?.Dispose();
             cardResources?.Dispose();
+            runStage?.Dispose();
             return false;
         }
 
-        candidates = Stream(actParams, actResources, neow, cards, cardResources,
-            startIndex, count, cancellationToken);
+        var p = new SeedFilterParams { Acts = actParams, Neow = neow, Cards = cards, Run = run };
+        candidates = Stream(p, actResources, cardResources, runStage,
+            startIndex, count, cancellationToken, progress);
         return true;
     }
 
@@ -183,7 +195,11 @@ public sealed class GpuSearchPlanner : IDisposable
         var slot = new int[n];
         var fight = new int[n];
         var typeId = new int[n];
-        int deepest = 1;
+
+        // Taken from Core rather than recomputed. Under any-order this is deeper than the
+        // criteria's own fights, and a kernel that walked the shallower distance would reject
+        // seeds the CPU would have accepted, which is the one failure a pre-filter must not have.
+        int deepest = SeedSearcher.DeepestFight(criteria);
 
         for (int i = 0; i < n; i++)
         {
@@ -193,7 +209,6 @@ public sealed class GpuSearchPlanner : IDisposable
 
             slot[i] = want.Slot;
             fight[i] = want.Fight;
-            if (want.Fight > deepest) deepest = want.Fight;
         }
 
         p = new CardFilterParams
@@ -225,14 +240,14 @@ public sealed class GpuSearchPlanner : IDisposable
     /// concurrent scans would interleave into each other's results.
     /// </summary>
     private IEnumerable<ulong> Stream(
-        ActFilterParams actParams,
+        SeedFilterParams p,
         ActResources? actResources,
-        NeowPrefilterParams neow,
-        CardFilterParams cards,
         CardResources? cardResources,
+        GpuRunStage? runStage,
         ulong start,
         ulong count,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SearchProgress? progress)
     {
         // try/finally rather than a lock statement, both because `yield return` cannot appear
         // inside one and because the release has to survive a consumer that stops early:
@@ -241,20 +256,22 @@ public sealed class GpuSearchPlanner : IDisposable
         _gate.Wait(cancellationToken);
         try
         {
+            var views = new SeedFilterViews(
+                actResources?.View ?? default,
+                cardResources?.Pools.View ?? default,
+                cardResources?.View ?? default,
+                runStage?.View ?? default);
+
             foreach (var index in _search!.Scan(
-                         actParams,
-                         actResources?.View ?? default,
-                         neow,
-                         cards,
-                         cardResources?.Pools.View ?? default,
-                         cardResources?.View ?? default,
-                         start, (long)count, cancellationToken))
+                         p, views, start, (long)count, cancellationToken,
+                         GpuSeedScan.DefaultTileSize, progress))
                 yield return index;
         }
         finally
         {
             actResources?.Dispose();
             cardResources?.Dispose();
+            runStage?.Dispose();
             _gate.Release();
         }
     }

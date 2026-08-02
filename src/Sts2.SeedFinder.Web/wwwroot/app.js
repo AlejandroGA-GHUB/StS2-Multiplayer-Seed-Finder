@@ -347,9 +347,27 @@ let stream = null;
 let startIsUserSet = false;
 let lastStart = null;
 
-// Which engine the last search ran on, or null when it ran on the CPU. Only shown when a GPU
-// took part, because "cpu" is the normal case and naming it every time is noise.
-let lastEngine = null;
+// Which engine the last search ran on, named either way. It used to be shown only when a GPU
+// took part, on the grounds that the CPU was the normal case; now that most criteria can be
+// accelerated, which one you got is the thing worth knowing, and silence reads as "no idea".
+let lastEngine = 'CPU';
+
+// Seeds examined by the last search, which on an accelerated one is very different from the
+// number that reached the criteria chain. See SearchProgress.
+let lastScanned = 0;
+
+// Seeds per second, as a phrase. Null when there is nothing to divide yet, which is the first
+// tick of every search and the whole of a search too short to have one.
+function formatRate(seeds, seconds) {
+  if (!(seeds > 0) || !(seconds > 0)) return null;
+  const rate = seeds / seconds;
+  // B rather than the SI G. This is read by players, not by engineers, and "3.07 B seeds/s"
+  // is the phrase they would say out loud.
+  if (rate >= 1e9) return `${(rate / 1e9).toFixed(2)} B seeds/s`;
+  if (rate >= 1e6) return `${(rate / 1e6).toFixed(1)} M seeds/s`;
+  if (rate >= 1e3) return `${Math.round(rate / 1e3).toLocaleString()} k seeds/s`;
+  return `${Math.round(rate).toLocaleString()} seeds/s`;
+}
 
 // ---- Art, with a generated monogram whenever there is none ----------------------------------
 //
@@ -1717,26 +1735,57 @@ function startSearch() {
   stream = new EventSource('/api/search?' + q);
   setBusy(true, 'Searching…');
 
+  let total = 0;
+
   stream.addEventListener('start', e => {
     const d = JSON.parse(e.data);
     lastStart = d.start;
-    lastEngine = (d.engine && d.engine !== 'cpu') ? (d.device || d.engine) : null;
+    lastScanned = 0;
+    total = Number(d.count);
+    lastEngine = (d.engine && d.engine !== 'cpu') ? `GPU: ${d.device || d.engine}` : 'CPU';
     // Deliberately not written back into the field — see buildQuery.
-    setBusy(true, `Scanning ${Number(d.count).toLocaleString()} seeds from ${Number(d.start).toLocaleString()}…`);
+    setBusy(true, `Scanning ${total.toLocaleString()} seeds from ` +
+      `${Number(d.start).toLocaleString()}… · ${lastEngine}`);
+  });
+
+  // Timed here rather than taken from the server's own clock, so the rate keeps moving between
+  // ticks instead of freezing at whatever the last event said.
+  const startedAt = performance.now();
+  const elapsed = () => (performance.now() - startedAt) / 1000;
+
+  // Progress and hits both write the same line, so both build it the same way. A hit arriving
+  // between ticks must not blank the rate, and a tick must not lose the count of what was found.
+  const scanLine = () => [
+    `${lastScanned.toLocaleString()} of ${total.toLocaleString()} scanned`,
+    formatRate(lastScanned, elapsed()),
+    lastEngine,
+    found > 0 ? `${found} found` : null,
+  ].filter(Boolean).join(' · ') + '…';
+
+  stream.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    lastScanned = Number(d.scanned);
+    setBusy(true, scanLine());
   });
 
   stream.addEventListener('hit', e => {
     found++;
     out.appendChild(renderHit(JSON.parse(e.data)));
-    setBusy(true, `${found} found…`);
+    setBusy(true, scanLine());
   });
 
   stream.addEventListener('done', e => {
     const d = JSON.parse(e.data);
-    stopSearch(`${d.found} seed${d.found === 1 ? '' : 's'} in ${d.seconds.toFixed(2)}s` +
-      (d.found === 0 ? ', so try a larger scan or loosen a requirement' : '') +
-      (lastStart != null ? ` · scanned from ${Number(lastStart).toLocaleString()}` : '') +
-      (lastEngine ? ` · ${lastEngine}` : ''));
+    lastScanned = Number(d.scanned ?? 0);
+    const rate = formatRate(lastScanned, d.seconds);
+    stopSearch([
+      `${d.found} seed${d.found === 1 ? '' : 's'} in ${d.seconds.toFixed(2)}s` +
+        (d.found === 0 ? ', so try a larger scan or loosen a requirement' : ''),
+      rate,
+      lastScanned > 0 ? `${lastScanned.toLocaleString()} scanned` : null,
+      lastStart != null ? `from ${Number(lastStart).toLocaleString()}` : null,
+      lastEngine,
+    ].filter(Boolean).join(' · '));
   });
 
   stream.addEventListener('error', e => {

@@ -277,6 +277,28 @@ public sealed record SearchCriteria
     public int PlayerCount => Context.PlayerCount;
 }
 
+/// <summary>
+/// How far a scan has got, so a caller can report a rate while it is still running.
+///
+/// Counts seeds EXAMINED, not seeds that reached the criteria chain. On an accelerated search
+/// those are wildly different numbers — the pre-filter may look at a billion seeds and hand
+/// forward a few thousand — and the one a rate should be quoted against is the first. Reporting
+/// the second would say a GPU search was slower than a CPU one while being two hundred times
+/// faster.
+///
+/// Advanced in batches rather than per seed. A contended interlocked increment on every seed
+/// would itself be a measurable share of the scan it is measuring.
+/// </summary>
+public sealed class SearchProgress
+{
+    private long _scanned;
+
+    /// <summary>Seeds examined so far.</summary>
+    public long Scanned => Interlocked.Read(ref _scanned);
+
+    public void Advance(long seeds) => Interlocked.Add(ref _scanned, seeds);
+}
+
 /// <summary><paramref name="Run"/> is present only when the search had Ancient criteria.</summary>
 public sealed record SeedHit(string Seed, NeowOffer[] OffersBySlot, GeneratedRun? Run = null)
 {
@@ -317,7 +339,8 @@ public static class SeedSearcher
         ulong count,
         int maxResults,
         CancellationToken cancellationToken = default,
-        IEnumerable<ulong>? candidateIndices = null)
+        IEnumerable<ulong>? candidateIndices = null,
+        SearchProgress? progress = null)
     {
         Validate(criteria);
 
@@ -380,7 +403,7 @@ public static class SeedSearcher
             // Walk each player's stream once, as far as the deepest fight anyone asked about,
             // and cache it — fight 2 is a continuation of fight 1's stream, not a fresh one, so
             // computing them separately would both duplicate work and risk them disagreeing.
-            int deepest = criteria.Cards.Max(c => c.Fight);
+            int deepest = DeepestFight(criteria);
             var offered = new HallwayRewards?[playerCount];
             HallwayRewards For(int slot) => offered[slot] ??= CardRewardGenerator.Hallway(
                 runSeed, slot, criteria.Characters[slot], deepest, criteria.Ascension, criteria.Unlocks);
@@ -598,9 +621,28 @@ public static class SeedSearcher
                 }
 
                 if (candidateIndices is null)
-                    Parallel.For(0L, (long)count, options, i => Evaluate(startIndex + (ulong)i));
+                {
+                    // Counted per partition rather than per seed. Parallel.For hands each worker
+                    // a chunk at a time, so the local total is folded in often enough to watch
+                    // live while costing one interlocked add per chunk instead of per seed.
+                    //
+                    // Only this branch counts. When indices are supplied the scan happened
+                    // somewhere else and already reported what it looked at; counting arrivals
+                    // here would measure the pre-filter's OUTPUT and call it throughput.
+                    Parallel.For(
+                        0L, (long)count, options,
+                        () => 0L,
+                        (i, _, local) =>
+                        {
+                            Evaluate(startIndex + (ulong)i);
+                            return local + 1;
+                        },
+                        local => progress?.Advance(local));
+                }
                 else
+                {
                     Parallel.ForEach(candidateIndices, options, Evaluate);
+                }
             }
             catch (OperationCanceledException) { /* expected on early exit */ }
             finally { results.CompleteAdding(); }
@@ -983,6 +1025,22 @@ public static class SeedSearcher
                     $"fight must be between 1 and {CardRewardGenerator.MaxPredictableFight}; "
                     + $"got {want.Fight}.");
 
+        // Any-order spends one fight per pick, so a slot cannot ask for more picks than there
+        // are predictable fights. Without this the search would run to the end of the range and
+        // report nothing found, which reads as a bad seed range rather than as an impossible ask.
+        if (c.CardOrder == CardOrder.AnyPermutation)
+        {
+            foreach (var group in c.Cards.GroupBy(x => x.Slot))
+            {
+                if (group.Count() <= CardRewardGenerator.MaxPredictableFight) continue;
+                throw new ArgumentException(
+                    $"in any order, each card has to come from a different fight, and only "
+                    + $"{CardRewardGenerator.MaxPredictableFight} fights are predictable. "
+                    + $"{(group.Key < 0 ? "One player" : $"P{group.Key + 1}")} has "
+                    + $"{group.Count()} cards selected, so no seed can offer them one apiece.");
+            }
+        }
+
         // Three cards per reward, so more than three named for one player AND one fight can
         // never all land. Grouped by fight as well as slot: the same player being offered three
         // cards in fight 1 and three more in fight 2 is perfectly satisfiable.
@@ -994,6 +1052,33 @@ public static class SeedSearcher
                     $"a card reward offers three cards, so P{group.Key.Slot + 1} cannot be offered all " +
                     $"{distinct} of those at once.");
         }
+    }
+
+    /// <summary>
+    /// How far each player's Rewards stream has to be walked to answer these card criteria.
+    ///
+    /// Usually the deepest fight anyone named. Under <see cref="CardOrder.AnyPermutation"/> it is
+    /// also at least the largest number of picks on ONE slot, because that mode lays a slot's k
+    /// picks across the first k fights whatever fight the criteria themselves say.
+    ///
+    /// That second clause is not a refinement, it is the difference between working and silently
+    /// finding nothing. Criteria do not have to carry a fight at all — the CLI defaults every
+    /// `--card` to fight 1 — so three any-order picks would otherwise walk one fight, be asked to
+    /// place three cards across three fights, and fail on every seed in the space with no error.
+    ///
+    /// Public, and used by the accelerator as well, for the same reason
+    /// <see cref="ResolveRequiredSlots"/> is: the GPU stage walks the stream this far too, and a
+    /// second copy of the rule that drifted shallow would make the pre-filter reject valid seeds.
+    /// </summary>
+    public static int DeepestFight(SearchCriteria criteria)
+    {
+        if (criteria.Cards.Count == 0) return 1;
+
+        int deepest = criteria.Cards.Max(c => c.Fight);
+        if (criteria.CardOrder != CardOrder.AnyPermutation) return deepest;
+
+        int widest = criteria.Cards.GroupBy(c => c.Slot).Max(g => g.Count());
+        return Math.Max(deepest, widest);
     }
 
     /// <summary>

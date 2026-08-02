@@ -362,10 +362,24 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
     http.Response.Headers.CacheControl = "no-cache";
     http.Response.Headers["X-Accel-Buffering"] = "no";
 
+    // One writer at a time. Hits are sent from the request's own loop while progress ticks are
+    // sent from a timer, and two interleaved writes would splice one event's frame into the
+    // other's, which an EventSource reports as a transport error rather than as bad data.
+    var writing = new SemaphoreSlim(1, 1);
+
     async Task Send(string evt, object payload)
     {
-        await http.Response.WriteAsync($"event: {evt}\ndata: {JsonSerializer.Serialize(payload, json)}\n\n", ct);
-        await http.Response.Body.FlushAsync(ct);
+        await writing.WaitAsync(ct);
+        try
+        {
+            await http.Response.WriteAsync(
+                $"event: {evt}\ndata: {JsonSerializer.Serialize(payload, json)}\n\n", ct);
+            await http.Response.Body.FlushAsync(ct);
+        }
+        finally
+        {
+            writing.Release();
+        }
     }
 
     SearchCriteria criteria;
@@ -392,7 +406,8 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
     // through the same criteria chain, so an accelerated search and a plain one return the
     // same set. Reported to the client so the UI can say which engine ran.
     var planner = app.Services.GetRequiredService<Sts2.SeedFinder.Gpu.GpuSearchPlanner>();
-    bool accelerated = planner.TryPlan(criteria, start, count, ct, out var candidates);
+    var progress = new SearchProgress();
+    bool accelerated = planner.TryPlan(criteria, start, count, ct, out var candidates, progress);
 
     await Send("start", new
     {
@@ -405,9 +420,25 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
 
     int found = 0;
     var sw = System.Diagnostics.Stopwatch.StartNew();
+
+    // Progress on a timer rather than per hit. A search that has not found anything yet is
+    // exactly the one whose rate the user wants to see, and it is the one that would otherwise
+    // report nothing at all until it finished.
+    using var ticking = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    var ticker = Task.Run(async () =>
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(400));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ticking.Token))
+                await Send("progress", new { scanned = progress.Scanned, seconds = sw.Elapsed.TotalSeconds });
+        }
+        catch (OperationCanceledException) { /* the search finished */ }
+    }, CancellationToken.None);
+
     try
     {
-        foreach (var hit in SeedSearcher.Search(criteria, start, count, max, ct, candidates))
+        foreach (var hit in SeedSearcher.Search(criteria, start, count, max, ct, candidates, progress))
         {
             if (ct.IsCancellationRequested) break;
             found++;
@@ -419,12 +450,29 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
     catch (OperationCanceledException) { /* client navigated away or hit cancel */ }
     catch (ArgumentException ex)
     {
+        await StopTicking();
         await Send("error", new { error = ex.Message });
         return;
     }
 
+    await StopTicking();
+
     if (!ct.IsCancellationRequested)
-        await Send("done", new { found, seconds = sw.Elapsed.TotalSeconds });
+        await Send("done", new
+        {
+            found,
+            seconds = sw.Elapsed.TotalSeconds,
+            scanned = progress.Scanned,
+        });
+
+    // Awaited rather than just cancelled, so the timer cannot still be mid-write when the final
+    // event goes out. Send takes the same semaphore, but ordering matters as well as safety: a
+    // progress tick arriving after "done" would leave a stale rate on the screen.
+    async Task StopTicking()
+    {
+        await ticking.CancelAsync();
+        await ticker;
+    }
 });
 
 app.Run();

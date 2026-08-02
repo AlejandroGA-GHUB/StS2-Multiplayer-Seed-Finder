@@ -175,10 +175,10 @@ public static class GpuVerify
         NeowPrefilterParams p,
         ulong start,
         long count,
-        int hitCapacity = GpuNeowSearch.DefaultHitCapacity,
-        long tileSize = GpuNeowSearch.DefaultTileSize)
+        int hitCapacity = GpuSeedScan.DefaultHitCapacity,
+        long tileSize = GpuSeedScan.DefaultTileSize)
     {
-        using var search = new GpuNeowSearch(engine, hitCapacity);
+        using var search = new GpuSeedScan(engine, hitCapacity);
         var fromGpu = new HashSet<ulong>(search.Scan(p, start, count, tileSize: tileSize));
 
         var fromCpu = new HashSet<ulong>();
