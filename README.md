@@ -172,9 +172,15 @@ throwing away seeds it should have kept.
 | Search | Without a GPU | With one |
 |---|---|---|
 | Neow relic | 45 M/s | ~1 B/s |
+| Card reward | 4.7 M/s | 470 M/s |
 | Shop relic | 0.9 M/s | 280 M/s |
 | Boss, event or Ancient | 2 M/s | 37 to 430 M/s |
 | Treasure chest | 0.5 M/s | not accelerated yet |
+
+The Act 1 map is accelerated too, but it isn't in the table because a rate would be meaningless
+for it: it's three numbers per seed and half of all seeds match, so you hit your result limit
+almost immediately and what takes the time is drawing the results, not finding them. It matters
+as part of a bigger search, where it throws out half the seeds before anything expensive runs.
 
 An integrated laptop GPU lands well below a discrete card but still far above the CPU. If there's
 no usable device at all, or you set `STS2_GPU=off`, everything works as it always did.
