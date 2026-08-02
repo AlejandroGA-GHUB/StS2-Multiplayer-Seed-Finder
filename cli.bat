@@ -16,6 +16,13 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 title StS2 Co-op Seed Finder - command line
 
+rem MSBuild leaves its worker processes running for 15 minutes after a build so the next
+rem one starts faster. Right for a developer building all day, wrong for a launcher: a
+rem user who closes this window would otherwise still have three dotnet.exe running and
+rem no way to tell whose they are. The prompt this opens inherits it, so builds typed in
+rem there behave the same way.
+set "MSBUILDDISABLENODEREUSE=1"
+
 set "OUT=%~dp0src\Sts2.SeedFinder.Cli\bin\Release\net10.0"
 
 if not exist "%OUT%\sts2seed.exe" (

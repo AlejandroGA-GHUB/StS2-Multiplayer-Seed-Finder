@@ -13,6 +13,13 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 title StS2 Co-op Seed Finder
 
+rem MSBuild leaves its worker processes running for 15 minutes after a build so the next
+rem one starts faster. Right for a developer building all day, wrong for a launcher: a
+rem user who closes this window would otherwise still have three dotnet.exe running and
+rem no way to tell whose they are. A variable rather than a build switch, so anything
+rem this script calls that builds in turn inherits it.
+set "MSBUILDDISABLENODEREUSE=1"
+
 set "PORT=5173"
 set "BUILD=1"
 

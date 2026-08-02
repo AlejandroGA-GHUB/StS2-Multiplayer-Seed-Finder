@@ -51,6 +51,12 @@ if "%~1"=="" (
 
 set "EXE=%~dp0src\Sts2.SeedFinder.Cli\bin\Release\net10.0\sts2seed.exe"
 
+rem MSBuild leaves its worker processes running for 15 minutes after a build so the next
+rem one starts faster. Right for a developer building all day, wrong for a one-off build
+rem somebody triggered by asking for something else: they would be left with three
+rem dotnet.exe running and no way to tell whose they are.
+set "MSBUILDDISABLENODEREUSE=1"
+
 if not exist "%EXE%" (
     echo Not built yet. Building once...
     dotnet build "%~dp0src\Sts2.SeedFinder.Cli" -c Release --nologo -v quiet
