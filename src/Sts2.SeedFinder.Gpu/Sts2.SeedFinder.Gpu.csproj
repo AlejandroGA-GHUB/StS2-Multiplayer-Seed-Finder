@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Sts2.SeedFinder.Gpu</RootNamespace>
+    <Optimize>true</Optimize>
+    <!--
+      ILGPU emits IL that trips a few analyzers the rest of the tree runs clean under:
+      kernels take ref structs by value and never null-check views, both by design.
+    -->
+    <NoWarn>$(NoWarn);CA1815;CA1051</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sts2.SeedFinder.Core\Sts2.SeedFinder.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ILGPU" Version="1.5.3" />
+  </ItemGroup>
+
+</Project>

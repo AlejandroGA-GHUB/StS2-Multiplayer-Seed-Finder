@@ -457,6 +457,77 @@ public static class RunGenerator
         return (result, sharedDeques);
     }
 
+    /// <summary>
+    /// How many UpFront draws the relic-bag shuffles take, before act generation starts.
+    ///
+    /// A shuffle of n costs exactly n-1 draws whatever it produces, and every bounded draw
+    /// consumes one step of the stream regardless of its bound, so the whole of
+    /// <see cref="PopulateRelicGrabBags"/> collapses to a single number for anything that only
+    /// needs to arrive at the right stream position. Materialising or burning a deque changes
+    /// nothing here, which is why the flags are not parameters.
+    ///
+    /// Exists for the accelerator, which cannot walk the bags: it has no dictionaries, no pool
+    /// tables and no reason to carry them, since the relics themselves are only read by the shop
+    /// and chest criteria. Deriving the count from the same <see cref="PlanFor"/> the CPU path
+    /// uses is what stops the two drifting apart — a stream that starts one draw late produces a
+    /// plausible run that is wrong in every act.
+    /// </summary>
+    public static int RelicBagDraws(
+        IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks = null)
+    {
+        var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: false, withChest: false);
+
+        int draws = 0;
+        foreach (var (_, count) in plan.Shared) draws += count > 1 ? count - 1 : 0;
+        foreach (var bag in plan.Players)
+            foreach (var (_, count) in bag.Layout) draws += count > 1 ? count - 1 : 0;
+        return draws;
+    }
+
+    /// <summary>
+    /// One player's Shop deque, located within the UpFront stream.
+    /// </summary>
+    /// <param name="DrawsBefore">
+    /// Draws taken by every shuffle ahead of this one. Its own shuffle then costs
+    /// <c>Relics.Count - 1</c>.
+    /// </param>
+    /// <param name="Relics">The deque's contents in POOL order, before shuffling.</param>
+    public sealed record ShopDeque(int DrawsBefore, IReadOnlyList<PoolRelic> Relics);
+
+    /// <summary>
+    /// Where each player's Shop deque sits in the UpFront stream, and what goes into it.
+    ///
+    /// The companion to <see cref="RelicBagDraws"/>, and for the same consumer. A shop relic is
+    /// decided by one shuffle out of the dozen or so the bags perform, so an accelerator that
+    /// wants to know where a particular relic lands needs to know how far into the stream that
+    /// shuffle starts — and nothing else about the bags at all.
+    ///
+    /// Null for a player with no Shop-rarity relics, which cannot happen with the current pools
+    /// but is the honest answer rather than an empty deque that reads as "shuffled to nothing".
+    /// </summary>
+    public static ShopDeque?[] ShopDeques(
+        IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks = null)
+    {
+        var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: true, withChest: false);
+        var result = new ShopDeque?[characters.Count];
+
+        int draws = 0;
+        foreach (var (_, count) in plan.Shared) draws += count > 1 ? count - 1 : 0;
+
+        for (int p = 0; p < plan.Players.Length; p++)
+        {
+            var bag = plan.Players[p];
+            for (int i = 0; i < bag.Layout.Length; i++)
+            {
+                if (bag.Sources[i] is { } source) result[p] = new ShopDeque(draws, source);
+                draws += bag.Layout[i].Count > 1 ? bag.Layout[i].Count - 1 : 0;
+            }
+        }
+        return result;
+    }
+
     /// <summary>The rarities <c>RelicFactory.RollRarity</c> can return, and so the only shared
     /// deques a chest ever reads.</summary>
     private static readonly HashSet<string> ChestRarities =

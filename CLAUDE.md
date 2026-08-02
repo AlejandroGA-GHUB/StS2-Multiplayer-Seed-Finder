@@ -46,7 +46,8 @@ is a relic the run records someone taking out of the shared bag first.
 
 Searchable criteria, all combinable in one search: **Neow relic**, **Act 1 map**, **boss**
 (per act, and negatable), **event** (per act, "within the first n"), **Ancient** (optionally
-offering a given relic), **card rewards for fights 1 and 2** (per player), the **shop's third
+offering a given relic), **card rewards for fights 1 to 3** (per player, in pick order or in any
+permutation), the **shop's third
 relic slot** (per player, per shop visit), and each act's **treasure chest** (per act).
 **Ascension 10** adds the final act's second boss, which two boss criteria can pin as a pair —
 and from fight 2 ascension also affects card rarity, via Scarcity at A7+.
@@ -71,12 +72,14 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --che
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 0BUJY7ZRE8TP --players 2
 dotnet run -c Release --project src\Sts2.SeedFinder.Oracle              # differential test vs sts2.dll
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --gpu-verify # GPU kernels vs Core (no GPU needed)
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --gpu-bench  # ... and measure this machine
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --verify     # diff act generation vs the run in progress
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --verify-history --verbose  # ... vs every finished run
 ```
 
 **Run the Oracle after any change to Core, and after every game patch.** It loads the real
-`sts2.dll` and asserts our port still matches. As of v0.109.1 all checks pass.
+`sts2.dll` and asserts our port still matches. As of v0.110.1 all 14 checks pass.
 
 **Run `--verify` after any change to `Core/Acts/`.** It checks the act/boss/Ancient chain
 against a save the game itself wrote — see "Run saves are the Act 2/3 oracle" below.
@@ -108,7 +111,7 @@ working from memory. Each of these records something that was got wrong at least
 | `Core/Acts/RunGenerator.cs`, `ActData.cs` | *Acts 2/3*, *Run saves are the Act 2/3 oracle*, *Ascension 10*, *Boss discovery order*, *MP-specific differences* |
 | `Core/Acts/` shop relics | *Shops: the third relic slot IS predictable* |
 | `Core/Acts/ChestRelics.cs` | *Treasure chests* |
-| `Core/Cards/` | *Card rewards, fights 1 and 2* |
+| `Core/Cards/` | *Card rewards, fights 1 and 2* (the mechanics; the cap is now `MaxPredictableFight` = 3) |
 | `Core/Ancients/` | *Ancients' offers* |
 | Search criteria, the web pickers | *Bosses and events as search criteria* |
 | `Web/Assets/` | *Localization strings*, *Card art* |
@@ -118,7 +121,7 @@ working from memory. Each of these records something that was got wrong at least
 Other documents: `docs/plan.md` (open queue, what shipped, and the reasoning behind each feature),
 `docs/web_app_specs.md` (the web UI), `docs/PATCH_RECOVERY.md` (what a user does after a patch).
 
-## Game facts (verified by decompiling v0.109.1, built 2026-07-20)
+## Game facts (derived by decompiling v0.109.1; port re-confirmed against v0.110.1 by the Oracle)
 
 Install: `C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\`
 Game logic: `data_sts2_windows_x86_64\sts2.dll` — 9.6 MB, **.NET 9, unobfuscated**.
@@ -174,6 +177,30 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   the server serves the new one.
 - `src/Sts2.SeedFinder.Oracle` — loads the real `sts2.dll` by reflection (no compile-time
   reference), so it fails gracefully when the game isn't installed.
+- `src/Sts2.SeedFinder.Gpu` — **optional** accelerator (ILGPU: CUDA, OpenCL, CPU fallback).
+  `Core` does NOT reference it, and never should: the accelerator plugs in through
+  `SeedSearcher`'s `candidateIndices` parameter, which may only NARROW which indices get
+  examined. Every candidate still goes through the whole CPU criteria chain, so an accelerated
+  search returns the same set. A GPU is never required to build or run; `STS2_GPU=off` disables
+  it, `cuda`/`opencl`/`cpu` force a backend.
+
+  Ported so far, all fused into one pass (`SeedFilter`) and ordered cheapest-first: **acts**,
+  **Neow curse**, **card rewards**, and **run generation** for bosses, events, Ancient identity
+  and shop relics. Measured on a 4070 SUPER against the CPU searcher on the same criteria: Neow
+  ~950 M/s, shop relics 280 M/s (CPU 0.88 M/s), run generation 37 M/s worst case and 432 M/s on a
+  multi-criterion search that rejects early (CPU 2.2 M/s).
+
+  **Not ported: treasure chests, and Ancient OFFERS.** Both for structural reasons, not lack of
+  time. An Ancient's offer runs `AncientOffers.Branches`, which returns variable-length branch
+  sets — the GPU filters on which Ancient turns up and the CPU decides what it offers. Chests are
+  the harder one and the analysis is worth not re-deriving: `RunFilter` never materialises a
+  shuffle, it follows one entry through the same swaps (see its class comment), which answers
+  "where did this relic land". A chest asks the INVERSE, "which relic is at the front", and for
+  Act 3 the `DroppedAtAct3Chest` gate means the answer depends on the identity of everything
+  ahead of it. Acts 1 and 2 have no gate and their chest index is fixed by the rarity rolls
+  alone, so those two ARE expressible by tracking; Act 3 would need the deque built. A partial
+  port covering acts 1 and 2 and declining act 3 would be sound, since declining only ever
+  hands work back to the CPU.
 
 ### Finding the player's files, for people who are not this user
 Two separate lookups, both needed for an open-source release and both with an override:
@@ -195,7 +222,7 @@ any run in progress. When nothing is found it returns the paths it tried, so the
 fix instead of just saying no. Both the CLI verifiers and the web app go through the same code,
 so they cannot disagree about where your saves are.
 
-### The three verification harnesses cover different failure modes
+### The four verification harnesses cover different failure modes
 None replaces the others, and knowing which to reach for saves time:
 
 - **Oracle** — proves each *function* matches. Runs our code and the game's compiled code on
@@ -211,6 +238,18 @@ None replaces the others, and knowing which to reach for saves time:
   entered) but far broader, retrospective, and the only one that reaches co-op or shop relics.
   Its failures need reading rather than trusting: build, unlock state at the time, boss
   discovery order and mods are all unrecorded, and the tool says so.
+
+- **`--gpu-verify`** — proves the *kernels*. The Oracle structurally cannot reach them: they are
+  a second implementation of the same arithmetic, compiled by a different compiler for a
+  different instruction set, so `sts2.dll` has nothing to say about them. They are held to
+  `Core` instead, which the Oracle already vouches for. Needs no GPU (it falls back to ILGPU's
+  CPU accelerator) and no run. **Run it after any change to `Core/MegaRandom.cs`, `Core/Rng.cs`,
+  `Core/GameHash.cs`, `Core/SeedCodec.cs`, `Core/Acts/`, `Core/Cards/` or `Gpu/`** — those are
+  the files the kernels mirror. `Core/Acts/` matters most: `RunFilter` reproduces the whole
+  UpFront draw order, so a change there that nobody mirrors puts the kernel one draw out and
+  every act after that point is quietly wrong.
+  It compares hit SETS, not sampled hits, because a kernel that wrongly REJECTS seeds produces
+  a search that is quietly incomplete and looks perfectly healthy.
 
 Correct pieces wired in the wrong order pass the Oracle and fail `--verify`. A patch that
 changes `NextFloat` fails the Oracle immediately. Card rewards are Oracle-only, by necessity —

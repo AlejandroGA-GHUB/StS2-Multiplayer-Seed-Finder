@@ -1,3 +1,7 @@
-v1.0.0
+v1.1.0
 
-Release Date: 08/01/2026
+Release Date: 08/02/2026
+
+GPU searching for everything the tool predicts except treasure chests: acts, Neow,
+card rewards, bosses, events, Ancients and shop relics. Card picks can now be matched
+in any order across the first fights rather than one per named fight.
