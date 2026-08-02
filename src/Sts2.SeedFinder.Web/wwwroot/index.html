@@ -93,6 +93,13 @@
     <fieldset>
       <legend>Fight card rewards</legend>
       <div id="cards"></div>
+      <!-- Pinning each pick to its own fight is one assignment out of the k! that all mean
+           "I want to be offered these", so it costs roughly a factor of k! in seeds scanned.
+           Any order keeps one card per fight, it just stops caring which. -->
+      <div class="row" id="cardOrderRow">
+        <label>Fight order</label>
+        <div id="cardOrder"></div>
+      </div>
       <p class="hint" id="cardHint"></p>
     </fieldset>
 

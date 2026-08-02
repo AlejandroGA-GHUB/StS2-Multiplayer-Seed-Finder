@@ -51,6 +51,17 @@ public struct CardFilterParams
 
     /// <summary>1 when this stage runs at all. A relic-only search leaves it off.</summary>
     public int Active;
+
+    /// <summary>
+    /// 1 when the criteria are not pinned to a fight.
+    ///
+    /// The kernel deliberately tests something LOOSER than the real criterion here: it asks
+    /// whether the card appears in any fight, not whether the picks can be laid one per fight.
+    /// A pre-filter is only obliged never to reject a valid seed; passing a few extra is free,
+    /// because SeedSearcher re-checks every candidate with the exact permutation test. Doing
+    /// the matching here would cost a per-criterion fight mask in registers for no gain.
+    /// </summary>
+    public int AnyOrder;
 }
 
 /// <summary>
@@ -208,7 +219,7 @@ public static class CardFilter
                     int type = pools.TypeId[poolBase + picked];
                     for (int c = 0; c < p.CriterionCount; c++)
                     {
-                        if (criteria.Fight[c] != fight) continue;
+                        if (p.AnyOrder == 0 && criteria.Fight[c] != fight) continue;
                         int want = criteria.Slot[c];
                         if (want >= 0 && want != slot) continue;
                         if (criteria.TypeId[c] == type) satisfied |= 1 << c;

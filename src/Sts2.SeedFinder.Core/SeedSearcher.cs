@@ -17,6 +17,27 @@ public enum SlotRequirement
     Specific,
 }
 
+/// <summary>
+/// How a player's card picks map onto fights.
+///
+/// The picker assigns fights by pick order, so three cards mean the first in fight 1, the
+/// second in fight 2, the third in fight 3. That is a single assignment out of the k! that
+/// would satisfy "I want to be offered all three", and pinning it costs roughly a factor of
+/// k! in how many seeds you have to scan.
+/// </summary>
+public enum CardOrder
+{
+    /// <summary>Each pick must land in the fight its position names.</summary>
+    Exact,
+
+    /// <summary>
+    /// The picks must land one per fight across the first k fights, in any assignment. Still
+    /// one card per fight, so a player is genuinely offered all of them; only which fight
+    /// produces which is free.
+    /// </summary>
+    AnyPermutation,
+}
+
 /// <summary>Where in Neow's offer a relic is allowed to appear.</summary>
 public enum OfferSlot
 {
@@ -248,6 +269,9 @@ public sealed record SearchCriteria
     public SlotRequirement Requirement { get; init; } = SlotRequirement.Any;
     public IReadOnlyList<int> RequiredSlots { get; init; } = Array.Empty<int>();
     public OfferSlot Where { get; init; } = OfferSlot.Anywhere;
+
+    /// <summary>Whether card picks are pinned to their pick order. See <see cref="CardOrder"/>.</summary>
+    public CardOrder CardOrder { get; init; } = CardOrder.Exact;
     public int SeedLength { get; init; } = SeedCodec.DefaultLength;
 
     public int PlayerCount => Context.PlayerCount;
@@ -363,6 +387,46 @@ public static class SeedSearcher
 
             bool Offers(int slot, CardCriterion want) =>
                 For(slot).Fight(want.Fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
+
+            bool OffersAt(int slot, CardCriterion want, int fight) =>
+                For(slot).Fight(fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
+
+            // AnyPermutation asks whether a player's k picks can be laid across the first k
+            // fights one apiece. That is a bipartite perfect matching, and k is at most
+            // MaxPredictableFight, so trying the assignments outright is both correct and
+            // cheaper than building a matching algorithm for three elements.
+            bool GroupMatches(int slot, List<CardCriterion> group)
+            {
+                int k = group.Count;
+                bool Place(int i, int usedFights)
+                {
+                    if (i == k) return true;
+                    for (int f = 0; f < k; f++)
+                    {
+                        if ((usedFights & (1 << f)) != 0) continue;
+                        if (!OffersAt(slot, group[i], f + 1)) continue;
+                        if (Place(i + 1, usedFights | (1 << f))) return true;
+                    }
+                    return false;
+                }
+                return Place(0, 0);
+            }
+
+            if (criteria.CardOrder == CardOrder.AnyPermutation)
+            {
+                foreach (var group in criteria.Cards.GroupBy(c => c.Slot))
+                {
+                    var picks = group.ToList();
+
+                    // A slot of -1 means "any player", so the whole group has to fit on ONE
+                    // player rather than being spread across the lobby.
+                    bool ok = group.Key >= 0
+                        ? GroupMatches(group.Key, picks)
+                        : Enumerable.Range(0, playerCount).Any(s => GroupMatches(s, picks));
+                    if (!ok) return false;
+                }
+                return true;
+            }
 
             foreach (var want in criteria.Cards)
             {

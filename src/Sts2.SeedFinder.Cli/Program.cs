@@ -365,6 +365,7 @@ internal static class Program
         var criteria = new SearchCriteria
         {
             Relic = relic,
+            CardOrder = opts.AnyOrder ? CardOrder.AnyPermutation : CardOrder.Exact,
             Act1 = opts.Act1,
             Context = ContextOf(opts),
             Requirement = opts.Requirement,
@@ -728,6 +729,9 @@ internal static class Program
 
         public IReadOnlyList<CardCriterion> Cards { get; init; } = Array.Empty<CardCriterion>();
 
+        /// <summary>--any-order: card picks may land in any fight order, one per fight.</summary>
+        public bool AnyOrder { get; init; }
+
         /// <summary>
         /// Shop third-slot requirements from --shop. Deferred like the card args, because the
         /// player-count check needs --players and the character check needs --characters.
@@ -901,6 +905,7 @@ internal static class Program
                                 .ToArray(),
                         };
                         break;
+                    case "--any-order": o = o with { AnyOrder = true }; break;
                     case "--not-all-characters": o = o with { NotAllCharactersUnlocked = true }; break;
                     case "--no-scroll-boxes":    o = o with { NoScrollBoxes = true }; break;
                     case "--where":

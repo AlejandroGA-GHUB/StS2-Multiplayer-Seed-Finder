@@ -52,6 +52,23 @@ public sealed class GpuSearchPlanner : IDisposable
         return new GpuSearchPlanner(engine, status);
     }
 
+    /// <summary>Act acceptance table for one search.</summary>
+    private sealed class ActResources : IDisposable
+    {
+        public required MemoryBuffer1D<int, Stride1D.Dense> CandidateCount { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> Offset { get; init; }
+        public required MemoryBuffer1D<byte, Stride1D.Dense> Accept { get; init; }
+
+        public ActFilterView View => new(CandidateCount.View, Offset.View, Accept.View);
+
+        public void Dispose()
+        {
+            CandidateCount.Dispose();
+            Offset.Dispose();
+            Accept.Dispose();
+        }
+    }
+
     /// <summary>Device buffers that live only as long as one search.</summary>
     private sealed class CardResources : IDisposable
     {
@@ -99,6 +116,27 @@ public sealed class GpuSearchPlanner : IDisposable
         // producing wrong candidates if one ever does.
         if (criteria.SeedLength != GpuSeedString.Length) return false;
 
+        // Acts first, because it is the cheapest stage and the only one that thins the criteria
+        // still needing full run generation on the CPU.
+        var actParams = default(ActFilterParams);
+        ActResources? actResources = null;
+        if (ActFilterFactory.TryBuild(criteria, out var counts, out var offsets, out var accept))
+        {
+            var acc0 = _engine.Accelerator;
+            actResources = new ActResources
+            {
+                CandidateCount = acc0.Allocate1D(counts),
+                Offset = acc0.Allocate1D(offsets),
+                Accept = acc0.Allocate1D(accept),
+            };
+            actParams = new ActFilterParams
+            {
+                ActNameHash = GameHash.Deterministic("act_selection"),
+                ActCount = counts.Length,
+                Active = 1,
+            };
+        }
+
         var neow = default(NeowPrefilterParams);
         if (criteria.Relic is not null && criteria.Where != OfferSlot.PositiveOnly)
         {
@@ -112,9 +150,15 @@ public sealed class GpuSearchPlanner : IDisposable
         if (criteria.Cards.Count > 0)
             cardResources = TryBuildCards(criteria, out cards);
 
-        if (neow.Active == 0 && cards.Active == 0) return false;
+        if (actParams.Active == 0 && neow.Active == 0 && cards.Active == 0)
+        {
+            actResources?.Dispose();
+            cardResources?.Dispose();
+            return false;
+        }
 
-        candidates = Stream(neow, cards, cardResources, startIndex, count, cancellationToken);
+        candidates = Stream(actParams, actResources, neow, cards, cardResources,
+            startIndex, count, cancellationToken);
         return true;
     }
 
@@ -162,6 +206,7 @@ public sealed class GpuSearchPlanner : IDisposable
             DeepestFight = deepest,
             AllMask = n == 32 ? -1 : (1 << n) - 1,
             Active = 1,
+            AnyOrder = criteria.CardOrder == CardOrder.AnyPermutation ? 1 : 0,
         };
 
         var acc = _engine.Accelerator;
@@ -180,6 +225,8 @@ public sealed class GpuSearchPlanner : IDisposable
     /// concurrent scans would interleave into each other's results.
     /// </summary>
     private IEnumerable<ulong> Stream(
+        ActFilterParams actParams,
+        ActResources? actResources,
         NeowPrefilterParams neow,
         CardFilterParams cards,
         CardResources? cardResources,
@@ -194,15 +241,19 @@ public sealed class GpuSearchPlanner : IDisposable
         _gate.Wait(cancellationToken);
         try
         {
-            var scan = cardResources is null
-                ? _search!.Scan(neow, start, (long)count, cancellationToken)
-                : _search!.Scan(neow, cards, cardResources.Pools.View, cardResources.View,
-                    start, (long)count, cancellationToken);
-
-            foreach (var index in scan) yield return index;
+            foreach (var index in _search!.Scan(
+                         actParams,
+                         actResources?.View ?? default,
+                         neow,
+                         cards,
+                         cardResources?.Pools.View ?? default,
+                         cardResources?.View ?? default,
+                         start, (long)count, cancellationToken))
+                yield return index;
         }
         finally
         {
+            actResources?.Dispose();
             cardResources?.Dispose();
             _gate.Release();
         }

@@ -30,8 +30,9 @@ public sealed class GpuNeowSearch : IDisposable
     public const int DefaultHitCapacity = 1 << 22;
 
     private readonly GpuEngine _engine;
-    private readonly Action<Index1D, ulong, int, long, NeowPrefilterParams, CardFilterParams,
-        CardPoolView, CardCriteriaView, ArrayView<ulong>, ArrayView<int>> _kernel;
+    private readonly Action<Index1D, ulong, int, long, ActFilterParams, ActFilterView,
+        NeowPrefilterParams, CardFilterParams, CardPoolView, CardCriteriaView,
+        ArrayView<ulong>, ArrayView<int>> _kernel;
     private readonly MemoryBuffer1D<ulong, Stride1D.Dense> _hits;
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _counter;
     private readonly int _hitCapacity;
@@ -46,6 +47,8 @@ public sealed class GpuNeowSearch : IDisposable
     /// </summary>
     private readonly MemoryBuffer1D<byte, Stride1D.Dense> _noBytes;
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _noInts;
+
+    private ActFilterView EmptyActs => new(_noInts.View, _noInts.View, _noBytes.View);
 
     private CardPoolView EmptyPools => new(
         _noBytes.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View);
@@ -64,8 +67,9 @@ public sealed class GpuNeowSearch : IDisposable
         _engine = engine;
         _hitCapacity = hitCapacity;
         _kernel = engine.Accelerator.LoadAutoGroupedStreamKernel<
-            Index1D, ulong, int, long, NeowPrefilterParams, CardFilterParams,
-            CardPoolView, CardCriteriaView, ArrayView<ulong>, ArrayView<int>>(SeedFilter.Kernel);
+            Index1D, ulong, int, long, ActFilterParams, ActFilterView,
+            NeowPrefilterParams, CardFilterParams, CardPoolView, CardCriteriaView,
+            ArrayView<ulong>, ArrayView<int>>(SeedFilter.Kernel);
         _hits = engine.Accelerator.Allocate1D<ulong>(hitCapacity);
         _counter = engine.Accelerator.Allocate1D<int>(1);
         _noBytes = engine.Accelerator.Allocate1D<byte>(1);
@@ -86,7 +90,7 @@ public sealed class GpuNeowSearch : IDisposable
         long count,
         CancellationToken cancellationToken = default,
         long tileSize = DefaultTileSize) =>
-        Scan(p, default, EmptyPools, EmptyCriteria, start, count, cancellationToken, tileSize);
+        Scan(default, EmptyActs, p, default, EmptyPools, EmptyCriteria, start, count, cancellationToken, tileSize);
 
     /// <summary>
     /// The full form, with every ported stage. A stage whose <c>Active</c> flag is zero is
@@ -94,6 +98,8 @@ public sealed class GpuNeowSearch : IDisposable
     /// other.
     /// </summary>
     public IEnumerable<ulong> Scan(
+        ActFilterParams actParams,
+        ActFilterView acts,
         NeowPrefilterParams p,
         CardFilterParams cards,
         CardPoolView pools,
@@ -103,6 +109,14 @@ public sealed class GpuNeowSearch : IDisposable
         CancellationToken cancellationToken = default,
         long tileSize = DefaultTileSize)
     {
+        // A caller with no use for a stage naturally passes `default`, which is an UNBOUND view
+        // and not something a kernel launch will accept. Substituting the stand-ins here rather
+        // than making every caller remember them keeps the mistake impossible instead of merely
+        // documented. An inactive stage never reads these; they only have to be bindable.
+        if (!acts.Accept.IsValid) acts = EmptyActs;
+        if (!pools.Rarity.IsValid) pools = EmptyPools;
+        if (!criteria.Slot.IsValid) criteria = EmptyCriteria;
+
         long tile = tileSize;
         long done = 0;
 
@@ -115,7 +129,8 @@ public sealed class GpuNeowSearch : IDisposable
 
             _counter.MemSetToZero();
             int threads = (int)((span + PerThread - 1) / PerThread);
-            _kernel(threads, tileStart, PerThread, span, p, cards, pools, criteria, _hits.View, _counter.View);
+            _kernel(threads, tileStart, PerThread, span, actParams, acts, p, cards, pools, criteria,
+                _hits.View, _counter.View);
             _engine.Accelerator.Synchronize();
 
             int found = _counter.GetAsArray1D()[0];

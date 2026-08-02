@@ -24,6 +24,8 @@ function defaultState() {
   return {
     players: 2, characters: ['Ironclad', 'Silent'], relic: '', act1: 'any', ascension: 0,
     require: 'any', ancients: [], bosses: [], events: [], cards: [], shops: [], chests: [],
+    // Exact by default: a pick's badge means the fight it names until the user says otherwise.
+    cardOrder: 'exact',
     // Keyed by act, NOT stored on each chest row. How far the shared bag had been drained when
     // the party reached a chest is one fact about the run, so every relic named for that chest
     // has to be read at the same drain count. See ChestSatisfies.
@@ -888,6 +890,16 @@ function renderCards() {
 
   // Unlike the act panels this needs only the one player's character, so it comes alive a row
   // at a time rather than all at once.
+  // Only meaningful when a player has picked more than one card: with a single pick there is
+  // only one assignment, so the control would claim to change something it cannot.
+  const anyMultiPick = state.cards.some(c => (c?.picks?.length ?? 0) > 1);
+  $('#cardOrderRow').hidden = !anyMultiPick;
+  if (!anyMultiPick) state.cardOrder = 'exact';
+  mount('#cardOrder', [
+    { label: 'Exact order', value: 'exact' },
+    { label: 'Any order', value: 'any' },
+  ], state.cardOrder ?? 'exact', v => { state.cardOrder = v; renderCards(); });
+
   $('#cardHint').textContent = state.characters.some(Boolean)
     ? 'The first room of a run is always a fight, and each player rolls their own reward for it, '
       + `so fight 1 needs no assumptions. Pick up to ${MAX_FIGHT} cards per player: the first is `
@@ -1407,9 +1419,15 @@ function firstFightBlock(rewards) {
     const offer = el('div', 'offer');
     for (const slug of r.cards) {
       const name = cardNames.get(slug) ?? slug;
-      // The pick's position in the list is the fight it was asked for, so a match is the slug
-      // sitting at that fight's index and nowhere else.
-      const hit = state.cards[r.slot]?.picks?.[(r.fight || 1) - 1] === slug;
+      // In exact order the pick's position IS the fight it was asked for, so a match is the
+      // slug sitting at that fight's index and nowhere else. In any order the assignment is
+      // free, so a pick counts wherever it landed: highlighting only the badge position would
+      // leave a card you asked for looking unmatched purely because the seed swapped it with
+      // another one you also asked for.
+      const picks = state.cards[r.slot]?.picks ?? [];
+      const hit = state.cardOrder === 'any'
+        ? picks.includes(slug)
+        : picks[(r.fight || 1) - 1] === slug;
       const p = el('span', 'pill is-card' + (hit ? ' is-match' : ''));
       p.appendChild(iconFor(slug, name, 20, 'card'));
       p.appendChild(el('span', null, name));
@@ -1633,6 +1651,7 @@ function buildQuery() {
   // links, but a relic's branch is decided by the relic, so the server's default is always
   // the right answer.
   q.set('require', state.require);
+  if (state.cardOrder === 'any') q.set('cardOrder', 'any');
   // Clamped here as well as in the markup, because `max` on a number input only governs the
   // spinner and native validation: a typed or pasted 2500 sails straight through. Written back
   // into the field so the correction is visible rather than silent.

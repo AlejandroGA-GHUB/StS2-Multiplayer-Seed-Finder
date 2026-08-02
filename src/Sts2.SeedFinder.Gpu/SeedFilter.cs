@@ -30,6 +30,8 @@ public static class SeedFilter
         ulong start,
         int perThread,
         long total,
+        ActFilterParams actParams,
+        ActFilterView acts,
         NeowPrefilterParams neow,
         CardFilterParams cards,
         CardPoolView pools,
@@ -46,6 +48,9 @@ public static class SeedFilter
             ulong index = start + (ulong)offset;
             ulong runSeed = GpuSeedString.RunSeed(index);
 
+            // Acts first: three draws and an array lookup, and it gates the criteria that would
+            // otherwise need full run generation on the CPU.
+            if (actParams.Active != 0 && !ActFilter.MatchesRunSeed(runSeed, actParams, acts)) continue;
             if (neow.Active != 0 && !NeowPrefilter.MatchesRunSeed(runSeed, neow)) continue;
             if (cards.Active != 0 && !CardFilter.Matches(runSeed, cards, pools, criteria)) continue;
 
