@@ -1,6 +1,6 @@
-v1.1.0
+v1.2.0
 
-Release Date: 08/02/2026
+Release Date: 08/03/2026
 
 GPU searching for everything the tool predicts except treasure chests: acts, Neow,
 card rewards, bosses, events, Ancients and shop relics. Card picks can now be matched
