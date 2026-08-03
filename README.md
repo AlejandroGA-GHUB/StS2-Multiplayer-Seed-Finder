@@ -28,32 +28,61 @@ Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 dotnet build -c Release
 ```
 
-### Platforms
+### Linux and macOS
 
-I've only run/tesed this on Windows as of now, so that's what I can currently vouch for at the moment.
-
-I didn't build it Windows-only though. Everything targets plain `net10.0` with no Windows-only
-dependencies, and the code that goes looking for your files already knows about the other
-platforms: your Steam library including Flatpak, a native Linux or macOS build of the game, and
-saves under `~/.local/share/SlayTheSpire2`, `~/Library/Application Support/SlayTheSpire2` or a
-Proton prefix. So the `dotnet run` commands below should just work on Linux and macOS.
-
-Two things you won't get there:
-
-- **No launchers.** The `.bat` files are Windows only. Use the `dotnet run` commands, or wrap
-  them in a two-line shell script.
-- **Art and descriptions might not load.** They're read out of the game's own packed files, and
-  I've never run that lookup on a case-sensitive filesystem. If it misses you'll get lettered
-  tiles and no hover text. Searching won't care either way, it never touches your install.
-
-### Web UI
-
-On Windows, double-click **`seed-finder.bat`**. It builds, starts the server, and opens your browser
-once the port is actually listening. Closing that window shuts the server down.
+**Run `./seed-finder.sh`.** It builds, starts the server, and opens your browser on
+<http://localhost:5173>. Ctrl+C stops it.
 
 ```
-seed-finder.bat            build, serve on 5173, open a browser
-seed-finder.bat 8080       serve on a different port
+chmod +x seed-finder.sh      # once, if your clone did not keep the executable bit
+./seed-finder.sh             # build, serve on 5173, open a browser
+./seed-finder.sh 8080        # a different port
+./seed-finder.sh --nobuild   # skip the build for a faster restart
+```
+
+Or without the script:
+
+```
+dotnet build -c Release src/Sts2.SeedFinder.Web
+dotnet run -c Release --no-build --project src/Sts2.SeedFinder.Web
+```
+
+**Build that one project, not the whole solution.** Plain `dotnet build -c Release` also builds
+the Windows app shell, which targets `net10.0-windows`. That is configured to build anyway on
+Linux and macOS rather than failing, but it costs you the Windows Desktop targeting packs and
+produces an `.exe` you cannot run.
+
+Everything the search actually uses is plain `net10.0`, and the code that goes looking for your
+files already knows these platforms: your Steam library including Flatpak, a native Linux or macOS
+build of the game, and saves under `~/.local/share/SlayTheSpire2`,
+`~/Library/Application Support/SlayTheSpire2` or a Proton prefix.
+
+I have only run this on Windows, so that is what I can vouch for. Two things are known to differ:
+
+- **No app window**, only the browser. The window embeds Microsoft's WebView2, which exists only
+  on Windows. Same UI, same local server, same results, in a tab instead. Nothing about searching
+  differs.
+- **Art and descriptions might not load.** They are read out of the game's own packed files, and
+  I have never run that lookup on a case-sensitive filesystem. If it misses you get lettered tiles
+  and no hover text. Searching will not care either way; it never touches your install.
+
+### Platforms at a glance
+
+| | Windows | Linux / macOS |
+|---|---|---|
+| App window | `seed-finder.bat` | not available (needs WebView2) |
+| Browser | `seed-finder.bat /browser` | `./seed-finder.sh` |
+| Command line | `cli.bat` | `dotnet run --project src/Sts2.SeedFinder.Cli -- --help` |
+
+### The app
+
+On Windows, double-click **`seed-finder.bat`**. It builds, then opens the seed finder as its own
+window: no address bar, no tab, no console sitting behind it. Closing the window stops everything.
+
+```
+seed-finder.bat            build and open the app
+seed-finder.bat /browser   ... in your browser instead, on port 5173
+seed-finder.bat /browser 8080   ... on a different port
 seed-finder.bat /nobuild   skip the build for a faster restart
 
 repair.bat         check and fix after a game patch (see below)
@@ -64,9 +93,21 @@ Three files to double-click, which serve as the whole interface:
 
 | | |
 |---|---|
-| `seed-finder.bat` | The seed finder itself, in your browser |
+| `seed-finder.bat` | The seed finder itself |
 | `repair.bat` | Check and fix after a game update |
 | `cli.bat` | A command line, already pointed at the right place |
+
+**The app and the browser are the same program.** The window hosts the identical UI, served by the
+same local server, on a port of its own so it can run alongside a browser instance. Nothing about
+searching differs, and no result depends on which you use.
+
+`/browser` stays supported for three cases that are real rather than nostalgic:
+
+- **Linux and macOS**, where the app can't follow. It embeds Microsoft's WebView2, which is
+  Windows only.
+- **Two searches side by side.** The app is a single window; browser tabs are not.
+- **If WebView2 is missing or won't start.** The app opens your browser for you in that case
+  rather than failing, so this path has to keep working.
 
 Inside `cli.bat` every command is `sts2seed <flags>`:
 
@@ -380,8 +421,13 @@ and presenting it as fact.
 
 The web UI shows real relic icons, card portraits, character portraits, Ancient icons, event
 illustrations, and the game's own description of what each one does, all read from **your own
-installed copy of the game** at runtime. Nothing is bundled and nothing is redistributed — no art
-or text ships in this repository or in a release.
+installed copy of the game** at runtime. Nothing is bundled and nothing is redistributed — **no
+game art or text ships in this repository or in a release.**
+
+The single exception is the app's own icon, which cannot work that way because it is compiled into
+the executable. It is not game art: it is a sprout from
+[Danaida's Free Growing Plants Pack](https://danaida.itch.io/free-growing-plants-pack-32x32),
+which permits commercial use and editing.
 
 For events you get the game's own title and **the choices it offers you**, with what each one
 does and what it costs: "Pay 250 Gold. Remove 2 cards from your Deck." Where those choices lead is
@@ -530,9 +576,10 @@ the LLM is meant to utilize.
 | `src/Sts2.SeedFinder.Core` | RNG, hashing, seed codec, Neow, acts, Ancients, search |
 | `src/Sts2.SeedFinder.Cli` | `sts2seed` command line |
 | `src/Sts2.SeedFinder.Web` | Local web UI — minimal API plus static HTML/CSS/JS, no npm |
+| `src/Sts2.SeedFinder.Shell` | Optional app window (WebView2, Windows only). Hosts the UI above; contains none of it |
 | `src/Sts2.SeedFinder.Gpu` | Optional GPU search kernels (ILGPU). Nothing else depends on it |
 | `src/Sts2.SeedFinder.Oracle` | Differential test against the real `sts2.dll` |
-| `seed-finder.bat` | Builds, serves, and opens the web UI in your browser |
+| `seed-finder.bat` | Builds, then opens the app. `/browser` for a tab instead |
 | `repair.bat` | Checks and fixes after a game update |
 | `cli.bat` | Opens a command line here with `sts2seed` ready to use |
 | `sts2seed.bat` | Lets you type `sts2seed <flags>` in a terminal you already have open |
