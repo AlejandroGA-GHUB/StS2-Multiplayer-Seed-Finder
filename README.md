@@ -13,7 +13,14 @@ that space.
 
 
 > Updated At **Slay the Spire 2 v0.110.1**. Predictions are version-specific — see
-> [After a game patch](#after-a-game-patch).
+> [After a game patch](#after-a-game-patch). If a new beta branch update can't be fixed via repair.bat due to needing a direct code change,
+> I or anyone submitting a PR/Maintaining will try to have it updated ASAP.
+
+> **Steam beta branch only, for now.** The main branch is still on v0.107.1, which derives its
+> seeds differently, so this will not predict runs there until main catches up with the beta branch. When this does occur, I plan to actually support both
+> main and beta branch regardless of core logic changes that cant be auto repaired via repait.bat, as the current main branch seed space is far too small
+> for multiplayer and not worth handling its own release for at the moment. See
+> [Which Steam branch](#which-steam-branch) for why, and what happens next.
 
 > Can reach out via aga.personal.dev@gmail.com with any queries regarding the app.
 
@@ -485,6 +492,27 @@ play with someone newer to the game, predictions past the relic bags may not mat
 
 ---
 
+## Which Steam branch
+
+**Beta only, for now.** Main is still on v0.107.1, where the game hashes a seed to a 32-bit
+number instead of a 64-bit one. That is the first step of generation, so every draw after it
+lands somewhere else. It sits below the data tables, which is why `repair.bat` cannot fix it and
+refuses rather than writing tables that would still be wrong.
+
+Main is also a poorer target on its own merits: a 32-bit hash means only about **4.29 billion
+distinct runs exist**. Fine for singleplayer, thin for co-op, where every extra player multiplies
+the odds against you. The three-player card search described above is about 1 in 10 billion, so
+on v0.107.1 it has no answer at all rather than a slow one.
+
+Steam main will catch up, and when it does one build serves both. After that the intent is to
+keep a release per game build, so both branches stay supported even through future RNG changes.
+The pieces that differ are already small and known.
+
+If you are on main today, switching Steam to the beta branch is the fix. The app tells you when
+your game and this build disagree.
+
+---
+
 ## After a game patch
 
 Predictions are computed for one build of the game. When it updates, some may stop being true,
@@ -494,12 +522,13 @@ a stale copy looks perfectly healthy.
 So the app tells you. If your game's logic differs from the build this checkout was verified
 against, a banner appears above the results.
 
-**This is not tied to one Steam branch.** The main release branch and the beta branch are both
-supported: nothing here assumes which one you are on, it only cares whether the build in front of
-it matches the build the data tables were read from. Whichever branch you play, if yours is ahead
-of the recorded one, `repair.bat` reads the tables back out of your own install and brings this
-copy into line with it. Switching branches is the same situation as a patch, and has the same
-one-step fix.
+**A patch that only moves content is what `repair.bat` is for.** It does not care which Steam
+branch you are on, only whether the build in front of it matches the build the data tables were
+read from. If your game is ahead of the recorded one, `repair.bat` reads the tables back out of
+your own install and brings this copy into line with it.
+
+**What it cannot fix is a change to the game's own RNG plumbing**, and that is exactly what
+separates the two Steam branches today. See below.
 
 **To fix it, double-click `repair.bat`.** It checks by layer, offers to regenerate what can be
 regenerated, rebuilds, verifies against runs you have already played, and records the result.
