@@ -69,6 +69,21 @@ public sealed class GpuSearchPlanner : IDisposable
         }
     }
 
+    /// <summary>The Neow stage's device buffers for one search.</summary>
+    private sealed class NeowResources : IDisposable
+    {
+        public required MemoryBuffer1D<int, Stride1D.Dense> Criteria { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> RemovedMask { get; init; }
+
+        public NeowPrefilterView View => new(Criteria.View, RemovedMask.View);
+
+        public void Dispose()
+        {
+            Criteria.Dispose();
+            RemovedMask.Dispose();
+        }
+    }
+
     /// <summary>Device buffers that live only as long as one search.</summary>
     private sealed class CardResources : IDisposable
     {
@@ -145,12 +160,13 @@ public sealed class GpuSearchPlanner : IDisposable
         }
 
         var neow = default(NeowPrefilterParams);
-        if (criteria.Relic is not null && criteria.Where != OfferSlot.PositiveOnly)
-        {
-            var required = SeedSearcher.ResolveRequiredSlots(criteria);
-            bool anySlot = criteria.Requirement == SlotRequirement.Any;
-            NeowPrefilterFactory.TryBuild(criteria.Context, criteria.Relic, anySlot, required, out neow);
-        }
+        NeowResources? neowResources = null;
+        if (NeowPrefilterFactory.TryBuild(criteria, out neow, out var neowCriteria, out var neowRemoved))
+            neowResources = new NeowResources
+            {
+                Criteria = _engine.Accelerator.Allocate1D(neowCriteria),
+                RemovedMask = _engine.Accelerator.Allocate1D(neowRemoved),
+            };
 
         var cards = default(CardFilterParams);
         CardResources? cardResources = null;
@@ -163,13 +179,14 @@ public sealed class GpuSearchPlanner : IDisposable
         if (actParams.Active == 0 && neow.Active == 0 && cards.Active == 0 && run.Active == 0)
         {
             actResources?.Dispose();
+            neowResources?.Dispose();
             cardResources?.Dispose();
             runStage?.Dispose();
             return false;
         }
 
         var p = new SeedFilterParams { Acts = actParams, Neow = neow, Cards = cards, Run = run };
-        candidates = Stream(p, actResources, cardResources, runStage,
+        candidates = Stream(p, actResources, neowResources, cardResources, runStage,
             startIndex, count, cancellationToken, progress);
         return true;
     }
@@ -242,6 +259,7 @@ public sealed class GpuSearchPlanner : IDisposable
     private IEnumerable<ulong> Stream(
         SeedFilterParams p,
         ActResources? actResources,
+        NeowResources? neowResources,
         CardResources? cardResources,
         GpuRunStage? runStage,
         ulong start,
@@ -258,6 +276,7 @@ public sealed class GpuSearchPlanner : IDisposable
         {
             var views = new SeedFilterViews(
                 actResources?.View ?? default,
+                neowResources?.View ?? default,
                 cardResources?.Pools.View ?? default,
                 cardResources?.View ?? default,
                 runStage?.View ?? default);
@@ -270,6 +289,7 @@ public sealed class GpuSearchPlanner : IDisposable
         finally
         {
             actResources?.Dispose();
+            neowResources?.Dispose();
             cardResources?.Dispose();
             runStage?.Dispose();
             _gate.Release();

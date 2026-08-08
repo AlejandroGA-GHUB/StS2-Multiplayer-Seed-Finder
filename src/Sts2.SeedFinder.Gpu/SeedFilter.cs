@@ -24,13 +24,20 @@ public struct SeedFilterParams
 public readonly struct SeedFilterViews
 {
     public readonly ActFilterView Acts;
+    public readonly NeowPrefilterView Neow;
     public readonly CardPoolView Pools;
     public readonly CardCriteriaView Cards;
     public readonly RunFilterView Run;
 
-    public SeedFilterViews(ActFilterView acts, CardPoolView pools, CardCriteriaView cards, RunFilterView run)
+    public SeedFilterViews(
+        ActFilterView acts,
+        NeowPrefilterView neow,
+        CardPoolView pools,
+        CardCriteriaView cards,
+        RunFilterView run)
     {
         Acts = acts;
+        Neow = neow;
         Pools = pools;
         Cards = cards;
         Run = run;
@@ -83,7 +90,7 @@ public static class SeedFilter
             // Acts first: three draws and an array lookup, and it gates the criteria that would
             // otherwise need full run generation.
             if (p.Acts.Active != 0 && !ActFilter.MatchesRunSeed(runSeed, p.Acts, v.Acts)) continue;
-            if (p.Neow.Active != 0 && !NeowPrefilter.MatchesRunSeed(runSeed, p.Neow)) continue;
+            if (p.Neow.Active != 0 && !NeowPrefilter.MatchesRunSeed(runSeed, p.Neow, v.Neow)) continue;
             if (p.Cards.Active != 0 && !CardFilter.Matches(runSeed, p.Cards, v.Pools, v.Cards)) continue;
 
             // Last, and by a wide margin the most expensive: several hundred sequential draws

@@ -266,10 +266,8 @@ public static class RunGenerator
     ///
     /// <c>MerchantInventory.PopulateRelicEntries</c> builds three relic entries. The first two
     /// roll their rarity off <c>PlayerRng.Rewards</c>, whose pity counter every card reward
-    /// taken this run has moved, so they are unknowable. The third is hardcoded:
-    /// <code>
-    /// new RelicRarity[3] { RollRarity(Player), RollRarity(Player), RelicRarity.Shop }
-    /// </code>
+    /// taken this run has moved, so they are unknowable. The third is not rolled at all: its
+    /// rarity is the constant <c>RelicRarity.Shop</c>,
     /// and <c>RelicFactory.PullNextRelicFromBack</c> consumes NO RNG at all — it takes the back
     /// of the player's Shop deque, which was shuffled upfront and which nothing else ever draws
     /// from, because <c>RollRarity</c> only ever returns Common, Uncommon or Rare. So each shop

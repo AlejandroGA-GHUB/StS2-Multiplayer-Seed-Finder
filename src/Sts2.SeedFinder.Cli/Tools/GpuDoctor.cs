@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using ILGPU;
+using ILGPU.Runtime;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
@@ -62,9 +64,9 @@ public static class GpuDoctor
 
         // Every combination that changes the kernel's control flow: lobby size, "any slot"
         // against "these slots", and a relic at a different index in the candidate list.
-        foreach (var (label, p, span) in PredicateCases())
+        foreach (var (label, criteria, span) in PredicateCases())
         {
-            var check = GpuVerify.Predicate(engine, p, start: 4_000_000_000, count: span);
+            var check = GpuVerify.Predicate(engine, criteria, start: 4_000_000_000, count: span);
             Report(check with { Name = $"predicate {label}" });
             ok &= check.Passed;
         }
@@ -74,13 +76,14 @@ public static class GpuDoctor
         {
             var ctx = new NeowContext { PlayerCount = 4 };
             var candidates = NeowGenerator.CurseCandidates(ctx);
-            if (NeowPrefilterFactory.TryBuild(ctx, candidates[0], anySlot: true,
-                    requiredSlots: Array.Empty<int>(), out var dense))
+            var dense = new SearchCriteria
             {
-                var check = GpuVerify.Overflow(engine, dense, start: 7_000_000_000, count: 4_000_000);
-                Report(check);
-                ok &= check.Passed;
-            }
+                Context = ctx,
+                NeowRelicsWanted = new[] { new NeowCriterion(candidates[0], SlotRequirement.Any) },
+            };
+            var check = GpuVerify.Overflow(engine, dense, start: 7_000_000_000, count: 4_000_000);
+            Report(check);
+            ok &= check.Passed;
         }
 
         // Cards, against the generator rather than against our reading of it. Two characters so
@@ -123,12 +126,15 @@ public static class GpuDoctor
     /// The cases worth crossing. Spans are small enough that the CPU side of the comparison
     /// stays quick, since it is the slow half by two orders of magnitude.
     /// </summary>
-    private static IEnumerable<(string Label, NeowPrefilterParams Params, long Span)> PredicateCases()
+    private static IEnumerable<(string Label, SearchCriteria Criteria, long Span)> PredicateCases()
     {
         foreach (int players in new[] { 2, 3, 4 })
         {
             var ctx = new NeowContext { PlayerCount = players };
             var candidates = NeowGenerator.CurseCandidates(ctx);
+
+            SearchCriteria With(params NeowCriterion[] wants) =>
+                new() { Context = ctx, NeowRelicsWanted = wants };
 
             // First and last candidate: a wrong candidate count shows up as an index that is
             // only ever reachable at one end of the list.
@@ -136,19 +142,76 @@ public static class GpuDoctor
             {
                 var relic = candidates[which];
 
-                if (NeowPrefilterFactory.TryBuild(ctx, relic, anySlot: false,
-                        requiredSlots: Enumerable.Range(0, players).ToArray(), out var all))
-                    yield return ($"{players}p all/{relic.Slug}", all, 2_000_000);
+                yield return ($"{players}p all/{relic.Slug}",
+                    With(new NeowCriterion(relic, SlotRequirement.All)), 2_000_000);
 
-                if (NeowPrefilterFactory.TryBuild(ctx, relic, anySlot: true,
-                        requiredSlots: Array.Empty<int>(), out var any))
-                    yield return ($"{players}p any/{relic.Slug}", any, 1_000_000);
+                yield return ($"{players}p any/{relic.Slug}",
+                    With(new NeowCriterion(relic, SlotRequirement.Any)), 1_000_000);
             }
 
-            // A single named slot, which is the case the mask exists for.
-            if (players > 1 && NeowPrefilterFactory.TryBuild(ctx, candidates[0], anySlot: false,
-                    requiredSlots: new[] { players - 1 }, out var one))
-                yield return ($"{players}p slot{players - 1}/{candidates[0].Slug}", one, 1_000_000);
+            if (players > 1)
+            {
+                // A single named slot, which is the case the mask exists for.
+                yield return ($"{players}p slot{players - 1}/{candidates[0].Slug}",
+                    With(new NeowCriterion(candidates[0], SlotRequirement.Specific, new[] { players - 1 })),
+                    1_000_000);
+
+                // Two criteria at once, which is the whole point of the criteria buffer. Two
+                // DIFFERENT curse relics on two different slots: no seed can satisfy it by
+                // reusing one player, so a kernel that lost track of which criterion it was on
+                // would show up as extra hits rather than as none.
+                yield return ($"{players}p pair/{candidates[0].Slug}+{candidates[1].Slug}",
+                    With(new NeowCriterion(candidates[0], SlotRequirement.Specific, new[] { 0 }),
+                         new NeowCriterion(candidates[1], SlotRequirement.Specific, new[] { players - 1 })),
+                    20_000_000);
+
+                // The same pair asked loosely. Independent per-criterion testing is exact here
+                // only because one player holds one curse relic, so this is the case that would
+                // break if that assumption ever stopped being true.
+                yield return ($"{players}p pair-any/{candidates[0].Slug}+{candidates[1].Slug}",
+                    With(new NeowCriterion(candidates[0], SlotRequirement.Any),
+                         new NeowCriterion(candidates[1], SlotRequirement.Any)),
+                    20_000_000);
+            }
+
+            // ---- The positive branch, which is followed through the shuffle rather than built.
+            var positives = NeowRelics.Positives.Where(ctx.IsAllowed).ToList();
+
+            // First and last of the base pool. The last one is the one an off-by-one in the
+            // removal compaction moves, since every removal sits ahead of it.
+            foreach (var relic in new[] { positives[0], positives[^1] })
+                yield return ($"{players}p positive/{relic.Slug}",
+                    With(new NeowCriterion(relic, SlotRequirement.Any)), 400_000);
+
+            // Golden Pearl is the counterpart Cursed Pearl deletes, so this seed range exercises
+            // both the "removed outright, reject" path and the index shift on every other curse.
+            var goldenPearl = positives.FirstOrDefault(r => r.Slug == "golden_pearl");
+            if (goldenPearl is not null)
+                yield return ($"{players}p counterpart/golden_pearl",
+                    With(new NeowCriterion(goldenPearl, SlotRequirement.Any)), 400_000);
+
+            // Both halves of the FIRST coin-flip pair, which is the one Large Capsule skips.
+            // Getting that skip wrong shifts every later draw, so these two are the cases that
+            // catch it, and they are also where a flip's append position is exercised.
+            foreach (var relic in new[] { NeowRelics.LavaRock, NeowRelics.SmallCapsule })
+                yield return ($"{players}p coinflip/{relic.Slug}",
+                    With(new NeowCriterion(relic, SlotRequirement.Any)), 400_000);
+
+            // A later pair too, since its append position depends on whether the first one ran.
+            yield return ($"{players}p coinflip/{NeowRelics.Pomander.Slug}",
+                With(new NeowCriterion(NeowRelics.Pomander, SlotRequirement.Any)), 400_000);
+
+            // A curse and a positive together, which is the search this port was built for: the
+            // cheap criterion should reject most seeds before the shuffle walk runs at all.
+            yield return ($"{players}p mixed/{candidates[0].Slug}+{positives[0].Slug}",
+                With(new NeowCriterion(candidates[0], SlotRequirement.Any),
+                     new NeowCriterion(positives[0], SlotRequirement.Any)),
+                2_000_000);
+
+            // Pinned to a slot rather than loose, so the mask path is crossed with the shuffle
+            // walk instead of only with the one-draw curse test.
+            yield return ($"{players}p positive-all/{positives[0].Slug}",
+                With(new NeowCriterion(positives[0], SlotRequirement.All)), 2_000_000);
         }
     }
 
@@ -268,23 +331,30 @@ public static class GpuDoctor
 
         var ctx = new NeowContext { PlayerCount = 2 };
         var candidates = NeowGenerator.CurseCandidates(ctx);
-        if (!NeowPrefilterFactory.TryBuild(ctx, candidates[0], anySlot: false,
-                requiredSlots: new[] { 0, 1 }, out var p))
+        var benchCriteria = new SearchCriteria
+        {
+            Context = ctx,
+            NeowRelicsWanted = new[] { new NeowCriterion(candidates[0], SlotRequirement.All) },
+        };
+        if (!NeowPrefilterFactory.TryBuild(benchCriteria, out var p, out var packed, out var removed))
         {
             Console.WriteLine("  (could not build parameters)");
             return;
         }
 
+        using var buffer = engine.Accelerator.Allocate1D(packed);
+        using var removedBuffer = engine.Accelerator.Allocate1D(removed);
+        var view = new NeowPrefilterView(buffer.View, removedBuffer.View);
         using var search = new GpuSeedScan(engine);
 
         // Warm-up launch: the first one pays for ILGPU's JIT, which would otherwise be
         // reported as the device being slow.
-        _ = search.Scan(p, 1_000_000_000, 4 * 1024 * 1024).Count();
+        _ = search.Scan(p, view, 1_000_000_000, 4 * 1024 * 1024).Count();
 
         foreach (long count in new[] { 64L << 20, 512L << 20 })
         {
             var sw = Stopwatch.StartNew();
-            int hits = search.Scan(p, 1_000_000_000, count).Count();
+            int hits = search.Scan(p, view, 1_000_000_000, count).Count();
             sw.Stop();
             Console.WriteLine($"  neow  {count,12:N0} seeds  {sw.Elapsed.TotalSeconds,7:F3}s  " +
                               $"{Rate(count, sw.Elapsed.TotalSeconds)}  {hits:N0} hits");

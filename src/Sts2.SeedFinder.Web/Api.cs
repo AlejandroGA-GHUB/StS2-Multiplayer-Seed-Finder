@@ -243,11 +243,6 @@ public static class Query
             ScrollBoxesAvailable = q["scrollBoxes"] != "false",
         };
 
-        NeowRelic? relic = null;
-        var relicSlug = q["relic"].ToString();
-        if (!string.IsNullOrWhiteSpace(relicSlug) && relicSlug != "any")
-            relic = NeowRelics.Find(relicSlug) ?? throw new ArgumentException($"unknown relic '{relicSlug}'");
-
         var where = q["where"].ToString() switch
         {
             "curse" => OfferSlot.CurseOnly,
@@ -255,8 +250,31 @@ public static class Query
             _ => OfferSlot.Anywhere,
         };
 
-        var requireRaw = q["require"].ToString();
-        var (requirement, slots) = ParseRequire(requireRaw, players);
+        // The search-wide rule. Still read, because it is what a one-relic link carries and
+        // what a row without its own rule falls back to.
+        var (requirement, slots) = ParseRequire(q["require"].ToString(), players);
+
+        // Repeated ?relic=<slug>[:<require>] — e.g. silken_tress, silken_tress:all,
+        // golden_pearl:p2. Shaped like ?ancient= on purpose: wanting one relic for the whole
+        // lobby and a different one for a single player is the ordinary co-op ask, and a single
+        // shared rule cannot express it. A lone ?relic=silken_tress with ?require=all keeps
+        // meaning exactly what it did before rows existed.
+        var neowWanted = new List<NeowCriterion>();
+        foreach (var raw in (StringValues)q["relic"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts[0].Length == 0 || parts[0] == "any") continue;
+
+            var found = NeowRelics.Find(parts[0])
+                ?? throw new ArgumentException($"unknown relic '{parts[0]}'");
+
+            var (rowRule, rowSlots) = parts.Length == 2 && parts[1].Length > 0
+                ? ParseRequire(parts[1], players)
+                : (requirement, slots);
+
+            neowWanted.Add(new NeowCriterion(found, rowRule, rowSlots, where));
+        }
 
         var act1 = q["act1"].ToString();
         if (string.IsNullOrWhiteSpace(act1) || act1 == "any") act1 = null;
@@ -289,7 +307,7 @@ public static class Query
 
         var criteria = new SearchCriteria
         {
-            Relic = relic,
+            NeowRelicsWanted = neowWanted,
             Act1 = act1,
             // ?cardOrder=any lets the picks land in any fight order. Default stays exact, so an
             // existing link keeps meaning what it meant.

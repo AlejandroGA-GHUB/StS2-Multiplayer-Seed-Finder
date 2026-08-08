@@ -356,20 +356,32 @@ internal static class Program
         bool actCriteria = opts.Ancients.Count > 0 || opts.Bosses.Count > 0 || opts.Events.Count > 0
                            || opts.Cards.Count > 0 || opts.ShopRelicsWanted.Count > 0
                            || opts.ChestRelicsWanted.Count > 0;
-        var relicName = opts.Relic ?? (actCriteria ? null : "silken_tress");
-        NeowRelic? relic = null;
-        if (relicName is not null)
-            relic = NeowRelics.Find(relicName)
-                ?? throw new ArgumentException($"unknown relic '{relicName}'. Use --list to see them all.");
+        var relicArgs = opts.Relics.Count > 0
+            ? opts.Relics
+            : actCriteria ? Array.Empty<string>() : new[] { "silken_tress" };
+
+        // Each --relic may carry its own ":who", falling back to --require. So
+        // `--relic silken_tress:all --relic golden_pearl:p2` is one search with two rules.
+        var neowWanted = new List<NeowCriterion>();
+        foreach (var arg in relicArgs)
+        {
+            var parts = arg.Split(':', 2, StringSplitOptions.TrimEntries);
+            var found = NeowRelics.Find(parts[0])
+                ?? throw new ArgumentException($"unknown relic '{parts[0]}'. Use --list to see them all.");
+
+            var (rule, slots) = parts.Length == 2 && parts[1].Length > 0
+                ? Options.ParseRequireValue(parts[1], opts.PlayerCount)
+                : (opts.Requirement, opts.RequiredSlots);
+
+            neowWanted.Add(new NeowCriterion(found, rule, slots, opts.Where));
+        }
 
         var criteria = new SearchCriteria
         {
-            Relic = relic,
+            NeowRelicsWanted = neowWanted,
             CardOrder = opts.AnyOrder ? CardOrder.AnyPermutation : CardOrder.Exact,
             Act1 = opts.Act1,
             Context = ContextOf(opts),
-            Requirement = opts.Requirement,
-            RequiredSlots = opts.RequiredSlots,
             Where = opts.Where,
             Ancients = opts.Ancients,
             Bosses = opts.Bosses,
@@ -382,11 +394,15 @@ internal static class Program
             Characters = opts.Characters,
         };
 
+        // Before the plan is printed, so a search that cannot be satisfied says so instead of
+        // first quoting a rate for it.
+        SeedSearcher.Validate(criteria);
+
         Console.WriteLine();
         if (opts.Act1 is not null)
             Console.WriteLine($"  Act 1 map     : {opts.Act1}");
-        if (relic is not null)
-            Console.WriteLine($"  Neow          : {relic.Name}  ({DescribeWhere(opts.Where)})");
+        foreach (var want in neowWanted)
+            Console.WriteLine($"  Neow          : {want}  ({DescribeWhere(opts.Where)})");
         foreach (var b in opts.Bosses)
             Console.WriteLine($"  Boss          : {b}");
         foreach (var e in opts.Events)
@@ -406,12 +422,10 @@ internal static class Program
                           (opts.Characters.Count > 0 ? $" — {string.Join(", ", opts.Characters)}" : "") +
                           (opts.Ascension > 0 ? $", ascension {opts.Ascension}" : "") +
                           (opts.Ascension >= AscensionLevels.DoubleBoss ? " (Double Boss)" : ""));
-        // --require is the Neow relic's slot rule, so saying "at least one player is offered
-        // it" on a search that has no relic names nothing. Card and Ancient rows carry their
-        // own slot rule and print it themselves.
-        if (relic is not null)
+        // Each Neow row prints its own slot rule above, so what is left to say is the rate the
+        // rows produce together. Card and Ancient rows carry their own rule and print it too.
+        if (neowWanted.Count > 0)
         {
-            Console.WriteLine($"  requirement   : {DescribeRequirement(opts)}");
             double p = SeedSearcher.MatchProbability(criteria);
             Console.WriteLine($"  Neow rate     : 1 in {1.0 / p:N1} seeds (before act filtering)");
         }
@@ -434,9 +448,14 @@ internal static class Program
                      CancellationToken.None, candidates))
         {
             n++;
-            var slots = relic is null
-                ? ""
-                : string.Join(",", hit.MatchingSlots(relic, opts.Where).Select(s => $"P{s + 1}"));
+            // Which players satisfied the search, across every Neow row. Union rather than one
+            // row's slots: with several relics wanted, "P1,P2" means the lobby between them
+            // covered the requirements, and naming only the first row's would mislead.
+            var slots = string.Join(",", neowWanted
+                .SelectMany(want => hit.MatchingSlots(want.Relic, want.Where))
+                .Distinct()
+                .OrderBy(s => s)
+                .Select(s => $"P{s + 1}"));
             Console.WriteLine($"  {hit.Seed}   {slots,-10}");
             for (int i = 0; i < hit.OffersBySlot.Length; i++)
                 Console.WriteLine($"      P{i + 1} Neow: {hit.OffersBySlot[i]}");
@@ -509,12 +528,17 @@ internal static class Program
             sts2seed --verify [<run.save>] [--progress <progress.save>]
 
           OPTIONS
-            --relic <name>     Neow relic to look for. Default: silken_tress, unless an
-                               --ancient flag is given, in which case Neow is unconstrained.
+            --relic <name>[:<who>]
+                               Neow relic to look for. Repeatable, and each one may carry its
+                               own <who> (any | all | p1,p2,...) so different players can be
+                               asked for different relics. Without one it uses --require.
+                               Default: silken_tress, unless an --ancient flag is given, in
+                               which case Neow is unconstrained.
             --act1 <map>       overgrowth | underdocks. Default: either. Rolled on its own
                                RNG, so this is close to free and is tested first.
             --players N        Lobby size, 2-4. Default: 2
-            --require <who>    any | all | p1,p2,...   Default: any
+            --require <who>    any | all | p1,p2,...   Default: any. The fallback for every
+                               --relic that does not name its own.
             --where <slot>     any | curse | positive   Default: any
             --count N          How many seeds to scan. Default: 5000000
             --start N          Index to start from. Default: random (printed, so you
@@ -680,6 +704,7 @@ internal static class Program
             sts2seed --relic silken_tress --players 2 --require all
             sts2seed --relic kaleidoscope --where positive --require p1
             sts2seed --relic hefty_tablet --players 3 --require p1,p3
+            sts2seed --relic silken_tress:all --relic golden_pearl:p2 --players 2
             sts2seed --explain 0P2ENNHM
             sts2seed --ancient vakuu --characters ironclad,silent
             sts2seed --boss 3:queen --characters ironclad,silent
@@ -705,8 +730,11 @@ internal static class Program
 
     private sealed record Options
     {
-        /// <summary>Null means "no Neow requirement" — only meaningful alongside --ancient.</summary>
-        public string? Relic { get; init; }
+        /// <summary>
+        /// Raw --relic arguments, each <c>slug</c> or <c>slug:who</c>, in the order given. Empty
+        /// means no Neow requirement, which is only meaningful alongside an act criterion.
+        /// </summary>
+        public IReadOnlyList<string> Relics { get; init; } = Array.Empty<string>();
 
         /// <summary>Act 1 map to require, or null for either.</summary>
         public string? Act1 { get; init; }
@@ -849,7 +877,7 @@ internal static class Program
 
                 switch (args[i])
                 {
-                    case "--relic":   o = o with { Relic = Next("--relic") }; break;
+                    case "--relic":   o = o with { Relics = o.Relics.Append(Next("--relic")).ToList() }; break;
                     case "--act1":    o = o with { Act1 = Next("--act1") }; break;
                     case "--ancient": o = o with { Ancients = o.Ancients.Append(ParseAncient(Next("--ancient"))).ToList() }; break;
                     case "--ancient-relic":
@@ -919,13 +947,8 @@ internal static class Program
                         break;
                     case "--require":
                     {
-                        var v = Next("--require").Trim().ToLowerInvariant();
-                        o = v switch
-                        {
-                            "any" => o with { Requirement = SlotRequirement.Any },
-                            "all" => o with { Requirement = SlotRequirement.All },
-                            _ => o with { Requirement = SlotRequirement.Specific, RequiredSlots = ParseSlots(v) },
-                        };
+                        var (rule, slots) = ParseRequireValue(Next("--require"), o.PlayerCount);
+                        o = o with { Requirement = rule, RequiredSlots = slots };
                         break;
                     }
                     default:
@@ -1197,5 +1220,22 @@ internal static class Program
                  return n - 1;
              })
              .ToArray();
+
+        /// <summary>
+        /// "any", "all" or a slot list. Shared by --require and by a --relic argument's own
+        /// ":who" suffix, so the two cannot drift into meaning different things.
+        /// </summary>
+        internal static (SlotRequirement, IReadOnlyList<int>) ParseRequireValue(string raw, int playerCount)
+        {
+            var v = raw.Trim().ToLowerInvariant();
+            if (v is "" or "any") return (SlotRequirement.Any, Array.Empty<int>());
+            if (v == "all") return (SlotRequirement.All, Array.Empty<int>());
+
+            var slots = ParseSlots(v);
+            foreach (var s in slots)
+                if (s < 0 || s >= playerCount)
+                    throw new ArgumentException($"P{s + 1} is not in a {playerCount}-player lobby");
+            return (SlotRequirement.Specific, slots);
+        }
     }
 }

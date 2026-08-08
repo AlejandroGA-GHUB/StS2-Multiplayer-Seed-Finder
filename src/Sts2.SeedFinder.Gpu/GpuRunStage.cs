@@ -38,7 +38,7 @@ public sealed class GpuRunStage : IDisposable
         _ancientCriteria.View, _shopProbes.View);
 
     /// <summary>The stage's views wrapped as a whole-kernel argument, for a run-only scan.</summary>
-    public SeedFilterViews Views => new(default, default, default, View);
+    public SeedFilterViews Views => new(default, default, default, default, View);
 
     /// <summary>Upload the tables for these criteria, or return null when the stage declines.</summary>
     public static GpuRunStage? TryCreate(GpuEngine engine, SearchCriteria criteria) =>

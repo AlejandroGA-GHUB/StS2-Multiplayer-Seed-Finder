@@ -294,6 +294,11 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
 .ancient-row .span, .ancient-row .note { grid-column: 1 / -1; }
 .ancient-row .note { margin-top: 1px; }
 
+/* Neow rows lead with the relic field rather than a dropdown, and that field is the taller of
+   the two because it carries a 28px icon. Centring leaves the remove button visibly shorter
+   than the control beside it, so here it stretches to the row instead. */
+.ancient-row.relic-first .icon-btn { align-self: stretch; }
+
 /* "Within the first [n]" reads as one sentence, so the label and the box sit on one line
    and the box is only as wide as a two-digit number needs. */
 .within { display: flex; align-items: center; gap: 8px; }

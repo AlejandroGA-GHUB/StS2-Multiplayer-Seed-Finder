@@ -24,47 +24,9 @@ that space.
 
 Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
-```
-dotnet build -c Release
-```
-
-### Linux and macOS
-
-**Run `./seed-finder.sh`.** It builds, starts the server, and opens your browser on
-<http://localhost:5173>. Ctrl+C stops it.
-
-```
-chmod +x seed-finder.sh      # once, if your clone did not keep the executable bit
-./seed-finder.sh             # build, serve on 5173, open a browser
-./seed-finder.sh 8080        # a different port
-./seed-finder.sh --nobuild   # skip the build for a faster restart
-```
-
-Or without the script:
-
-```
-dotnet build -c Release src/Sts2.SeedFinder.Web
-dotnet run -c Release --no-build --project src/Sts2.SeedFinder.Web
-```
-
-**Build that one project, not the whole solution.** Plain `dotnet build -c Release` also builds
-the Windows app shell, which targets `net10.0-windows`. That is configured to build anyway on
-Linux and macOS rather than failing, but it costs you the Windows Desktop targeting packs and
-produces an `.exe` you cannot run.
-
-Everything the search actually uses is plain `net10.0`, and the code that goes looking for your
-files already knows these platforms: your Steam library including Flatpak, a native Linux or macOS
-build of the game, and saves under `~/.local/share/SlayTheSpire2`,
-`~/Library/Application Support/SlayTheSpire2` or a Proton prefix.
-
-I have only run this on Windows, so that is what I can vouch for. Two things are known to differ:
-
-- **No app window**, only the browser. The window embeds Microsoft's WebView2, which exists only
-  on Windows. Same UI, same local server, same results, in a tab instead. Nothing about searching
-  differs.
-- **Art and descriptions might not load.** They are read out of the game's own packed files, and
-  I have never run that lookup on a case-sensitive filesystem. If it misses you get lettered tiles
-  and no hover text. Searching will not care either way; it never touches your install.
+Then grab the newest build from
+[Releases](https://github.com/AlejandroGA-GHUB/StS2-Multiplayer-Seed-Finder/releases/latest),
+or clone this repository if you would rather build it yourself.
 
 ### Platforms at a glance
 
@@ -74,9 +36,9 @@ I have only run this on Windows, so that is what I can vouch for. Two things are
 | Browser | `seed-finder.bat /browser` | `./seed-finder.sh` |
 | Command line | `cli.bat` | `dotnet run --project src/Sts2.SeedFinder.Cli -- --help` |
 
-### The app
+### WINDOWS - App Supported
 
-On Windows, double-click **`seed-finder.bat`**. It builds, then opens the seed finder as its own
+Double-click **`seed-finder.bat`**. It builds, then opens the seed finder as its own
 window: no address bar, no tab, no console sitting behind it. Closing the window stops everything.
 
 ```
@@ -136,11 +98,53 @@ To use a different port:
 dotnet run -c Release --project src\Sts2.SeedFinder.Web -- --urls http://localhost:8080
 ```
 
+### Linux and macOS
+
+**Run `./seed-finder.sh`.** It builds, starts the server, and opens your browser on
+<http://localhost:5173>. Ctrl+C stops it.
+
+```
+chmod +x seed-finder.sh      # once, if your clone did not keep the executable bit
+./seed-finder.sh             # build, serve on 5173, open a browser
+./seed-finder.sh 8080        # a different port
+./seed-finder.sh --nobuild   # skip the build for a faster restart
+```
+
+Or without the script:
+
+```
+dotnet build -c Release src/Sts2.SeedFinder.Web
+dotnet run -c Release --no-build --project src/Sts2.SeedFinder.Web
+```
+
+**Build that one project, not the whole solution.** Plain `dotnet build -c Release` also builds
+the Windows app shell, which targets `net10.0-windows`. That is configured to build anyway on
+Linux and macOS rather than failing, but it costs you the Windows Desktop targeting packs and
+produces an `.exe` you cannot run.
+
+Everything the search actually uses is plain `net10.0`, and the code that goes looking for your
+files already knows these platforms: your Steam library including Flatpak, a native Linux or macOS
+build of the game, and saves under `~/.local/share/SlayTheSpire2`,
+`~/Library/Application Support/SlayTheSpire2` or a Proton prefix.
+
+I have only run this on Windows, so that is what I can vouch for. Two things are known to differ:
+
+- **No app window**, only the browser. The window embeds Microsoft's WebView2, which exists only
+  on Windows. Same UI, same local server, same results, in a tab instead. Nothing about searching
+  differs.
+- **Art and descriptions might not load.** They are read out of the game's own packed files, and
+  I have never run that lookup on a case-sensitive filesystem. If it misses you get lettered tiles
+  and no hover text. Searching will not care either way; it never touches your install.
+
 ### Command line
 
 ```
 # Both players offered Silken Tress
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress --require all
+
+# ...and P2 also offered Golden Pearl. Each --relic can carry its own :who
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress:all \
+    --relic golden_pearl:p2
 
 # ...and Act 1 is the Underdocks
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress --require all \
@@ -201,27 +205,10 @@ The status line tells you which one ran and how fast it is going, so you never h
 67,108,864 of 400,000,000 scanned · 501.0 M seeds/s · GPU: NVIDIA GeForce RTX 4070 SUPER · 3 found…
 ```
 
-**Why it's safe.** The GPU is never allowed to decide anything. All it does is throw out seeds
-that cannot possibly match, and every seed that survives is then checked by exactly the same code
-that runs when there's no GPU at all. So the worst a bug in it could do is waste time, not invent
-a wrong answer. It's also held to that standard directly: `sts2seed --gpu-verify` runs both paths
-over a range of seeds and compares the results as **sets**, which is what catches a filter
-throwing away seeds it should have kept.
-
-**Roughly what to expect**, measured on an RTX 4070 SUPER against the same searches without it:
-
-| Search | Without a GPU | With one |
-|---|---|---|
-| Neow relic | 45 M/s | ~1 B/s |
-| Card reward | 4.7 M/s | 470 M/s |
-| Shop relic | 0.9 M/s | 280 M/s |
-| Boss, event or Ancient | 2 M/s | 37 to 430 M/s |
-| Treasure chest | 0.5 M/s | not accelerated yet |
-
-The Act 1 map is accelerated too, but it isn't in the table because a rate would be meaningless
-for it: it's three numbers per seed and half of all seeds match, so you hit your result limit
-almost immediately and what takes the time is drawing the results, not finding them. It matters
-as part of a bigger search, where it throws out half the seeds before anything expensive runs.
+**What's accelerated:** the Act 1 map, Neow's offer on both branches, card rewards, and run
+generation for bosses, events, which Ancient turns up and shop relics. Treasure chests are still
+CPU-only. Rather than quote numbers that depend entirely on your hardware, the status line above
+tells you the rate you are actually getting, on the search you are actually running. 
 
 An integrated laptop GPU lands well below a discrete card but still far above the CPU. If there's
 no usable device at all, or you set `STS2_GPU=off`, everything works as it always did.
@@ -256,6 +243,7 @@ Two things that surprise people:
 | A shop's other two relics, cards or potions | Not supported yet |
 | Relics from elite fights | Not supported yet |
 | Card payloads (Hefty Tablet's rares, Arcane Scroll's rare) | Not supported yet |
+| What's inside Small Capsule, Large Capsule or Neow's Bones | Not supported yet |
 
 Five independent checks back this up:
 

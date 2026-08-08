@@ -61,24 +61,13 @@
         map costs almost nothing as it is the first thing each seed is tested against.</p>
     </fieldset>
 
+    <!-- Rows rather than one relic with one shared rule, matching the Ancients panel below.
+         Every player rolls their own offer, so "Silken Tress for everyone, and Golden Pearl
+         for P2" is the ordinary co-op ask and a single rule cannot express it. -->
     <fieldset>
       <legend>Neow (Act 1)</legend>
-      <div class="row">
-        <label>Offers this relic</label>
-        <button type="button" class="relic-field" id="neowRelic" data-slug="">
-          <span class="icon mono">?</span>
-          <span class="name">Any relic</span>
-          <span class="clear" data-clear="1" title="Clear">&times;</span>
-        </button>
-      </div>
-      <!-- Which branch a relic comes from is decided by the relic, not by the user: Neow's
-           curse and positive pools share no relic. So this states the fact rather than
-           offering a choice that could only agree or error. -->
-      <p class="branch" id="neowBranch" hidden></p>
-      <div class="row">
-        <label>Who must get it</label>
-        <div id="require"></div>
-      </div>
+      <div id="neow"></div>
+      <button type="button" class="icon-btn" id="addNeow" style="width:100%">+ Add a requirement</button>
     </fieldset>
 
     <!-- Directly under Neow: the Ancients are the same kind of thing one act later, and each

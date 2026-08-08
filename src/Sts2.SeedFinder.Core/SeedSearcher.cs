@@ -50,6 +50,40 @@ public enum OfferSlot
 }
 
 /// <summary>
+/// One Neow requirement: a relic, and which player slots have to be offered it.
+///
+/// Per-criterion rather than one relic with one search-wide rule, for the same reason
+/// <see cref="AncientCriterion"/> is: "Silken Tress for everyone, and Golden Pearl for P2"
+/// is an ordinary thing to want out of a co-op lobby, and a single shared rule cannot say it.
+///
+/// <paramref name="Where"/> is almost never worth setting. Neow's curse and positive pools are
+/// disjoint, so the relic already decides its own branch and constraining it can only agree
+/// with that or contradict it.
+/// </summary>
+public sealed record NeowCriterion(
+    NeowRelic Relic,
+    SlotRequirement Requirement = SlotRequirement.Any,
+    IReadOnlyList<int>? RequiredSlots = null,
+    OfferSlot Where = OfferSlot.Anywhere)
+{
+    /// <summary>Slots this criterion has to hold for. Empty for <see cref="SlotRequirement.Any"/>.</summary>
+    public IReadOnlyList<int> ResolveSlots(int playerCount) => Requirement switch
+    {
+        SlotRequirement.All => Enumerable.Range(0, playerCount).ToArray(),
+        SlotRequirement.Specific => RequiredSlots ?? Array.Empty<int>(),
+        _ => Array.Empty<int>(),
+    };
+
+    public override string ToString() => Requirement switch
+    {
+        SlotRequirement.All => $"{Relic.Name}, for every player",
+        SlotRequirement.Specific =>
+            $"{Relic.Name}, for {string.Join(" and ", (RequiredSlots ?? []).Select(s => $"P{s + 1}"))}",
+        _ => $"{Relic.Name}, for any player",
+    };
+}
+
+/// <summary>
 /// One Ancient requirement. <paramref name="Relic"/> null means "this Ancient shows up at
 /// all, whatever it offers" — the deliberately loose case.
 ///
@@ -183,8 +217,31 @@ public sealed record ChestRelicCriterion(int Act, string Relic, int Tolerance = 
 
 public sealed record SearchCriteria
 {
-    /// <summary>Neow relic to require. Null searches on the Ancient criteria alone.</summary>
+    /// <summary>
+    /// A single Neow relic to require, kept because it is the shape every caller used before
+    /// Neow took a list. It is folded into <see cref="NeowCriteria"/> alongside
+    /// <see cref="NeowRelicsWanted"/> rather than being an alternative to it, so a caller
+    /// setting both gets both required instead of one of them silently disappearing.
+    /// </summary>
     public NeowRelic? Relic { get; init; }
+
+    /// <summary>
+    /// Neow relics to require, each with its own slot rule. Prefer this to <see cref="Relic"/>.
+    /// </summary>
+    public IReadOnlyList<NeowCriterion> NeowRelicsWanted { get; init; } = Array.Empty<NeowCriterion>();
+
+    /// <summary>
+    /// Every Neow requirement this search carries, whichever way it was expressed. This is what
+    /// the scan, the validator and the accelerator all read, so none of them has to know that
+    /// the singular form exists.
+    /// </summary>
+    public IReadOnlyList<NeowCriterion> NeowCriteria =>
+        Relic is null
+            ? NeowRelicsWanted
+            : NeowRelicsWanted
+                .Prepend(new NeowCriterion(Relic, Requirement, RequiredSlots, Where))
+                .ToArray();
+
     public required NeowContext Context { get; init; }
 
     /// <summary>
@@ -345,54 +402,13 @@ public static class SeedSearcher
         Validate(criteria);
 
         var ctx = criteria.Context;
-        var relic = criteria.Relic;
-        var where = criteria.Where;
         int playerCount = ctx.PlayerCount;
-        var required = ResolveRequiredSlots(criteria);
-        bool anySlot = criteria.Requirement == SlotRequirement.Any;
 
-        // A curse-branch relic can be settled on a SINGLE draw, because the curse is the first
-        // thing Neow rolls — versus roughly twenty draws, three coin flips, a shuffle and a
-        // handful of list allocations to build the whole offer.
-        //
-        // The test is the relic's pool, not what the caller asked for. Neow's curse and
-        // positive pools are disjoint (the "counterpart" relics are different relics), so for
-        // any curse relic "anywhere in the offer" and "curse branch only" are the same
-        // question, and both take the cheap answer. Keying this on `where == CurseOnly` instead
-        // meant the default search setting silently paid the full price, which on a 4-player
-        // Silken Tress search is a 6x difference.
-        //
-        // PositiveOnly is excluded for safety; ValidateCriteria already rejects that pairing.
-        // `relic` is null on a search with no Neow requirement, which has no fast path to take.
-        // Stating that is clearer than letting IndexOf(null) return -1 and arrive at the same
-        // answer by accident.
-        var curseCandidates = NeowGenerator.CurseCandidates(ctx);
-        int curseIndex = relic is null ? -1 : curseCandidates.ToList().IndexOf(relic);
-        bool curseFastPath = curseIndex >= 0 && where != OfferSlot.PositiveOnly;
+        // Every Neow requirement, prepared once. The curse fast path, the cheapest-first
+        // ordering and the per-slot offer cache all live in there — see NeowPlan.
+        var neowPlan = NeowPlan.Build(criteria);
 
-        bool SlotMatches(ulong runSeed, int slot)
-        {
-            if (curseFastPath)
-            {
-                var rng = new Rng(NeowGenerator.RngSeed(runSeed, slot));
-                return rng.NextInt(0, curseCandidates.Count) == curseIndex;
-            }
-            return OfferSatisfies(NeowGenerator.PredictOffer(runSeed, slot, ctx), relic, where);
-        }
-
-        bool NeowMatches(ulong runSeed)
-        {
-            if (relic is null) return true;
-            if (anySlot)
-            {
-                for (int slot = 0; slot < playerCount; slot++)
-                    if (SlotMatches(runSeed, slot)) return true;
-                return false;
-            }
-            foreach (var slot in required)
-                if (!SlotMatches(runSeed, slot)) return false;
-            return true;
-        }
+        bool NeowMatches(ulong runSeed) => neowPlan.Matches(runSeed);
 
         // Each player's first card reward, tested against that player's own Rewards stream.
         // Roughly fourteen draws per slot, so this sits between the Neow filter and the run.
@@ -660,35 +676,45 @@ public static class SeedSearcher
     }
 
     /// <summary>
-    /// Rough expected match rate, for sizing a scan. Positive-slot odds are estimated by
-    /// sampling rather than derived, because the pool size varies with the curse rolled.
+    /// Rough expected match rate, for sizing a scan. Estimated by sampling rather than derived,
+    /// because the positive pool's size varies with the curse rolled.
+    ///
+    /// With several Neow relics this samples the criteria TOGETHER rather than multiplying a
+    /// rate per criterion. They are not independent — an offer holds three relics, so asking one
+    /// player for two of them is a very different question from asking two players for one
+    /// each — and a product would report the joint case as far rarer than it is.
     /// </summary>
     public static double MatchProbability(SearchCriteria criteria, int sampleSize = 20000)
     {
         // Act 1 is one of two candidates, and the roll is independent of everything else.
         double actFactor = criteria.Act1 is null ? 1.0 : 1.0 / ActData.ByIndex[0].Length;
 
-        if (criteria.Relic is null) return actFactor;
+        var plan = NeowPlan.Build(criteria);
+        if (plan.IsEmpty) return actFactor;
 
         int hits = 0;
         for (ulong i = 0; i < (ulong)sampleSize; i++)
         {
             ulong runSeed = SeedCodec.RunSeed(SeedCodec.FromIndex(i * 2654435761uL));
-            if (OfferSatisfies(NeowGenerator.PredictOffer(runSeed, 0, criteria.Context), criteria.Relic, criteria.Where))
-                hits++;
+            if (plan.Matches(runSeed)) hits++;
         }
-        double p = Math.Max(hits / (double)sampleSize, 1e-9);
 
-        if (criteria.Requirement == SlotRequirement.Any)
-            return actFactor * (1.0 - Math.Pow(1.0 - p, criteria.PlayerCount));
-        return actFactor * Math.Pow(p, ResolveRequiredSlots(criteria).Count);
+        // Floored rather than allowed to be zero: this figure sizes a scan and divides into a
+        // seed count, and a sample of 20k says nothing useful about a 1-in-a-billion search
+        // beyond "rare".
+        return actFactor * Math.Max(hits / (double)sampleSize, 1e-9);
     }
 
-    private static void Validate(SearchCriteria c)
+    /// <summary>
+    /// Reject criteria that are malformed or that no seed could satisfy. Called by
+    /// <see cref="Search"/>, and public so a caller can fail before printing a plan for a
+    /// search that is about to be refused.
+    /// </summary>
+    public static void Validate(SearchCriteria c)
     {
         // Named by criterion rather than by flag: this runs in the web app as well as the CLI,
         // and a list of command-line switches is not an instruction anyone can follow there.
-        if (c.Relic is null && c.Act1 is null && !c.NeedsCharacters)
+        if (c.NeowCriteria.Count == 0 && c.Act1 is null && !c.NeedsCharacters)
             throw new ArgumentException(
                 "Nothing to search for. Set at least one criterion: a Neow relic, the Act 1 map, "
                 + "an Ancient's offer, a boss, an event, a card reward, a shop relic or a "
@@ -724,18 +750,92 @@ public static class SeedSearcher
                     string.Join(", ", pool.Select(AncientOffers.Slug)));
         }
 
-        if (c.Relic is null) return;
+        foreach (var want in c.NeowCriteria)
+        {
+            var relic = want.Relic;
 
-        if (!c.Context.IsAllowed(c.Relic))
-            throw new ArgumentException(
-                $"'{c.Relic.Name}' can never be offered under these settings " +
-                $"({c.PlayerCount} players, availability: {c.Relic.Availability}).");
+            if (!c.Context.IsAllowed(relic))
+                throw new ArgumentException(
+                    $"'{relic.Name}' can never be offered under these settings " +
+                    $"({c.PlayerCount} players, availability: {relic.Availability}).");
 
-        if (c.Where == OfferSlot.CurseOnly && c.Relic.Pool != NeowPool.Curse)
-            throw new ArgumentException($"'{c.Relic.Name}' is not a curse-branch relic.");
+            if (want.Where == OfferSlot.CurseOnly && relic.Pool != NeowPool.Curse)
+                throw new ArgumentException($"'{relic.Name}' is not a curse-branch relic.");
 
-        if (c.Where == OfferSlot.PositiveOnly && c.Relic.Pool == NeowPool.Curse)
-            throw new ArgumentException($"'{c.Relic.Name}' is only ever offered as the curse option.");
+            if (want.Where == OfferSlot.PositiveOnly && relic.Pool == NeowPool.Curse)
+                throw new ArgumentException($"'{relic.Name}' is only ever offered as the curse option.");
+
+            if (want.Requirement == SlotRequirement.Specific)
+                foreach (var slot in want.RequiredSlots ?? [])
+                    if (slot < 0 || slot >= c.PlayerCount)
+                        throw new ArgumentException(
+                            $"'{relic.Name}' is required for P{slot + 1}, but the lobby has " +
+                            $"{c.PlayerCount} player{(c.PlayerCount == 1 ? "" : "s")}.");
+        }
+
+        ValidateNeowCombinations(c);
+    }
+
+    /// <summary>
+    /// Rejects Neow demands that no single offer could ever satisfy, rather than scanning
+    /// forever for one. This only became reachable when Neow took a list of relics: one relic
+    /// can always be offered to somebody, but two aimed at the same player can contradict.
+    ///
+    /// Only criteria that PIN a slot are considered. <see cref="SlotRequirement.Any"/> asks for
+    /// somebody in the lobby, so it can move to whichever player is free and constrains nothing.
+    /// </summary>
+    private static void ValidateNeowCombinations(SearchCriteria c)
+    {
+        var bySlot = new Dictionary<int, List<NeowRelic>>();
+        foreach (var want in c.NeowCriteria)
+        {
+            if (want.Requirement == SlotRequirement.Any) continue;
+            foreach (var slot in want.ResolveSlots(c.PlayerCount))
+            {
+                var list = bySlot.TryGetValue(slot, out var existing) ? existing : bySlot[slot] = [];
+                if (!list.Contains(want.Relic)) list.Add(want.Relic);
+            }
+        }
+
+        foreach (var (slot, relics) in bySlot)
+        {
+            string who = $"P{slot + 1}";
+
+            // An offer is exactly one curse and two positives, so the shape alone rules some
+            // asks out before any seed is looked at.
+            var curses = relics.Where(r => r.Pool == NeowPool.Curse).ToList();
+            if (curses.Count > 1)
+                throw new ArgumentException(
+                    $"{who} cannot be offered {Join(curses)} at once: Neow offers exactly one " +
+                    "curse-branch relic per player, so only one of those can be in an offer.");
+
+            var positives = relics.Where(r => r.Pool != NeowPool.Curse).ToList();
+            if (positives.Count > 2)
+                throw new ArgumentException(
+                    $"{who} cannot be offered {Join(positives)} at once: Neow offers exactly two " +
+                    "positive options per player.");
+
+            // Exactly one of each coin-flip pair is ever added to the pool.
+            foreach (var relic in positives)
+                if (NeowRelics.CoinFlipPartner(relic) is { } partner && positives.Contains(partner))
+                    throw new ArgumentException(
+                        $"{who} cannot be offered both {relic.Name} and {partner.Name}: Neow flips " +
+                        "a coin between those two, so exactly one of them enters the pool.");
+
+            // Taking a curse removes its counterpart from the positive pool outright.
+            foreach (var curse in curses)
+            {
+                if (!NeowRelics.Counterparts.TryGetValue(curse.Slug, out var counterparts)) continue;
+                foreach (var blocked in positives)
+                    if (counterparts.Contains(blocked.Slug, StringComparer.Ordinal))
+                        throw new ArgumentException(
+                            $"{who} cannot be offered both {curse.Name} and {blocked.Name}: " +
+                            $"{curse.Name} removes {blocked.Name} from the positive pool.");
+            }
+        }
+
+        static string Join(IEnumerable<NeowRelic> relics) =>
+            string.Join(" and ", relics.Select(r => r.Name));
     }
 
     /// <summary>

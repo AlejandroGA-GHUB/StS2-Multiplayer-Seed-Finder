@@ -22,8 +22,11 @@ let catalog = null;
  */
 function defaultState() {
   return {
-    players: 2, characters: ['Ironclad', 'Silent'], relic: '', act1: 'any', ascension: 0,
-    require: 'any', ancients: [], bosses: [], events: [], cards: [], shops: [], chests: [],
+    players: 2, characters: ['Ironclad', 'Silent'], act1: 'any', ascension: 0,
+    // Neow requirements, one per row: { relic, require }. A list for the same reason the
+    // Ancients are one — each row carries its own slot rule.
+    neow: [],
+    ancients: [], bosses: [], events: [], cards: [], shops: [], chests: [],
     // Exact by default: a pick's badge means the fight it names until the user says otherwise.
     cardOrder: 'exact',
     // Keyed by act, NOT stored on each chest row. How far the shared bag had been drained when
@@ -1384,7 +1387,7 @@ function slugOf(name) {
 function pill(name, kind) {
   const slug = slugOf(name);
   // Highlight whatever the search was actually asking for, so it is findable at a glance.
-  const wanted = slug === state.relic || state.ancients.some(a => a.relic === slug);
+  const wanted = state.neow.some(n => n.relic === slug) || state.ancients.some(a => a.relic === slug);
   const p = el('span', 'pill' + (kind ? ' is-' + kind : '') + (wanted ? ' is-match' : ''));
   p.appendChild(iconFor(slug, name, 20));
   p.appendChild(el('span', null, name));
@@ -1663,12 +1666,15 @@ function buildQuery() {
   const q = new URLSearchParams();
   q.set('players', state.players);
   if (charactersReady()) q.set('characters', state.characters.join(','));
-  if (state.relic) q.set('relic', state.relic);
   if (state.act1 !== 'any') q.set('act1', state.act1);
   // `where` is deliberately not sent. The API still accepts it, for the CLI and for older
   // links, but a relic's branch is decided by the relic, so the server's default is always
   // the right answer.
-  q.set('require', state.require);
+
+  // One parameter per row, carrying that row's own slot rule. A row with no relic chosen is a
+  // half-filled form rather than a wildcard, so it is skipped instead of being sent as one.
+  for (const n of state.neow)
+    if (n.relic) q.append('relic', `${n.relic}:${n.require || 'any'}`);
   if (state.cardOrder === 'any') q.set('cardOrder', 'any');
   // Clamped here as well as in the markup, because `max` on a number input only governs the
   // spinner and native validation: a typed or pasted 2500 sails straight through. Written back
@@ -1841,7 +1847,7 @@ async function loadCurrentRun() {
     renderPlayers();
     state.characters = lobby.characters.slice(0, n);
     state.ascension = lobby.ascension || 0;
-    rebuildRequire();
+    renderNeow();
     renderCharacters();
     renderAncients();
     renderAscension();
@@ -1868,9 +1874,9 @@ $('#players').onclick = e => {
   if (!b) return;
   state.players = +b.dataset.n;
   renderPlayers();
-  // Every per-player control has to be rebuilt, not just the character list — the Neow
-  // requirement and each Ancient row also enumerate player slots.
-  rebuildRequire();
+  // Every per-player control has to be rebuilt, not just the character list — each Neow row
+  // and each Ancient row also enumerate player slots.
+  renderNeow();
   renderCharacters();
   renderAncients();
 };
@@ -1881,19 +1887,8 @@ function mount(hostId, items, value, onChange) {
   host.replaceChildren(dropdown(items, value, onChange));
 }
 
-function rebuildRequire() {
-  const choices = [
-    { label: 'Any player', value: 'any' },
-    { label: 'Every player', value: 'all' },
-    ...Array.from({ length: state.players }, (_, i) => ({ label: `Only P${i + 1}`, value: `p${i + 1}` })),
-  ];
-  // Shrinking the lobby can strand the choice on a player who no longer exists.
-  if (!choices.some(o => o.value === state.require)) state.require = 'any';
-  mount('#require', choices, state.require, v => { state.require = v; rebuildRequire(); });
-}
-
 /**
- * Says which of Neow's three options the chosen relic arrives as.
+ * Says which of Neow's three options a chosen relic arrives as.
  *
  * This replaced a dropdown. Neow always offers exactly one curse relic and two positives, and
  * no relic appears in both pools, so naming a relic already decides its branch: the control
@@ -1907,16 +1902,66 @@ const BRANCH_NOTE = {
   coinflip: ['Coin-flip pair', 'a coin flip decides which of its pair joins the positive pool'],
 };
 
-function renderBranch(relic) {
-  const box = $('#neowBranch');
-  const note = relic && BRANCH_NOTE[relic.group];
-  box.hidden = !note;
-  if (!note) return;
+/** Every relic Neow can offer, across all three branches. */
+function neowCatalog() {
+  return [...catalog.neowCurses, ...catalog.neowPositives, ...catalog.neowCoinFlip];
+}
 
+function renderNeow() {
+  const box = $('#neow');
+  // Rows are rebuilt wholesale, so a tooltip anchored to one would be orphaned on screen: the
+  // node it is following goes away without ever firing mouseleave.
+  hideTip();
   box.replaceChildren();
-  box.classList.toggle('is-curse', relic.group === 'curse');
-  const tag = el('span', 'branch-tag', note[0]);
-  box.append(tag, el('span', null, note[1]));
+
+  state.neow.forEach((crit, idx) => {
+    const row = el('div', 'ancient-row relic-first');
+
+    const chosen = crit.relic ? neowCatalog().find(r => r.slug === crit.relic) ?? null : null;
+
+    const what = fillRelicField(newRelicField(), chosen, 'Any relic');
+    what.onclick = async e => {
+      if (e.target.dataset.clear) { crit.relic = ''; renderNeow(); return; }
+      const picked = await openPicker('Neow offers…', [
+        { title: 'Curse branch: take a curse to get it', items: catalog.neowCurses },
+        { title: 'Positive pool', items: catalog.neowPositives },
+        { title: 'Coin-flip pairs: one of each pair joins the pool', items: catalog.neowCoinFlip },
+      ]);
+      if (picked) { crit.relic = picked.slug; renderNeow(); }
+    };
+
+    const rm = el('button', 'icon-btn', '×');
+    rm.type = 'button';
+    rm.title = 'Remove';
+    rm.onclick = () => { state.neow.splice(idx, 1); renderNeow(); };
+
+    row.append(what, rm);
+
+    // Only once a relic is chosen, matching the Ancients panel: a slot rule for nothing in
+    // particular is a control with no subject.
+    if (crit.relic) {
+      const choices = [
+        { label: 'for any player', value: 'any' },
+        { label: 'for every player', value: 'all' },
+        ...Array.from({ length: state.players }, (_, i) => ({ label: `for P${i + 1} only`, value: `p${i + 1}` })),
+      ];
+      // Shrinking the lobby can strand a selection on a player who no longer exists.
+      if (!choices.some(o => o.value === crit.require)) crit.require = 'any';
+
+      const req = dropdown(choices, crit.require, v => { crit.require = v; renderNeow(); });
+      req.classList.add('span');
+      row.appendChild(req);
+    }
+
+    const note = chosen && BRANCH_NOTE[chosen.group];
+    if (note) {
+      const branch = el('div', 'branch span' + (chosen.group === 'curse' ? ' is-curse' : ''));
+      branch.append(el('span', 'branch-tag', note[0]), el('span', null, note[1]));
+      row.appendChild(branch);
+    }
+
+    box.appendChild(row);
+  });
 }
 
 function renderAct1() {
@@ -1934,21 +1979,10 @@ function renderAct1() {
     });
 }
 
-$('#neowRelic').onclick = async e => {
-  if (e.target.dataset.clear) { setNeowRelic(null); return; }
-  const picked = await openPicker('Neow offers…', [
-    { title: 'Curse branch: take a curse to get it', items: catalog.neowCurses },
-    { title: 'Positive pool', items: catalog.neowPositives },
-    { title: 'Coin-flip pairs: one of each pair joins the pool', items: catalog.neowCoinFlip },
-  ]);
-  if (picked) setNeowRelic(picked);
+$('#addNeow').onclick = () => {
+  state.neow.push({ relic: '', require: 'any' });
+  renderNeow();
 };
-
-function setNeowRelic(r) {
-  state.relic = r ? r.slug : '';
-  fillRelicField($('#neowRelic'), r, 'Any relic');
-  renderBranch(r);
-}
 
 $('#addAncient').onclick = () => {
   state.ancients.push({ ancient: catalog.ancients[0].id, relic: '', require: 'any' });
@@ -2129,7 +2163,6 @@ function renderPlayers() {
 function renderCriteria() {
   renderPlayers();
   renderAct1();
-  rebuildRequire();
   renderCharacters();
   renderAscension();
   renderBosses();
@@ -2137,12 +2170,10 @@ function renderCriteria() {
   renderAncients();
   renderShops();
   renderChests();
-  // No relic is preselected. Silken Tress used to be, as a leftover from when the Neow relic
-  // was the only criterion there was; it now reads as a filter the user did not ask for.
-  setNeowRelic(state.relic
-    ? [...catalog.neowCurses, ...catalog.neowPositives, ...catalog.neowCoinFlip]
-        .find(r => r.slug === state.relic) ?? null
-    : null);
+  // No relic is preselected, and the panel starts with no rows at all. Silken Tress used to be
+  // preselected, as a leftover from when the Neow relic was the only criterion there was; it
+  // now reads as a filter the user did not ask for.
+  renderNeow();
 }
 
 /**

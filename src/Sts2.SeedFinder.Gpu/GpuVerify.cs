@@ -170,22 +170,36 @@ public static class GpuVerify
     /// predicate evaluated on the CPU. Any index in one and not the other fails, which is what
     /// makes this able to see a false negative.
     /// </summary>
+    /// <remarks>
+    /// The CPU side is <c>Core</c>'s own <see cref="NeowPlan"/>, not a host copy of the kernel.
+    /// A second implementation of the kernel's arithmetic could only prove the kernel matches
+    /// itself; holding it to Core is what makes this worth running, since the Oracle already
+    /// holds Core to the game.
+    /// </remarks>
     public static GpuCheck Predicate(
         GpuEngine engine,
-        NeowPrefilterParams p,
+        SearchCriteria criteria,
         ulong start,
         long count,
         int hitCapacity = GpuSeedScan.DefaultHitCapacity,
         long tileSize = GpuSeedScan.DefaultTileSize)
     {
-        using var search = new GpuSeedScan(engine, hitCapacity);
-        var fromGpu = new HashSet<ulong>(search.Scan(p, start, count, tileSize: tileSize));
+        if (!NeowPrefilterFactory.TryBuild(criteria, out var p, out var packed, out var removed))
+            return new GpuCheck("predicate", false, "no Neow criterion could be accelerated");
 
+        using var buffer = engine.Accelerator.Allocate1D(packed);
+        using var removedBuffer = engine.Accelerator.Allocate1D(removed);
+        using var search = new GpuSeedScan(engine, hitCapacity);
+        var view = new NeowPrefilterView(buffer.View, removedBuffer.View);
+        var fromGpu = new HashSet<ulong>(search.Scan(p, view, start, count, tileSize: tileSize));
+
+        var plan = NeowPlan.Build(criteria);
         var fromCpu = new HashSet<ulong>();
         for (long i = 0; i < count; i++)
         {
             ulong index = start + (ulong)i;
-            if (NeowPrefilter.MatchesOnHost(index, p)) fromCpu.Add(index);
+            if (plan.Matches(SeedCodec.RunSeed(SeedCodec.FromIndex(index, GpuSeedString.Length))))
+                fromCpu.Add(index);
         }
 
         var missed = fromCpu.Except(fromGpu).Take(3).ToArray();
@@ -212,9 +226,9 @@ public static class GpuVerify
     /// third of everything, so the halving loop runs many times over and the result still has
     /// to be the complete set.
     /// </summary>
-    public static GpuCheck Overflow(GpuEngine engine, NeowPrefilterParams p, ulong start, long count)
+    public static GpuCheck Overflow(GpuEngine engine, SearchCriteria criteria, ulong start, long count)
     {
-        var check = Predicate(engine, p, start, count, hitCapacity: 4096, tileSize: 1L << 20);
+        var check = Predicate(engine, criteria, start, count, hitCapacity: 4096, tileSize: 1L << 20);
         return check with { Name = "overflow retry" };
     }
 

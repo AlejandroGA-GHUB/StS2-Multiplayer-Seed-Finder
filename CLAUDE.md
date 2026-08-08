@@ -8,6 +8,17 @@ and found feasible; both are deferred on the same dependency, a route input that
 would have to supply. The analysis is done, so re-deriving it wastes a session: read
 `Core/Acts/` and the shop section of `docs/game_mechanics.md` first, and ask before building.
 
+**Capsule and Neow's Bones payloads are PENDING too** (requested 2026-08-08). What Small
+Capsule, Large Capsule and Neow's Bones actually hand you is not modelled anywhere — only how
+many draws they cost (`CardRewardGenerator.NeowRewardDrawCost`). It is new prediction work, not
+a fix, and it needs three things: a fresh decompile of each relic's `AfterObtained` (there is no
+`sts2src/` in the checkout and `--show` only prints methods already mirrored), the shared bag
+drained IN ORDER across the two capsules, and Oracle coverage before it ships. The ordering
+requirement is not theoretical: the author of searchthespire shipped exactly that bug, building
+the grab bag twice so both capsules pulled from a fresh copy and Frozen Egg appeared in both.
+`ChestRelics.Generate` already solves the same problem correctly (its `taken` set, tracked by
+identity so the Act 3 rarity gate cannot shift an index) and is the pattern to copy.
+
 `docs/plan.md` holds the open queue, what was built, and the reasoning behind each decision.
 **It is gitignored and exists only in the author's checkout** — it is personal working notes, so
 a clone will not have it and nothing here depends on reading it.
@@ -44,7 +55,9 @@ which closes the last open verification item on the card chain. **Chests**: all 
 once the floor-6 `?` room that became a treasure room was counted, and every remaining difference
 is a relic the run records someone taking out of the shared bag first.
 
-Searchable criteria, all combinable in one search: **Neow relic**, **Act 1 map**, **boss**
+Searchable criteria, all combinable in one search: **Neow relics** (a LIST since 2026-08-08,
+each with its own slot rule, shaped exactly like the Ancient criteria — see `NeowPlan` and
+`NeowCriterion`), **Act 1 map**, **boss**
 (per act, and negatable), **event** (per act, "within the first n"), **Ancient** (optionally
 offering a given relic), **card rewards for fights 1 to 3** (per player, in pick order or in any
 permutation), the **shop's third
@@ -62,6 +75,7 @@ criteria need it too, for a different reason: the pools are the character's.
 dotnet build -c Release
 seed-finder.bat                                                             # web UI: build, serve on 5173, open a browser
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress --players 2 --require all
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress:all --relic golden_pearl:p2
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --act1 underdocks --relic silken_tress --require all
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --boss 3:queen --event 2:zen_weaver:4 --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --boss 3:!queen --characters ironclad,silent
@@ -185,10 +199,20 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   it, `cuda`/`opencl`/`cpu` force a backend.
 
   Ported so far, all fused into one pass (`SeedFilter`) and ordered cheapest-first: **acts**,
-  **Neow curse**, **card rewards**, and **run generation** for bosses, events, Ancient identity
-  and shop relics. Measured on a 4070 SUPER against the CPU searcher on the same criteria: Neow
-  ~950 M/s, shop relics 280 M/s (CPU 0.88 M/s), run generation 37 M/s worst case and 432 M/s on a
-  multi-criterion search that rejects early (CPU 2.2 M/s).
+  **Neow (both branches)**, **card rewards**, and **run generation** for bosses, events, Ancient
+  identity and shop relics. Measured on a 4070 SUPER against the CPU searcher on the same
+  criteria: Neow curse ~950 M/s, Neow positive 167 M/s (CPU 10 M/s), shop relics 280 M/s (CPU
+  0.88 M/s), run generation 37 M/s worst case and 432 M/s on a multi-criterion search that
+  rejects early (CPU 2.2 M/s).
+
+  **The positive branch never materialises the offer.** Building it the CPU's way needs a mutable
+  variable-length list per thread. Instead the kernel computes where the wanted relic STARTS and
+  follows that one position through the same reverse Fisher-Yates swaps, then asks whether it
+  landed at index 0 or 1 — the `RunFilter` trick, applied to Neow. Three things make the starting
+  position cheap: availability filtering is lobby-dependent and not seed-dependent, so the base
+  pool is a host constant; the counterpart removals are a five-row table keyed by the curse that
+  rolled (`NeowPrefilterView.RemovedMask`); and the coin flips append in a fixed order. The
+  Large Capsule skip is a `continue`, not a burned draw, because it genuinely removes a draw.
 
   **Not ported: treasure chests, and Ancient OFFERS.** Both for structural reasons, not lack of
   time. An Ancient's offer runs `AncientOffers.Branches`, which returns variable-length branch

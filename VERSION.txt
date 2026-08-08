@@ -1,6 +1,6 @@
-v1.2.0
+v1.3.0
 
-Release Date: 08/03/2026
+Release Date: 08/08/2026
 
-Native app support via WebView2 for windows with a custom app icon for the taskbar. 
-Linux and macOS startup script via seed-finder.sh so that Linux and macOS users no longer need to boot up via CLI.
+Neow now fully supports multi-relic selections per player, as before only one neow relic could be selected as an oversight.
+Neow also supports GPU accelerated searching across all neow relic types now, not just curse types.

@@ -97,6 +97,37 @@ public static class NeowRelics
 
     public static IEnumerable<NeowRelic> All => Curses.Concat(Positives).Concat(CoinFlips);
 
+    /// <summary>
+    /// The positive options each curse removes from the pool before the flips, because taking
+    /// the curse would duplicate or undo them. Lives here rather than inside the generator so
+    /// that predicting an offer and judging whether an offer is possible read the same table.
+    /// Keyed and valued by slug.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> Counterparts =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+        {
+            ["cursed_pearl"]      = new[] { "golden_pearl" },
+            ["hefty_tablet"]      = new[] { "arcane_scroll" },
+            ["leafy_poultice"]    = new[] { "new_leaf" },
+            ["precarious_shears"] = new[] { "precise_scissors" },
+            ["neows_sacrifice"]   = new[] { "phial_holster", "lost_coffer" },
+        };
+
+    /// <summary>
+    /// The other half of a relic's coin-flip pair, or null if it is not a coin-flip relic.
+    /// Exactly one of each pair enters the pool, so no offer can ever hold both.
+    /// <see cref="CoinFlips"/> is flat and in pair order, so partners are neighbours.
+    /// </summary>
+    public static NeowRelic? CoinFlipPartner(NeowRelic relic)
+    {
+        for (int i = 0; i < CoinFlips.Count; i += 2)
+        {
+            if (CoinFlips[i] == relic) return CoinFlips[i + 1];
+            if (CoinFlips[i + 1] == relic) return CoinFlips[i];
+        }
+        return null;
+    }
+
     public static NeowRelic? Find(string nameOrSlug)
     {
         var needle = Normalize(nameOrSlug);

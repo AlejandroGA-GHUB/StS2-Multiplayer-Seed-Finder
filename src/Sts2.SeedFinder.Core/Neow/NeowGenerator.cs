@@ -58,17 +58,8 @@ public static class NeowGenerator
         // 2. Positive pool, minus the option that would duplicate/undo the curse.
         //    The game does these removals before any availability filtering.
         var positives = NeowRelics.Positives.ToList();
-        switch (curse.Slug)
-        {
-            case "cursed_pearl":      Remove(positives, "golden_pearl"); break;
-            case "hefty_tablet":      Remove(positives, "arcane_scroll"); break;
-            case "leafy_poultice":    Remove(positives, "new_leaf"); break;
-            case "precarious_shears": Remove(positives, "precise_scissors"); break;
-            case "neows_sacrifice":
-                Remove(positives, "phial_holster");
-                Remove(positives, "lost_coffer");
-                break;
-        }
+        if (NeowRelics.Counterparts.TryGetValue(curse.Slug, out var counterparts))
+            foreach (var slug in counterparts) Remove(positives, slug);
 
         // 3. Skipped entirely for Large Capsule — this is the draw-count shift.
         if (curse.Slug != "large_capsule")

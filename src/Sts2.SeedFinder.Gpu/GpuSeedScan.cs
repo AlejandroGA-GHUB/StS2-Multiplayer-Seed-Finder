@@ -86,6 +86,8 @@ public sealed class GpuSeedScan : IDisposable
 
     private ActFilterView EmptyActs => new(_noInts.View, _noInts.View, _noBytes.View);
 
+    private NeowPrefilterView EmptyNeow => new(_noInts.View, _noInts.View);
+
     private CardPoolView EmptyPools => new(
         _noBytes.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View);
 
@@ -127,11 +129,14 @@ public sealed class GpuSeedScan : IDisposable
     /// </summary>
     public IEnumerable<ulong> Scan(
         NeowPrefilterParams p,
+        NeowPrefilterView v,
         ulong start,
         long count,
         CancellationToken cancellationToken = default,
         long tileSize = DefaultTileSize) =>
-        Scan(new SeedFilterParams { Neow = p }, default, start, count, cancellationToken, tileSize);
+        Scan(new SeedFilterParams { Neow = p },
+             new SeedFilterViews(default, v, default, default, default),
+             start, count, cancellationToken, tileSize);
 
     /// <summary>
     /// The full form, with every ported stage. A stage whose <c>Active</c> flag is zero is
@@ -153,6 +158,7 @@ public sealed class GpuSeedScan : IDisposable
         // documented. An inactive stage never reads these; they only have to be bindable.
         v = new SeedFilterViews(
             v.Acts.Accept.IsValid ? v.Acts : EmptyActs,
+            v.Neow.Criteria.IsValid ? v.Neow : EmptyNeow,
             v.Pools.Rarity.IsValid ? v.Pools : EmptyPools,
             v.Cards.Slot.IsValid ? v.Cards : EmptyCriteria,
             v.Run.Info.IsValid ? v.Run : EmptyRun);
