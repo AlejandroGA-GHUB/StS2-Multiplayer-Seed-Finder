@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Sts2.SeedFinder.Core\Sts2.SeedFinder.Core.csproj" />
+    <ProjectReference Include="..\Sts2.SeedFinder.Gpu\Sts2.SeedFinder.Gpu.csproj" />
   </ItemGroup>
 
   <!--

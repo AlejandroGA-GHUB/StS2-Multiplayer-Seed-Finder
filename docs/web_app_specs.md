@@ -24,8 +24,7 @@ deliberately deferred.
 ## 2. Non-goals
 
 - **No singleplayer mode.** Same scope rule as the rest of the project.
-- **No accounts, no persistence, no database.** Search state lives in the URL so it can be
-  shared; nothing else is stored server-side.
+- **No accounts, no persistence, no database.**
 - **No monetization.** Free tool, no ads, no donations tied to it. See §4.
 - **No build toolchain.** No npm, no bundler. One `dotnet run`, static HTML/CSS/JS.
 

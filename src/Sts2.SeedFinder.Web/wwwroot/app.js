@@ -24,6 +24,8 @@ function defaultState() {
   return {
     players: 2, characters: ['Ironclad', 'Silent'], relic: '', act1: 'any', ascension: 0,
     require: 'any', ancients: [], bosses: [], events: [], cards: [], shops: [], chests: [],
+    // Exact by default: a pick's badge means the fight it names until the user says otherwise.
+    cardOrder: 'exact',
     // Keyed by act, NOT stored on each chest row. How far the shared bag had been drained when
     // the party reached a chest is one fact about the run, so every relic named for that chest
     // has to be read at the same drain count. See ChestSatisfies.
@@ -344,6 +346,28 @@ let stream = null;
 // status line but never fed back into the field, so leaving it blank means "random every time".
 let startIsUserSet = false;
 let lastStart = null;
+
+// Which engine the last search ran on, named either way. It used to be shown only when a GPU
+// took part, on the grounds that the CPU was the normal case; now that most criteria can be
+// accelerated, which one you got is the thing worth knowing, and silence reads as "no idea".
+let lastEngine = 'CPU';
+
+// Seeds examined by the last search, which on an accelerated one is very different from the
+// number that reached the criteria chain. See SearchProgress.
+let lastScanned = 0;
+
+// Seeds per second, as a phrase. Null when there is nothing to divide yet, which is the first
+// tick of every search and the whole of a search too short to have one.
+function formatRate(seeds, seconds) {
+  if (!(seeds > 0) || !(seconds > 0)) return null;
+  const rate = seeds / seconds;
+  // B rather than the SI G. This is read by players, not by engineers, and "3.07 B seeds/s"
+  // is the phrase they would say out loud.
+  if (rate >= 1e9) return `${(rate / 1e9).toFixed(2)} B seeds/s`;
+  if (rate >= 1e6) return `${(rate / 1e6).toFixed(1)} M seeds/s`;
+  if (rate >= 1e3) return `${Math.round(rate / 1e3).toLocaleString()} k seeds/s`;
+  return `${Math.round(rate).toLocaleString()} seeds/s`;
+}
 
 // ---- Art, with a generated monogram whenever there is none ----------------------------------
 //
@@ -884,6 +908,16 @@ function renderCards() {
 
   // Unlike the act panels this needs only the one player's character, so it comes alive a row
   // at a time rather than all at once.
+  // Only meaningful when a player has picked more than one card: with a single pick there is
+  // only one assignment, so the control would claim to change something it cannot.
+  const anyMultiPick = state.cards.some(c => (c?.picks?.length ?? 0) > 1);
+  $('#cardOrderRow').hidden = !anyMultiPick;
+  if (!anyMultiPick) state.cardOrder = 'exact';
+  mount('#cardOrder', [
+    { label: 'Exact order', value: 'exact' },
+    { label: 'Any order', value: 'any' },
+  ], state.cardOrder ?? 'exact', v => { state.cardOrder = v; renderCards(); });
+
   $('#cardHint').textContent = state.characters.some(Boolean)
     ? 'The first room of a run is always a fight, and each player rolls their own reward for it, '
       + `so fight 1 needs no assumptions. Pick up to ${MAX_FIGHT} cards per player: the first is `
@@ -1403,9 +1437,15 @@ function firstFightBlock(rewards) {
     const offer = el('div', 'offer');
     for (const slug of r.cards) {
       const name = cardNames.get(slug) ?? slug;
-      // The pick's position in the list is the fight it was asked for, so a match is the slug
-      // sitting at that fight's index and nowhere else.
-      const hit = state.cards[r.slot]?.picks?.[(r.fight || 1) - 1] === slug;
+      // In exact order the pick's position IS the fight it was asked for, so a match is the
+      // slug sitting at that fight's index and nowhere else. In any order the assignment is
+      // free, so a pick counts wherever it landed: highlighting only the badge position would
+      // leave a card you asked for looking unmatched purely because the seed swapped it with
+      // another one you also asked for.
+      const picks = state.cards[r.slot]?.picks ?? [];
+      const hit = state.cardOrder === 'any'
+        ? picks.includes(slug)
+        : picks[(r.fight || 1) - 1] === slug;
       const p = el('span', 'pill is-card' + (hit ? ' is-match' : ''));
       p.appendChild(iconFor(slug, name, 20, 'card'));
       p.appendChild(el('span', null, name));
@@ -1629,7 +1669,14 @@ function buildQuery() {
   // links, but a relic's branch is decided by the relic, so the server's default is always
   // the right answer.
   q.set('require', state.require);
-  q.set('results', $('#results').value);
+  if (state.cardOrder === 'any') q.set('cardOrder', 'any');
+  // Clamped here as well as in the markup, because `max` on a number input only governs the
+  // spinner and native validation: a typed or pasted 2500 sails straight through. Written back
+  // into the field so the correction is visible rather than silent.
+  const resultsField = $('#results');
+  const capped = Math.min(Math.max(parseInt(resultsField.value, 10) || 25, 1), 100);
+  resultsField.value = capped;
+  q.set('results', capped);
   q.set('count', $('#count').value);
   // Only send a start index the user actually typed. Otherwise every search after the first
   // would silently rescan the same range, because the previous run's index is still on screen.
@@ -1688,24 +1735,57 @@ function startSearch() {
   stream = new EventSource('/api/search?' + q);
   setBusy(true, 'Searching…');
 
+  let total = 0;
+
   stream.addEventListener('start', e => {
     const d = JSON.parse(e.data);
     lastStart = d.start;
+    lastScanned = 0;
+    total = Number(d.count);
+    lastEngine = (d.engine && d.engine !== 'cpu') ? `GPU: ${d.device || d.engine}` : 'CPU';
     // Deliberately not written back into the field — see buildQuery.
-    setBusy(true, `Scanning ${Number(d.count).toLocaleString()} seeds from ${Number(d.start).toLocaleString()}…`);
+    setBusy(true, `Scanning ${total.toLocaleString()} seeds from ` +
+      `${Number(d.start).toLocaleString()}… · ${lastEngine}`);
+  });
+
+  // Timed here rather than taken from the server's own clock, so the rate keeps moving between
+  // ticks instead of freezing at whatever the last event said.
+  const startedAt = performance.now();
+  const elapsed = () => (performance.now() - startedAt) / 1000;
+
+  // Progress and hits both write the same line, so both build it the same way. A hit arriving
+  // between ticks must not blank the rate, and a tick must not lose the count of what was found.
+  const scanLine = () => [
+    `${lastScanned.toLocaleString()} of ${total.toLocaleString()} scanned`,
+    formatRate(lastScanned, elapsed()),
+    lastEngine,
+    found > 0 ? `${found} found` : null,
+  ].filter(Boolean).join(' · ') + '…';
+
+  stream.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    lastScanned = Number(d.scanned);
+    setBusy(true, scanLine());
   });
 
   stream.addEventListener('hit', e => {
     found++;
     out.appendChild(renderHit(JSON.parse(e.data)));
-    setBusy(true, `${found} found…`);
+    setBusy(true, scanLine());
   });
 
   stream.addEventListener('done', e => {
     const d = JSON.parse(e.data);
-    stopSearch(`${d.found} seed${d.found === 1 ? '' : 's'} in ${d.seconds.toFixed(2)}s` +
-      (d.found === 0 ? ', so try a larger scan or loosen a requirement' : '') +
-      (lastStart != null ? ` · scanned from ${Number(lastStart).toLocaleString()}` : ''));
+    lastScanned = Number(d.scanned ?? 0);
+    const rate = formatRate(lastScanned, d.seconds);
+    stopSearch([
+      `${d.found} seed${d.found === 1 ? '' : 's'} in ${d.seconds.toFixed(2)}s` +
+        (d.found === 0 ? ', so try a larger scan or loosen a requirement' : ''),
+      rate,
+      lastScanned > 0 ? `${lastScanned.toLocaleString()} scanned` : null,
+      lastStart != null ? `from ${Number(lastStart).toLocaleString()}` : null,
+      lastEngine,
+    ].filter(Boolean).join(' · '));
   });
 
   stream.addEventListener('error', e => {

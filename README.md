@@ -28,32 +28,61 @@ Needs the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 dotnet build -c Release
 ```
 
-### Platforms
+### Linux and macOS
 
-I've only run/tesed this on Windows as of now, so that's what I can currently vouch for at the moment.
-
-I didn't build it Windows-only though. Everything targets plain `net10.0` with no Windows-only
-dependencies, and the code that goes looking for your files already knows about the other
-platforms: your Steam library including Flatpak, a native Linux or macOS build of the game, and
-saves under `~/.local/share/SlayTheSpire2`, `~/Library/Application Support/SlayTheSpire2` or a
-Proton prefix. So the `dotnet run` commands below should just work on Linux and macOS.
-
-Two things you won't get there:
-
-- **No launchers.** The `.bat` files are Windows only. Use the `dotnet run` commands, or wrap
-  them in a two-line shell script.
-- **Art and descriptions might not load.** They're read out of the game's own packed files, and
-  I've never run that lookup on a case-sensitive filesystem. If it misses you'll get lettered
-  tiles and no hover text. Searching won't care either way, it never touches your install.
-
-### Web UI
-
-On Windows, double-click **`seed-finder.bat`**. It builds, starts the server, and opens your browser
-once the port is actually listening. Closing that window shuts the server down.
+**Run `./seed-finder.sh`.** It builds, starts the server, and opens your browser on
+<http://localhost:5173>. Ctrl+C stops it.
 
 ```
-seed-finder.bat            build, serve on 5173, open a browser
-seed-finder.bat 8080       serve on a different port
+chmod +x seed-finder.sh      # once, if your clone did not keep the executable bit
+./seed-finder.sh             # build, serve on 5173, open a browser
+./seed-finder.sh 8080        # a different port
+./seed-finder.sh --nobuild   # skip the build for a faster restart
+```
+
+Or without the script:
+
+```
+dotnet build -c Release src/Sts2.SeedFinder.Web
+dotnet run -c Release --no-build --project src/Sts2.SeedFinder.Web
+```
+
+**Build that one project, not the whole solution.** Plain `dotnet build -c Release` also builds
+the Windows app shell, which targets `net10.0-windows`. That is configured to build anyway on
+Linux and macOS rather than failing, but it costs you the Windows Desktop targeting packs and
+produces an `.exe` you cannot run.
+
+Everything the search actually uses is plain `net10.0`, and the code that goes looking for your
+files already knows these platforms: your Steam library including Flatpak, a native Linux or macOS
+build of the game, and saves under `~/.local/share/SlayTheSpire2`,
+`~/Library/Application Support/SlayTheSpire2` or a Proton prefix.
+
+I have only run this on Windows, so that is what I can vouch for. Two things are known to differ:
+
+- **No app window**, only the browser. The window embeds Microsoft's WebView2, which exists only
+  on Windows. Same UI, same local server, same results, in a tab instead. Nothing about searching
+  differs.
+- **Art and descriptions might not load.** They are read out of the game's own packed files, and
+  I have never run that lookup on a case-sensitive filesystem. If it misses you get lettered tiles
+  and no hover text. Searching will not care either way; it never touches your install.
+
+### Platforms at a glance
+
+| | Windows | Linux / macOS |
+|---|---|---|
+| App window | `seed-finder.bat` | not available (needs WebView2) |
+| Browser | `seed-finder.bat /browser` | `./seed-finder.sh` |
+| Command line | `cli.bat` | `dotnet run --project src/Sts2.SeedFinder.Cli -- --help` |
+
+### The app
+
+On Windows, double-click **`seed-finder.bat`**. It builds, then opens the seed finder as its own
+window: no address bar, no tab, no console sitting behind it. Closing the window stops everything.
+
+```
+seed-finder.bat            build and open the app
+seed-finder.bat /browser   ... in your browser instead, on port 5173
+seed-finder.bat /browser 8080   ... on a different port
 seed-finder.bat /nobuild   skip the build for a faster restart
 
 repair.bat         check and fix after a game patch (see below)
@@ -64,9 +93,21 @@ Three files to double-click, which serve as the whole interface:
 
 | | |
 |---|---|
-| `seed-finder.bat` | The seed finder itself, in your browser |
+| `seed-finder.bat` | The seed finder itself |
 | `repair.bat` | Check and fix after a game update |
 | `cli.bat` | A command line, already pointed at the right place |
+
+**The app and the browser are the same program.** The window hosts the identical UI, served by the
+same local server, on a port of its own so it can run alongside a browser instance. Nothing about
+searching differs, and no result depends on which you use.
+
+`/browser` stays supported for three cases that are real rather than nostalgic:
+
+- **Linux and macOS**, where the app can't follow. It embeds Microsoft's WebView2, which is
+  Windows only.
+- **Two searches side by side.** The app is a single window; browser tabs are not.
+- **If WebView2 is missing or won't start.** The app opens your browser for you in that case
+  rather than failing, so this path has to keep working.
 
 Inside `cli.bat` every command is `sts2seed <flags>`:
 
@@ -120,6 +161,14 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --car
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 \
     --characters ironclad,silent
 
+# P1's first shop stocks a Belt Buckle, P2's second stocks an Orrery
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --shop p1:belt_buckle --shop p2:orrery:2 \
+    --characters ironclad,silent
+
+# All three cards for P1, in whatever order the fights hand them over
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --any-order \
+    --card p1:anger --card p1:ashen_strike --card p1:battle_trance --characters ironclad,silent
+
 # Act 1's chest holds both Vajra and War Paint
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --chest 1:war_paint \
     --characters ironclad,silent
@@ -138,6 +187,54 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 1EMQY13NZN0
 
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --help
 ```
+
+---
+
+## Searching on your GPU
+
+If you have one, the tool uses it. Nothing to install, nothing to switch on, and no different
+answer if you don't — a search finds exactly the same seeds either way.
+
+The status line tells you which one ran and how fast it is going, so you never have to guess:
+
+```
+67,108,864 of 400,000,000 scanned · 501.0 M seeds/s · GPU: NVIDIA GeForce RTX 4070 SUPER · 3 found…
+```
+
+**Why it's safe.** The GPU is never allowed to decide anything. All it does is throw out seeds
+that cannot possibly match, and every seed that survives is then checked by exactly the same code
+that runs when there's no GPU at all. So the worst a bug in it could do is waste time, not invent
+a wrong answer. It's also held to that standard directly: `sts2seed --gpu-verify` runs both paths
+over a range of seeds and compares the results as **sets**, which is what catches a filter
+throwing away seeds it should have kept.
+
+**Roughly what to expect**, measured on an RTX 4070 SUPER against the same searches without it:
+
+| Search | Without a GPU | With one |
+|---|---|---|
+| Neow relic | 45 M/s | ~1 B/s |
+| Card reward | 4.7 M/s | 470 M/s |
+| Shop relic | 0.9 M/s | 280 M/s |
+| Boss, event or Ancient | 2 M/s | 37 to 430 M/s |
+| Treasure chest | 0.5 M/s | not accelerated yet |
+
+The Act 1 map is accelerated too, but it isn't in the table because a rate would be meaningless
+for it: it's three numbers per seed and half of all seeds match, so you hit your result limit
+almost immediately and what takes the time is drawing the results, not finding them. It matters
+as part of a bigger search, where it throws out half the seeds before anything expensive runs.
+
+An integrated laptop GPU lands well below a discrete card but still far above the CPU. If there's
+no usable device at all, or you set `STS2_GPU=off`, everything works as it always did.
+
+Two things that surprise people:
+
+- **More requirements usually means a *higher* seeds/sec.** Cheap checks run first, so a seed
+  that fails Neow is discarded after a couple of numbers and never reaches the expensive work.
+  It does not mean you find seeds sooner — the same requirements that make each seed cheap to
+  reject are what make matches rare.
+- **A treasure chest requirement slows the whole search down**, because it's the one thing still
+  checked entirely on the CPU. It's barely noticeable next to a demanding search, since few seeds
+  get that far, but paired with something loose it becomes the limit.
 
 ---
 
@@ -160,7 +257,7 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --help
 | Relics from elite fights | Not supported yet |
 | Card payloads (Hefty Tablet's rares, Arcane Scroll's rare) | Not supported yet |
 
-Four independent checks back this up:
+Five independent checks back this up:
 
 - A **differential oracle** loads the real `sts2.dll` and replays every draw through the game's
   own RNG, asserting our port matches.
@@ -169,6 +266,8 @@ Four independent checks back this up:
 - **`--verify-history`** does the same against every run you have already finished, which is
   what covers co-op: the game will not let you start a multiplayer lobby alone, but runs you
   played with someone else are still on disk.
+- **`--gpu-verify`** runs the GPU search and the CPU one over the same seeds and compares the
+  results as sets, so an accelerated search cannot quietly answer a different question.
 - Relics, bosses and the Act 1 map have been **confirmed across several played co-op runs**.
 
 Card rewards are the one thing `--verify` can't see, because the reward is rolled when you walk
@@ -192,6 +291,10 @@ takes it.
 Boss requirements can be inverted: **does not end with** finds every seed that keeps a boss
 you would rather skip out of the run.
 
+A shop means the **third relic slot** and nothing else. That one is fixed before the run starts;
+the other two are rolled from run state when you open the door, so no seed pins them. It is
+counted by shops you actually walk into rather than by floor, so skipping one moves the rest up.
+
 ### Card rewards, fights 1 to 3
 
 The first room of a run is always a normal fight — row 1 of the map is forced to it and can't be
@@ -202,6 +305,14 @@ search.
 Fights 2 and 3 work the same way, and 3 is as far as this goes. In the picker you click up to
 three cards and each one is badged with the fight it stands for: first click is fight 1, second
 is fight 2, third is fight 3. On the command line, add `:2` or `:3`.
+
+**Exact order or any order.** Pick more than one card for a player and a dropdown appears. On
+*Exact order* each card has to come from the fight its badge names. On *Any order* you still get
+all of them, one per fight, but which fight produces which is free. That costs nothing to ask for
+and it is dramatically more likely: about **5.6x per player**, so a three-player search for a
+Common and two Uncommons each goes from roughly 1 in 1.8 trillion to about 1 in 10 billion,
+which is seconds of searching rather than hours. Use Exact order only when the order genuinely
+matters to you. On the command line it is `--any-order`.
 
 Things to know:
 
@@ -303,23 +414,6 @@ Swift, Tezcatara on whether a basic Strike survives, Pael on three separate cond
 The tool shows **every branch with the condition that produces it**, rather than picking one
 and presenting it as fact.
 
-### Shops: the third relic, and nothing else
-
-A merchant stocks three relics. The first two roll their rarity off a stream whose position
-depends on the route you took to reach that shop, so the seed alone doesn't fix where in it you
-land.
-
-The third does not roll anything. Its rarity is fixed, and filling it takes the back of a
-relic bag that was shuffled before the run began. Every shop takes one, so the relics you will
-be offered are a **fixed sequence**, decided by the seed: first shop, second shop, third shop.
-That is what you can search on, and it is what the tool shows for a seed you inspect.
-
-Two things to know. It is counted by shops you actually walk into, not by floor, so skipping one
-moves the rest up. And each player has their own bag, so P1 and P2 see different relics.
-
-Everything else about a shop — the other two relics, the cards, the potions, the prices — is
-rolled when you open the door, from state that depends on the route you took. Relics you are
-carrying can rewrite the pools outright.
 
 ---
 
@@ -327,8 +421,13 @@ carrying can rewrite the pools outright.
 
 The web UI shows real relic icons, card portraits, character portraits, Ancient icons, event
 illustrations, and the game's own description of what each one does, all read from **your own
-installed copy of the game** at runtime. Nothing is bundled and nothing is redistributed — no art
-or text ships in this repository or in a release.
+installed copy of the game** at runtime. Nothing is bundled and nothing is redistributed — **no
+game art or text ships in this repository or in a release.**
+
+The single exception is the app's own icon, which cannot work that way because it is compiled into
+the executable. It is not game art: it is a sprout from
+[Danaida's Free Growing Plants Pack](https://danaida.itch.io/free-growing-plants-pack-32x32),
+which permits commercial use and editing.
 
 For events you get the game's own title and **the choices it offers you**, with what each one
 does and what it costs: "Pay 250 Gold. Remove 2 cards from your Deck." Where those choices lead is
@@ -443,6 +542,7 @@ sts2seed --doctor           what broke, and what to do about it
 sts2seed --refresh          rewrite the data tables from your game
 sts2seed --show <method>    read a game method beside the file that mirrors it
 sts2seed --verify-history   check against runs you have already played
+sts2seed --gpu-verify       check the GPU search against the CPU one (needs no GPU)
 
 dotnet run -c Release --project src\Sts2.SeedFinder.Oracle    the exhaustive port check
 ```
@@ -476,8 +576,10 @@ the LLM is meant to utilize.
 | `src/Sts2.SeedFinder.Core` | RNG, hashing, seed codec, Neow, acts, Ancients, search |
 | `src/Sts2.SeedFinder.Cli` | `sts2seed` command line |
 | `src/Sts2.SeedFinder.Web` | Local web UI — minimal API plus static HTML/CSS/JS, no npm |
+| `src/Sts2.SeedFinder.Shell` | Optional app window (WebView2, Windows only). Hosts the UI above; contains none of it |
+| `src/Sts2.SeedFinder.Gpu` | Optional GPU search kernels (ILGPU). Nothing else depends on it |
 | `src/Sts2.SeedFinder.Oracle` | Differential test against the real `sts2.dll` |
-| `seed-finder.bat` | Builds, serves, and opens the web UI in your browser |
+| `seed-finder.bat` | Builds, then opens the app. `/browser` for a tab instead |
 | `repair.bat` | Checks and fixes after a game update |
 | `cli.bat` | Opens a command line here with `sts2seed` ready to use |
 | `sts2seed.bat` | Lets you type `sts2seed <flags>` in a terminal you already have open |

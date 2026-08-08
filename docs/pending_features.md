@@ -14,9 +14,7 @@ get. Nothing blocking this one, only work.
 
 3. Shop cards and potions. The third relic slot is confirmed and solid, but the card side of a shop moves with how many shops you've visited and your carried relics can
 rewrite the pool. Sits behind the route work too.
-
-4. Linux and macOS launchers. Only the .bat files are Windows-only, the app itself already runs fine there. Small job if there's demand, and will likely be shipped regardless soon enough.
-
+ 
 
 # CONSTANT FACTOR
 

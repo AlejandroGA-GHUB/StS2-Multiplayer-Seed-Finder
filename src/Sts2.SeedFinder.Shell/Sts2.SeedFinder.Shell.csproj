@@ -1,0 +1,102 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net10.0-windows, not net10.0: WinForms is the host for the WebView2 control and it is
+      Windows-only. This is why the shell is a SEPARATE project rather than a flag on the web
+      app - the web app stays net10.0 and keeps building on macOS and Linux, where the browser
+      remains the front end.
+    -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Sts2.SeedFinder.Shell</RootNamespace>
+    <AssemblyName>sts2seedfinder</AssemblyName>
+
+    <!--
+      Without PerMonitorV2 the WebView2 control renders blurry on any display scaled above
+      100%, which is most laptops. The page is drawn by Chromium at its own scale factor and
+      then bitmap-stretched by the unaware-DPI compatibility path.
+    -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!--
+      Let this project be BUILT on Linux and macOS, even though it can only be RUN on Windows.
+      Without it, `dotnet build -c Release` at the repo root - the first command in the README -
+      fails outright on those platforms with NETSDK1100, because the solution includes this
+      project and it targets net10.0-windows. That would break the build for everyone who wants
+      the browser front end, over a window they were never going to use.
+
+      Costs a non-Windows build the download of the Windows Desktop targeting packs and an exe
+      that will sit there unused. Building only src/Sts2.SeedFinder.Web avoids both; the README
+      says so under Platforms.
+    -->
+    <EnableWindowsTargeting Condition="!$([MSBuild]::IsOSPlatform('Windows'))">true</EnableWindowsTargeting>
+
+    <!--
+      The one image this project ships. Everything else the UI shows is read from the user's own
+      game install at runtime and never redistributed (docs/web_app_specs.md section 4), but an
+      application icon is compiled into the exe, so it has to be something we are allowed to
+      distribute. This is a sprout from Danaida's "Free Growing Plants Pack 32x32" on itch.io,
+      which grants commercial use and editing; credited in the README.
+
+      Carries 16, 32, 48, 64, 128 and 256 px. WinForms takes the exe's icon as the default for
+      every window, so this one property covers Explorer, the title bar, the taskbar and alt-tab.
+    -->
+    <ApplicationIcon>appicon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!--
+    The same file again, as a resource this time, because the two consumers read it from
+    different places. ApplicationIcon above writes it into the exe's Win32 resources, which is
+    what Explorer shows - but WinForms does NOT look there. Form.Icon defaults to a built-in
+    WinForms icon, and the taskbar follows the window, so setting only ApplicationIcon gives an
+    app whose file has the right icon and whose window does not. ShellWindow loads this copy and
+    assigns it explicitly. A few KB of duplication for an icon that is actually applied.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="appicon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3124.44" />
+  </ItemGroup>
+
+  <!--
+    The package ships a WinForms control and a WPF control and references both. We host the
+    WinForms one, and the WPF one drags in WindowsBase 5.0, which does not unify with the 4.0 in
+    the framework reference pack - an MSB3277 conflict warning on every build, about an assembly
+    that is never loaded. Dropping the reference we do not use removes the cause rather than
+    silencing the symptom; the alternative, <UseWPF>true</UseWPF>, resolves it by pulling in the
+    whole of WPF to satisfy a control nothing instantiates.
+  -->
+  <Target Name="DropUnusedWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    A build dependency, not a code reference. The shell launches sts2seedweb.exe as a child
+    process and talks to it over the loopback socket exactly as a browser would, so it needs
+    the web app BUILT but links against none of its types. Referencing it for its types would
+    mean turning the web app's top-level Program into a callable entry point, which is a real
+    change to working code for no gain here.
+
+    ReferenceOutputAssembly alone is not enough, and the way it fails is nasty. It suppresses the
+    managed sts2seedweb.dll but NOT the apphost sts2seedweb.exe, its runtimeconfig or wwwroot, so
+    the shell's own output directory ends up holding a launcher with no program behind it. The
+    shell then finds that first and starts it, and the child dies immediately with "The
+    application to execute does not exist". ExcludeAssets and Private stop the copy; the build
+    ordering the reference exists for is unaffected.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Sts2.SeedFinder.Web\Sts2.SeedFinder.Web.csproj"
+                      ReferenceOutputAssembly="false"
+                      ExcludeAssets="all"
+                      Private="false" />
+  </ItemGroup>
+
+</Project>

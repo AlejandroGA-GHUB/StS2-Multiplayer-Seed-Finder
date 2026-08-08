@@ -291,6 +291,9 @@ public static class Query
         {
             Relic = relic,
             Act1 = act1,
+            // ?cardOrder=any lets the picks land in any fight order. Default stays exact, so an
+            // existing link keeps meaning what it meant.
+            CardOrder = q["cardOrder"].ToString() == "any" ? CardOrder.AnyPermutation : CardOrder.Exact,
             Context = ctx,
             Requirement = requirement,
             RequiredSlots = slots,
