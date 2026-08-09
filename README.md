@@ -1,4 +1,4 @@
-# Slay the Spire 2 — Co-op Seed Finder
+# Slay the Spire 2 Co-op Seed Finder
 
 Find **co-op** seeds by what each player gets. An example being: "A seed where P1 and P2 are both offered Silken
 Tress, and Vakuu shows up in Act 3 with Fiddle for both players" is a search you can actually run.
@@ -12,7 +12,7 @@ that space.
 > Check out their website here for single player seeds -> ([SearchTheSpire](https://searchthespire.app/)) 
 
 
-> Updated At **Slay the Spire 2 v0.110.1**. Predictions are version-specific — see
+> Updated At **Slay the Spire 2 v0.110.1**. Predictions are version-specific, see
 > [After a game patch](#after-a-game-patch). If a new beta branch update can't be fixed via repair.bat due to needing a direct code change,
 > I or anyone submitting a PR/Maintaining will try to have it updated ASAP.
 
@@ -203,8 +203,8 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --help
 
 ## Searching on your GPU
 
-If you have one, the tool uses it. Nothing to install, nothing to switch on, and no different
-answer if you don't — a search finds exactly the same seeds either way.
+If you have one, the tool uses it by default with nothing to switch on, with the CPU serving as the fallback path. 
+A search finds exactly the same seeds either way, with or without GPU acceleration.
 
 The status line tells you which one ran and how fast it is going, so you never have to guess:
 
@@ -224,7 +224,7 @@ Two things that surprise people:
 
 - **More requirements usually means a *higher* seeds/sec.** Cheap checks run first, so a seed
   that fails Neow is discarded after a couple of numbers and never reaches the expensive work.
-  It does not mean you find seeds sooner — the same requirements that make each seed cheap to
+  It does not mean you find seeds sooner, the same requirements that make each seed cheap to
   reject are what make matches rare.
 - **A treasure chest requirement slows the whole search down**, because it's the one thing still
   checked entirely on the CPU. It's barely noticeable next to a demanding search, since few seeds
@@ -236,8 +236,8 @@ Two things that surprise people:
 
 | | Confidence |
 |---|---|
-| Neow's full offer per player — curse relic and both positives | Confirmed in play |
-| Which Act 1 map you get — Overgrowth or Underdocks | Confirmed in play |
+| Neow's full offer per player: curse relic and both positives | Confirmed in play |
+| Which Act 1 map you get: Overgrowth or Underdocks | Confirmed in play |
 | Act order, bosses, and which Ancient opens each act | Confirmed in play |
 | The Ascension 10 second boss | Verified against the game's own RNG |
 | What each Ancient offers (Acts 2–3) | Verified against the game's own RNG |
@@ -257,7 +257,7 @@ Five independent checks back this up:
 - A **differential oracle** loads the real `sts2.dll` and replays every draw through the game's
   own RNG, asserting our port matches.
 - **`--verify`** diffs our whole act-generation chain against a save file the game itself
-  wrote — every event, encounter, boss and Ancient, in draw order.
+  wrote. This includes every event, encounter, boss and Ancient, in draw order.
 - **`--verify-history`** does the same against every run you have already finished, which is
   what covers co-op: the game will not let you start a multiplayer lobby alone, but runs you
   played with someone else are still on disk.
@@ -265,11 +265,6 @@ Five independent checks back this up:
   results as sets, so an accelerated search cannot quietly answer a different question.
 - Relics, bosses and the Act 1 map have been **confirmed across several played co-op runs**.
 
-Card rewards are the one thing `--verify` can't see, because the reward is rolled when you walk
-into the room rather than when the run is generated, so it never lands in the save file. The
-oracle covers them instead, two ways: every card's rarity against the class the game ships, and
-the whole draw sequence replayed through the game's own RNG. A co-op run has since confirmed all
-four rewards outright — two players, two fights, all matching.
 
 ### What you can search on
 
@@ -279,7 +274,7 @@ the **third relic in a shop**, and each act's **treasure chest**. Combine as man
 one search.
 
 Neow, the Ancients, card rewards and shop relics are rolled per player, so those are per-slot.
-The boss, the event order and the chest are the same for everybody in the lobby — the chest
+The boss, the event order and the chest are the same for everybody in the lobby. The chest
 because it is a shared pick: the seed decides what is on the table, and the party decides who
 takes it.
 
@@ -292,8 +287,8 @@ counted by shops you actually walk into rather than by floor, so skipping one mo
 
 ### Card rewards, fights 1 to 3
 
-The first room of a run is always a normal fight — row 1 of the map is forced to it and can't be
-anything else — and every player rolls their own reward for it off their own stream. So each
+The first room of a run is always a normal fight with row 1 of the map forced to it and can't be
+anything else, and every player rolls their own reward for it off their own stream. So each
 player can ask for a specific card, and "P1 opens with Anger while P2 opens with Deflect" is one
 search.
 
@@ -327,7 +322,7 @@ Things to know:
   assumes you took one of those.
 
 Past fight 3 it stops, because each further room makes the unbroken-hallway assumption less
-likely than it is worth — see [What the seed cannot decide](#what-the-seed-cannot-decide).
+likely than it is worth. See [What the seed cannot decide](#what-the-seed-cannot-decide).
 
 ### Treasure chests
 
@@ -342,8 +337,8 @@ Two things to know:
 
 - **The rarity is exact, the relic can drift.** What fills a slot is the front of the shared
   relic bag, and every relic anyone picks up earlier in the run removes an entry from it. If the
-  relic you asked for got taken already, you get the next one of that rarity instead — so the
-  picker lets you accept the next few, the same way event ordering does.
+  relic you asked for got taken already, you get the next one of that rarity instead, so the
+  picker lets you accept the next few the same way event ordering does.
 - **A `?` room that turns into a treasure room shifts everything.** It drains a full round of
   picks, which moves every later chest along by one. If that happened, pass `--extra-chests 1`
   (or set it in the UI) and the predictions line back up.
@@ -373,7 +368,7 @@ Two things worth knowing before you search on them:
   tool says so rather than scanning.
 - An act shuffles its **whole** event pool once and hands them out from the front, so what the
   seed fixes is the order, not what you will actually see. A room takes the next event you
-  currently qualify for and have not already met — and half the events gate themselves on HP,
+  currently qualify for and have not already met, and half the events gate themselves on HP,
   gold, deck or act. So "within the first 3" means near the front of the queue, not a promise.
 
 ---
@@ -384,7 +379,7 @@ Get one of these wrong and the prediction is for a different run. The tool canno
 
 - **Lobby order.** P1 is whoever joins first. Swap join order and the offers swap with it.
 - **Player count.** Changes act generation, so it changes bosses and Ancients.
-  Party *composition* does not — all five characters have identically sized relic pools.
+  Party *composition* does not, all five characters have identically sized relic pools.
 - **Ascension**, at two levels only: A10 for the final act's second boss, and A7 for the odds of
   a Rare card reward. Nothing else in a run changes with ascension.
 - **No run modifiers.** Predictions assume an ordinary run. Ticking anything on the Custom Run
@@ -403,7 +398,7 @@ Get one of these wrong and the prediction is for a different run. The tool canno
 ## What the seed cannot decide
 
 Only **Vakuu**'s offer is fully determined by the seed. Every other Ancient gates part of its
-pool on your deck at the moment you meet it — Tanx on Instinct-enchantable cards, Nonupeipe on
+pool on your deck at the moment you meet it like Tanx on Instinct-enchantable cards, Nonupeipe on
 Swift, Tezcatara on whether a basic Strike survives, Pael on three separate conditions.
 
 The tool shows **every branch with the condition that produces it**, rather than picking one
@@ -416,8 +411,8 @@ and presenting it as fact.
 
 The web UI shows real relic icons, card portraits, character portraits, Ancient icons, event
 illustrations, and the game's own description of what each one does, all read from **your own
-installed copy of the game** at runtime. Nothing is bundled and nothing is redistributed — **no
-game art or text ships in this repository or in a release.**
+installed copy of the game** at runtime. Nothing is bundled and nothing is redistributed **(no
+game art or text ships in this repository or in a release).**
 
 The single exception is the app's own icon, which cannot work that way because it is compiled into
 the executable. It is not game art: it is a sprout from
@@ -475,8 +470,8 @@ If no save is found the tool falls back to assuming everything is unlocked and s
 than failing.
 
 Saves are found automatically on Windows, macOS, Linux and under Proton. Unlike installs, Steam
-does not let you relocate them, so this is far less fragile than finding the game itself — but
-if you have moved your `AppData`, or you keep profiles somewhere unusual:
+does not let you relocate them, so this is far less fragile than finding the game itself, but
+if you have moved your `AppData` or you keep profiles somewhere unusual:
 
 ```
 set STS2_SAVE_DIR=D:\somewhere\SlayTheSpire2
@@ -516,11 +511,10 @@ your game and this build disagree.
 ## After a game patch
 
 Predictions are computed for one build of the game. When it updates, some may stop being true,
-and **the failure is quiet** — art and descriptions keep loading correctly from your install, so
+and **the failure is quiet** with art and descriptions still loading correctly from your install, so
 a stale copy looks perfectly healthy.
 
-So the app tells you. If your game's logic differs from the build this checkout was verified
-against, a banner appears above the results.
+If your game's logic differs from the build this checkout was verified against, a banner appears above the results.
 
 **A patch that only moves content is what `repair.bat` is for.** It does not care which Steam
 branch you are on, only whether the build in front of it matches the build the data tables were
@@ -573,10 +567,6 @@ under "Lobby". A finished run does not record which epochs each player had revea
 and that changes generation, so the tool fits a state rather than pretending to know one. Runs
 on the build you are on now should match with no fitting.
 
-One caveat worth knowing: a passing `--doctor` is necessary and not sufficient. Its checks walk
-*our* lists, so they are blind to content being **added** — the likeliest thing a patch does.
-Only a real run settles it, which is why `repair.bat` insists on one before recording anything.
-
 ---
 
 # AI File References For Development
@@ -592,7 +582,7 @@ the LLM is meant to utilize.
 |---|---|
 | `src/Sts2.SeedFinder.Core` | RNG, hashing, seed codec, Neow, acts, Ancients, search |
 | `src/Sts2.SeedFinder.Cli` | `sts2seed` command line |
-| `src/Sts2.SeedFinder.Web` | Local web UI — minimal API plus static HTML/CSS/JS, no npm |
+| `src/Sts2.SeedFinder.Web` | Local web UI: minimal API plus static HTML/CSS/JS, no npm |
 | `src/Sts2.SeedFinder.Shell` | Optional app window (WebView2, Windows only). Hosts the UI above; contains none of it |
 | `src/Sts2.SeedFinder.Gpu` | Optional GPU search kernels (ILGPU). Nothing else depends on it |
 | `src/Sts2.SeedFinder.Oracle` | Differential test against the real `sts2.dll` |
@@ -613,7 +603,7 @@ cross:
 - No decompiled source, and no game assets, in this repository. Ever.
 - Behaviour is reimplemented from understanding rather than transcribed. Where output must be
   bit-identical (RNG, hashing) the port is kept small, isolated and clearly marked.
-- `MegaRandom` is xoshiro256\*\* — public domain (Blackman & Vigna), by way of Redzen (MIT,
+- `MegaRandom` is xoshiro256\*\*, public domain (Blackman & Vigna), by way of Redzen (MIT,
   © Colin D. Green). That MIT notice stays in the file.
 
 Not affiliated with or endorsed by Mega Crit. Slay the Spire 2 and its assets are theirs.

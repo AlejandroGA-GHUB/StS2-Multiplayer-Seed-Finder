@@ -1,7 +1,7 @@
 # Repairing this after a game patch
 
 Predictions are computed for one build of Slay the Spire 2. When the game updates, some of them
-may stop being true — and the failure is quiet, because art and descriptions keep loading
+may stop being true and the failure is quiet, because art and descriptions keep loading
 correctly from your install, so a stale copy looks perfectly healthy.
 
 This is the runbook. You do not need to have read the source.
@@ -22,7 +22,7 @@ That is the whole thing for most patches, and takes about two minutes.
 ## What you need
 
 The [.NET 10 SDK](https://dotnet.microsoft.com/download), which you already needed to run this at
-all, and the game installed. Nothing else — no Python, no decompiler, no extra tools.
+all, and the game installed. 
 
 Keep using the **source checkout**. `seed-finder.bat` compiles on every launch, and that is what makes a
 regenerated table take effect without you having to think about it.
@@ -89,7 +89,7 @@ sts2seed --show Neow.GenerateInitialOptions
 
 which prints the game's current version of that method, the path of our file, and one line on
 what it decides. The repair is reading both and making ours match the **order things are drawn
-in** — not the effects, only the order and count of RNG calls.
+in**, not the effects, only the order and count of RNG calls.
 
 `sts2seed --verify` against a real run names the first draw index that disagrees, which usually
 narrows it to a line or two.
@@ -106,7 +106,7 @@ There is a third kind of change the tool will tell you about explicitly:
 ```
 
 A new character, a new act, or a new relic rarity changes shapes this project declares as C#
-enums. Nothing is written, on purpose — emitting the old shape would produce tables that look
+enums. Nothing is written on purpose as emitting the old shape would produce tables that look
 fine and are wrong.
 
 #### If you improve a generated file, change the generator, not the file
@@ -148,7 +148,7 @@ sts2seed --verify-history
 ```
 
 which reads runs you have already finished. Usually there is nothing to do. If you patched and
-have not played since, start a run in game, quit to the menu, and run `sts2seed --verify` — that
+have not played since, start a run in game, quit to the menu, and run `sts2seed --verify`. That
 save is the richer check, carrying the full room sets, relic bags and RNG counter.
 
 Then answer `y` to record your version. That clears the banner.
@@ -200,14 +200,14 @@ The three you double-click: `seed-finder.bat` for the seed finder, `repair.bat` 
 
 ## Why some of this cannot be automatic
 
-The game's generation code cannot run outside the game — `ModelDb.Init` wants `ModManager`, and
+The game's generation code cannot run outside the game. `ModelDb.Init` wants `ModManager`, and
 `LocManager.Initialize()` crashes in the platform layer. That single fact is why this project
 reimplements anything at all, and it splits maintenance in two:
 
-- **Data** — which relics are in which pool, rarities, act tables. Facts we copy. `--refresh`
+- **Data**: Which relics are in which pool, rarities, act tables. Facts we copy. `--refresh`
   copies them again, by populating the game's own model database and asking it. There is no
   parsing involved and so nothing to misread.
-- **Algorithm** — the order draws happen in. Behaviour we re-expressed in our own code.
+- **Algorithm**: The order draws happen in. Behaviour we re-expressed in our own code.
   Automating that would mean compiling the game's IL into our port, which needs the engine types
   you cannot instantiate. So the tool **detects** and **locates** those changes, and a person
   makes them.
@@ -218,11 +218,9 @@ That is the honest boundary: most patches are one command, and the rest are one 
 
 ## What would defeat this
 
-Worth stating so nobody wastes an afternoon:
-
 - **Obfuscation, or the game leaving .NET.** The whole approach depends on `sts2.dll` being
   readable managed code. It is unobfuscated today, and MegaCrit ship `0Harmony.dll` inside the
-  game, so this is not an imminent worry — but it is the one that ends it.
+  game, so this is not an imminent worry, but it is the one that ends it.
 - **Save-format changes.** The finder would keep working, but `--verify` and `--verify-history`
   would stop reading, and those are the ground truth. Losing the verifier is worse than losing a
   prediction, because you can no longer tell whether anything else is right.
@@ -235,5 +233,5 @@ Worth stating so nobody wastes an afternoon:
 ## If you fixed something
 
 `baselines/verified-build.json` and `baselines/method-snapshots.json` are committed files. If you repaired a patch
-and got a clean `repair.bat`, those two plus whatever you edited are the change worth sharing —
-open a pull request so the next person downloading this does not repeat your afternoon.
+and got a clean `repair.bat`, those two plus whatever you edited are the change worth sharing,
+open a pull request if the new patch is not already released on my end.
