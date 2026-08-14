@@ -1,6 +1,5 @@
-v1.3.0
+v1.3.1
 
 Release Date: 08/08/2026
 
-Neow now fully supports multi-relic selections per player, as before only one neow relic could be selected as an oversight.
-Neow also supports GPU accelerated searching across all neow relic types now, not just curse types.
+v0.111.0 beta steam release 
