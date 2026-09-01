@@ -177,6 +177,14 @@ are confirmed NOT to affect upfront generation (see above).
 end to end: hiding a single relic epoch changes two of the three act bosses and reorders the
 whole shop sequence.
 
+**A PARTNER's unlock state is an input too, since 2026-09-01.** It is per player, the run's is
+the union, and the bags are shuffled one per player off one stream, so a partner missing epochs
+moves the bosses for the WHOLE party rather than just their own rewards. `Import Friend Epoch`
+in the Lobby panel takes their dropped `progress.save` or a `UnlockCode` string;
+`SearchCriteria.PlayerUnlocks` carries it and `UnlocksFor(slot)` resolves per-slot card pools.
+Read the unlock section of `docs/game_mechanics.md` before touching any of it, including the
+measured example of what moves and what does not.
+
 ## Architecture
 
 Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts2.dll`-backed

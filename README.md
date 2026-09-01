@@ -500,9 +500,32 @@ Point it at the folder that contains `steam` (the one with `<your-id>/profile1/s
 An explicit setting is taken as final: if it is wrong, the tool reports that it found nothing
 rather than quietly falling back and using a profile you did not mean.
 
-One thing it cannot know: in co-op, **each player's relic bag is filtered by their own unlocks**,
-and a partner's profile is on their machine. Searches assume the lobby matches yours. If you
-play with someone newer to the game, predictions past the relic bags may not match.
+### Everybody else's unlocks
+
+In co-op, **each player's relic bag is filtered by their own unlocks**, and the run itself is
+generated against everyone's combined. A partner's profile lives on their machine, so unless you
+say otherwise the tool assumes the lobby matches yours.
+
+When that assumption is wrong it is **not confined to the player it is wrong about**. The bags are
+shuffled one per player off a single shared stream, in lobby order, so a partner whose pools are a
+different size moves every draw after their bag: the bosses, the events and the Ancients, for the
+whole party. Their own shop relics and card rewards move too, and yours survive only if you joined
+first.
+
+**Import Friend Epoch**, in the Lobby panel, closes that gap. Your partner sends you their
+`progress.save`:
+
+```
+%APPDATA%\SlayTheSpire2\steam\<their steam id>\profile1\saves\progress.save
+```
+
+Drop it into the box and every prediction on the page is generated against their account instead
+of a guess. If they run this tool themselves, the code at the bottom of that box says the same
+thing in one line and is easier to paste into a chat. The file is read and thrown away: nothing is
+stored, and nothing leaves your machine.
+
+Nothing to do at all if everyone has unlocked everything, which is the usual case for anyone who
+has played for a while.
 
 ---
 

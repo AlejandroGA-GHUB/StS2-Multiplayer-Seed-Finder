@@ -63,6 +63,55 @@ public sealed record UnlockState
             RevealedEpochIds = revealed,
         };
     }
+
+    /// <summary>
+    /// The state the RUN generates against, which the game builds as
+    /// <c>new UnlockState(players.Select(p =&gt; p.UnlockState))</c> and its own source calls "the
+    /// superset of all players' unlock states". Act generation, the Ancients and the shared bag
+    /// a treasure chest pulls from all read this; each player's own bag reads their own state,
+    /// which is why both are carried rather than one standing in for the other.
+    ///
+    /// A null <see cref="RevealedEpochIds"/> means "not known, so assume revealed", so one
+    /// unknown member leaves the union unknown. Narrowing it to what the known members listed
+    /// would invent a restriction nobody reported.
+    /// </summary>
+    public static UnlockState Union(IReadOnlyList<UnlockState> states)
+    {
+        if (states.Count == 0) return new UnlockState();
+        if (states.Count == 1) return states[0];
+
+        bool neow = false, darv = false, orobas = false, e1 = false, e2 = false, e3 = false;
+        bool anyUnknown = false;
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var acts = new HashSet<string>();
+
+        foreach (var state in states)
+        {
+            neow |= state.NeowEpoch;
+            darv |= state.DarvEpoch;
+            orobas |= state.OrobasEpoch;
+            e1 |= state.Event1Epoch;
+            e2 |= state.Event2Epoch;
+            e3 |= state.Event3Epoch;
+
+            if (state.RevealedEpochIds is null) anyUnknown = true;
+            else ids.UnionWith(state.RevealedEpochIds);
+
+            acts.UnionWith(state.DiscoveredActs);
+        }
+
+        return new UnlockState
+        {
+            NeowEpoch = neow,
+            DarvEpoch = darv,
+            OrobasEpoch = orobas,
+            Event1Epoch = e1,
+            Event2Epoch = e2,
+            Event3Epoch = e3,
+            RevealedEpochIds = anyUnknown ? null : ids,
+            DiscoveredActs = acts,
+        };
+    }
 }
 
 /// <summary>

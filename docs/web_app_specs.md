@@ -391,6 +391,32 @@ what it gives, with no second visual grammar to learn.
   "somebody is offered Arcane Scroll" and "somebody's scroll gives Corruption" asked separately
   can be satisfied by two different players, which is not what anybody means.
 
+### Import Friend Epoch
+
+A button in the Lobby panel opening a sheet, the same shape as "Why did my seed produce
+unexpected results?" and for the same reason: it is prose that is read once, acted on once, and
+then wanted out of the way.
+
+- It exists because **unlock state is per player and only the local profile is readable**. The
+  sheet leads with the part that surprises people, which is that a partner's epochs move the
+  bosses for the whole party rather than only that partner's own rewards. See the unlock section
+  of `game_mechanics.md` for why.
+- One block per lobby slot, each a drop zone that doubles as its own status line: before an
+  import it says what to do, after one it names how many epochs are revealed and lists what is
+  missing. A row with nothing imported reads "Assumed to match your own account", because the
+  default is an assumption and saying so is the whole point of the feature.
+- Two routes in, because a friend who runs the tool should not have to send a file: drop their
+  `progress.save`, or paste the **code** shown at the bottom of the sheet. The code is a bitmask
+  over `UnlockCode.Epochs` prefixed with that build's epoch count, so one minted by a different
+  version is refused rather than decoded into a state nobody has.
+- The Lobby button carries a **count badge**. This is the one setting on the page that changes
+  every answer while looking like nothing happened, so it is visible without opening the sheet.
+- On the wire: repeated `epochs=<player>:<code>`, sent by both search and inspect. Only imported
+  slots are sent. A slot saying "same as me" is the server's default, and spelling it out would
+  make `RunGenerator` rebuild its bag plan for no change in the answer.
+- The upload is read and discarded. Nothing is stored, and the sheet says so, because the thing
+  being handed over is somebody else's save file.
+
 ### Ancient requirements
 A repeatable block: `[Ancient ▾]` with a remove button, then a full-width relic field below it,
 then the per-row "who must get it" once a relic is set.

@@ -324,6 +324,67 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
 }
 .icon-btn:hover { border-color: var(--accent-dim); color: var(--text-0); }
 
+/* Full width inside the Lobby panel, so it reads as part of the lobby rather than as a stray
+   control floating beside a label. */
+.epoch-btn { width: 100%; text-align: center; }
+.epoch-count {
+  display: inline-block; margin-left: 7px; padding: 1px 6px; border-radius: 9px;
+  background: var(--accent); color: #201a0c; font-size: 11px; font-weight: 600;
+}
+/* An explicit display beats the user agent's [hidden] rule on specificity, so the badge has to
+   turn itself off rather than relying on the attribute alone. */
+.epoch-count[hidden] { display: none; }
+
+/* One block per player inside the sheet. The drop zone doubles as the status line: before an
+   import it says what to do, after one it says what was imported, so the row never grows a
+   second thing to read. */
+.epoch-slot { margin-top: 12px; }
+.epoch-slot-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.epoch-slot-head b { color: var(--text-0); font-size: 13px; }
+.epoch-slot-head .epoch-who { color: var(--text-2); font-size: 12px; flex: 1; }
+.epoch-clear {
+  background: none; border: none; cursor: pointer; padding: 2px 4px;
+  color: var(--text-2); font-size: 12px; text-decoration: underline;
+}
+.epoch-clear:hover { color: var(--text-0); }
+
+.epoch-drop {
+  display: block; width: 100%; text-align: left; cursor: pointer;
+  padding: 11px 12px; font-size: 12.5px; line-height: 1.45;
+  background: var(--bg-2); color: var(--text-1);
+  border: 1px dashed var(--border); border-radius: var(--radius);
+}
+.epoch-drop:hover, .epoch-drop:focus-visible { border-color: var(--accent-dim); color: var(--text-0); }
+.epoch-drop.is-over { border-color: var(--accent); border-style: solid; color: var(--text-0); }
+.epoch-drop.is-set { border-style: solid; }
+.epoch-drop .epoch-missing { display: block; margin-top: 4px; color: var(--text-2); font-size: 12px; }
+.epoch-drop .epoch-err { color: #e08a8a; }
+
+.epoch-code {
+  width: 100%; margin-top: 5px; padding: 6px 9px; font-size: 12px;
+  background: var(--bg-1); color: var(--text-1);
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
+.epoch-code:focus { outline: none; border-color: var(--accent-dim); }
+
+/* Sits under the player rows, separated the way the sheet's own footer is: it belongs to this
+   panel but answers the opposite question from everything above it. */
+.epoch-own {
+  margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);
+  color: var(--text-2); font-size: 12px;
+}
+.epoch-copy {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 2px 7px; margin-left: 2px; cursor: pointer;
+  color: var(--text-0); font-family: inherit; font-size: 12px;
+}
+.epoch-copy:hover { border-color: var(--accent-dim); }
+
+.sheet-body code.epoch-path {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 2px 6px; font-size: 12px; color: var(--text-0);
+}
+
 .primary {
   width: 100%; padding: 10px; margin-top: 4px; cursor: pointer; font-weight: 600;
   background: var(--accent); color: #201a0c; border: none; border-radius: var(--radius);

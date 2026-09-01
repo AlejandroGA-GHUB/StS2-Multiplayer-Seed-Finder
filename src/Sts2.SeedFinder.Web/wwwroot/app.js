@@ -9,6 +9,10 @@ const el = (tag, cls, text) => {
 };
 
 let catalog = null;
+
+// This machine's own profile, once /api/profile answers. Held because the epoch sheet offers
+// this account's code for sending to somebody else, which is the same exchange in reverse.
+let myProfile = null;
 // `bosses` and `events` are free lists of rows rather than one slot per act. Bosses need it
 // because Ascension 10 gives the final act two of them, so "exactly this pair" is two rows;
 // events because wanting two out of one act is normal.
@@ -31,6 +35,19 @@ function defaultState() {
     // cards. Not a criterion — it asks nothing of the seed, it says how to READ that player's
     // card rewards, because five of Neow's options draw off the same stream first.
     neowPicks: [],
+    // Which slots of `neowPicks` the user has set themselves, by slot. An untouched slot is
+    // purely derived from the Neow requirements and is refilled on every redraw; a touched one
+    // is left exactly where it was put. Without this, choosing "Nothing that draws cards" on a
+    // player whose row names a scroll would be undone by the next render, which reads as the
+    // page arguing with you.
+    neowPickSet: [],
+    // What each player's account has revealed, by slot: null for "assumed to match yours",
+    // otherwise { code, revealed, total, missing } as imported from their progress.save.
+    // Not a criterion either. It is an INPUT to generation, and getting it wrong is not
+    // confined to the player it is wrong about: the relic bags are shuffled one per player off
+    // one shared stream, so a partner with differently sized pools moves every draw after their
+    // bag, the acts included.
+    epochs: [],
     ancients: [], bosses: [], events: [], cards: [], shops: [], chests: [],
     // Exact by default: a pick's badge means the fight it names until the user says otherwise.
     cardOrder: 'exact',
@@ -668,6 +685,165 @@ $('#whyBtn').onclick = () => $('#whySheet').showModal();
 $('#whyClose').onclick = () => $('#whySheet').close();
 $('#whySheet').addEventListener('click', e => { if (e.target === $('#whySheet')) $('#whySheet').close(); });
 
+// ---- Somebody else's unlock state --------------------------------------------------------
+
+$('#epochBtn').onclick = () => { renderEpochSlots(); $('#epochSheet').showModal(); };
+$('#epochClose').onclick = () => $('#epochSheet').close();
+$('#epochSheet').addEventListener('click', e => {
+  if (e.target === $('#epochSheet')) $('#epochSheet').close();
+});
+
+/**
+ * The count on the Lobby button, so an import is visible without opening the sheet.
+ *
+ * Worth surfacing because this is the one setting on the page that changes every answer while
+ * looking like nothing happened: an imported partner moves the bosses, and a badge is the only
+ * thing separating "I set that" from "why is this seed different from yesterday".
+ */
+function renderEpochButton() {
+  const n = state.epochs.filter(Boolean).length;
+  const badge = $('#epochCount');
+  badge.hidden = n === 0;
+  badge.textContent = n;
+}
+
+/** One block per player, rebuilt whenever the sheet opens or an import lands. */
+function renderEpochSlots() {
+  const host = $('#epochSlots');
+  host.replaceChildren();
+  state.epochs.length = state.players;
+
+  for (let i = 0; i < state.players; i++) host.appendChild(epochSlotRow(i));
+  if (myProfile?.code) host.appendChild(epochOwnCode(myProfile.code));
+  renderEpochButton();
+}
+
+/**
+ * This account's own code, for sending the other way.
+ *
+ * Here rather than in the header because it is only wanted while thinking about somebody else's
+ * lobby, and the header already says whether this profile is fully unlocked.
+ */
+function epochOwnCode(code) {
+  const row = el('div', 'epoch-own');
+  const btn = el('button', 'epoch-copy', code);
+  btn.type = 'button';
+  btn.title = 'Copy';
+  btn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = code; }, 1200);
+    } catch { /* clipboard refused, and the code is on screen to read anyway */ }
+  };
+  row.append(el('span', null, 'Your own code, to send to somebody else: '), btn);
+  return row;
+}
+
+function epochSlotRow(slot) {
+  const row = el('div', 'epoch-slot');
+  const got = state.epochs[slot];
+
+  const head = el('div', 'epoch-slot-head');
+  head.append(
+    el('b', null, `P${slot + 1}`),
+    el('span', 'epoch-who', state.characters[slot] || ''));
+
+  if (got) {
+    const clear = el('button', 'epoch-clear', 'Clear');
+    clear.type = 'button';
+    clear.onclick = () => { state.epochs[slot] = null; renderEpochSlots(); };
+    head.appendChild(clear);
+  }
+  row.appendChild(head);
+
+  // The drop zone is also the status line. One thing to look at per player, whether or not
+  // anything has been imported yet.
+  const drop = el('button', 'epoch-drop');
+  drop.type = 'button';
+  if (got) {
+    drop.classList.add('is-set');
+    drop.appendChild(el('span', null, got.fullyUnlocked
+      ? 'Imported: everything unlocked, so nothing here changes the prediction'
+      : `Imported: ${got.revealed} of ${got.total} epochs revealed`));
+    if (!got.fullyUnlocked)
+      drop.appendChild(el('span', 'epoch-missing', 'Missing: ' + got.missing.join(', ')));
+  } else {
+    drop.appendChild(el('span', null,
+      'Drop their progress.save here, or click to choose it'));
+    drop.appendChild(el('span', 'epoch-missing', 'Assumed to match your own account'));
+  }
+
+  const file = el('input');
+  file.type = 'file';
+  file.hidden = true;
+  file.onchange = () => { if (file.files[0]) importEpochFile(slot, file.files[0], drop); };
+
+  drop.onclick = () => file.click();
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add('is-over'); };
+  drop.ondragleave = () => drop.classList.remove('is-over');
+  drop.ondrop = e => {
+    e.preventDefault();
+    drop.classList.remove('is-over');
+    const f = e.dataTransfer.files[0];
+    if (f) importEpochFile(slot, f, drop);
+  };
+
+  // Second route, for a friend who runs this tool themselves: their own profile line carries a
+  // code, and pasting one is easier over chat than sending a file.
+  const code = el('input', 'epoch-code');
+  code.type = 'text';
+  code.placeholder = 'or paste their unlock code';
+  code.onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (code.value.trim()) importEpochCode(slot, code.value.trim(), drop);
+  };
+  code.onblur = () => { if (code.value.trim()) importEpochCode(slot, code.value.trim(), drop); };
+
+  row.append(drop, file, code);
+  return row;
+}
+
+/** Reads a dropped progress.save. The bytes go to the local server and are not kept. */
+async function importEpochFile(slot, file, drop) {
+  await applyEpochImport(slot, drop, () =>
+    fetch('/api/epochs/import', { method: 'POST', body: file }));
+}
+
+async function importEpochCode(slot, code, drop) {
+  await applyEpochImport(slot, drop, () =>
+    fetch('/api/epochs/decode?code=' + encodeURIComponent(code)));
+}
+
+/**
+ * Shared tail of both routes: run the request, store what came back, redraw.
+ *
+ * The failure is reported into the drop zone rather than thrown away, because the two ways this
+ * goes wrong are both things the user can fix, a wrong file and a code from another build, and
+ * neither is obvious from a row that simply refuses to change.
+ */
+async function applyEpochImport(slot, drop, request) {
+  drop.replaceChildren(el('span', null, 'Reading…'));
+  try {
+    const res = await request();
+    const body = await res.json();
+    if (!res.ok) {
+      drop.replaceChildren(
+        el('span', null, 'Drop their progress.save here, or click to choose it'),
+        el('span', 'epoch-missing epoch-err', body.error || 'that file could not be read'));
+      return;
+    }
+    state.epochs[slot] = body;
+  } catch {
+    drop.replaceChildren(
+      el('span', null, 'Drop their progress.save here, or click to choose it'),
+      el('span', 'epoch-missing epoch-err', 'could not reach the local server'));
+    return;
+  }
+  renderEpochSlots();
+}
+
 /**
  * Asks the server to compare this copy with the newest GitHub release.
  *
@@ -864,6 +1040,28 @@ function pinnedPick(slot) {
 }
 
 /**
+ * What a Neow requirement SUGGESTS this player took, as opposed to what it settles.
+ *
+ * A requirement naming a card-drawing relic for a named player is not proof they take it, since
+ * Neow offers three options and being offered one obliges nothing. But someone who went to the
+ * trouble of searching for a scroll almost certainly means to take it, and forgetting to say so
+ * is invisible: fights 1 to 3 are simply read from the wrong place in the stream with nothing on
+ * screen looking wrong. So it is filled in and left editable, which is the difference between
+ * this and `pinnedPick`.
+ *
+ * Only rows that name a player, for the same reason the server derives nothing from an "any
+ * player" row: it does not say WHOSE stream moves. Only relics that actually draw, which leaves
+ * out Neow's Bones, whose shuffle length is not modelled.
+ */
+function impliedPick(slot) {
+  const row = state.neow.find(n =>
+    n.relic
+    && (n.require === 'all' || n.require === `p${slot + 1}`)
+    && (neowCardRelic(n.relic)?.draws ?? 0) > 0);
+  return row ? row.relic : null;
+}
+
+/**
  * How many draws a player's assumed Neow pick costs their card stream, for the hint. The
  * Defect pays two more for Scroll Boxes, which is a real difference rather than a rounding.
  */
@@ -881,6 +1079,7 @@ function renderCards() {
   state.cards.length = state.players;
 
   state.neowPicks.length = state.players;
+  state.neowPickSet.length = state.players;
 
   for (let i = 0; i < state.players; i++) {
     const pool = cardPoolFor(i);
@@ -889,7 +1088,14 @@ function renderCards() {
     // What that player took at Neow, which decides where their stream starts. Five of Neow's
     // options draw cards off it before the first fight ever rolls; everything else is free.
     const pinned = pinnedPick(i);
-    if (pinned) state.neowPicks[i] = pinned;
+    if (pinned) {
+      state.neowPicks[i] = pinned;
+    } else if (!state.neowPickSet[i]) {
+      // Untouched, so this slot is a pure function of the Neow requirements: filled when one
+      // names this player and a card-drawing relic, and cleared again when that row is deleted
+      // or aimed elsewhere. A stored value would linger after its reason had gone.
+      state.neowPicks[i] = impliedPick(i) ?? '';
+    }
 
     const pickRow = el('div', 'row');
     pickRow.appendChild(el('label', null, `P${i + 1} took at Neow`));
@@ -907,13 +1113,20 @@ function renderCards() {
 
     const picker = dropdown(options, state.neowPicks[i] || '', v => {
       state.neowPicks[i] = v;
+      // From here on this slot is yours, and nothing derived writes over it again.
+      state.neowPickSet[i] = true;
       renderCards();
     });
     // Settled by a criterion above, so it is shown rather than offered: changing it here would
     // let the search look for one thing and the results be read as another.
     if (pinned) {
+      // Genuinely settled: you cannot be handed the cards a relic gives without taking it, so
+      // there is no state where this and the requirement above could honestly disagree.
       picker.disabled = true;
       picker.title = 'Set by the Neow requirement that names the cards this relic gives.';
+    } else if (!state.neowPickSet[i] && state.neowPicks[i]) {
+      picker.title = 'Filled in from your Neow requirement. Change it if you plan to take '
+                   + 'something else from that offer.';
     }
     pickRow.appendChild(picker);
     box.appendChild(pickRow);
@@ -1790,6 +2003,12 @@ function buildQuery() {
   state.neowPicks.forEach((slug, i) => {
     if (slug && !pinnedPick(i)) q.append('pick', `${i + 1}:${slug}`);
   });
+
+  // Imported partners. Only slots actually imported are sent: a slot saying "same as me" is the
+  // server's default, and spelling it out would make it rebuild its bag plan for no change.
+  state.epochs.forEach((e, i) => {
+    if (e) q.append('epochs', `${i + 1}:${e.code}`);
+  });
   if (state.cardOrder === 'any') q.set('cardOrder', 'any');
   // Clamped here as well as in the markup, because `max` on a number input only governs the
   // spinner and native validation: a typed or pasted 2500 sails straight through. Written back
@@ -2283,6 +2502,17 @@ async function inspect() {
   const q = new URLSearchParams({ seed, players: state.players });
   if (charactersReady()) q.set('characters', state.characters.join(','));
   if (state.ascension > 0) q.set('ascension', state.ascension);
+  // Inspecting a seed reads the same lobby a search would have run against, imports included.
+  state.epochs.forEach((e, i) => { if (e) q.append('epochs', `${i + 1}:${e.code}`); });
+
+  // The other two INPUTS to generation, as opposed to the criteria around them. A criterion is
+  // a filter and has nothing to do here, since the seed already exists and we are only reporting
+  // what it produces. These two change what it produces, so leaving them out gives the wrong
+  // card rewards and the wrong chests to somebody inspecting the run they are actually playing.
+  // Unlike a search, nothing is derived server-side here, so every pick is sent including one a
+  // Neow requirement settled.
+  state.neowPicks.forEach((slug, i) => { if (slug) q.append('pick', `${i + 1}:${slug}`); });
+  if (state.extraChests > 0) q.set('extraChests', state.extraChests);
 
   const out = $('#out');
   out.replaceChildren();
@@ -2366,6 +2596,8 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
   // put that on screen. A partial unlock is worth stating unprompted: it changes the answers,
   // and a user who does not know we read it has no reason to trust them.
   fetch('/api/profile').then(r => r.json()).then(p => {
+    myProfile = p;
+    renderEpochSlots();
     const meta = $('#meta');
     if (!p.found) { meta.textContent += ' · no save found, assuming all unlocked'; return; }
     meta.textContent += p.fullyUnlocked
@@ -2395,6 +2627,10 @@ function renderPlayers() {
  */
 function renderCriteria() {
   renderPlayers();
+  // Truncated rather than preserved: an import belongs to a lobby slot, and dropping from four
+  // players to two does not leave P3's account attached to anybody.
+  state.epochs.length = state.players;
+  renderEpochButton();
   renderAct1();
   renderCharacters();
   renderAscension();

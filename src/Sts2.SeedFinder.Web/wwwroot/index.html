@@ -46,6 +46,11 @@
         <label>Ascension</label>
         <div id="ascension"></div>
       </div>
+      <div class="row">
+        <button type="button" class="icon-btn epoch-btn" id="epochBtn">
+          Import Friend Epoch<span class="epoch-count" id="epochCount" hidden></span>
+        </button>
+      </div>
       <p class="hint">Lobby order matters, with P1 being whoever joins first. Swapping who joins
         first swaps their offers. Characters are needed for anything about Acts 2&ndash;3.</p>
       <p class="hint" id="ascensionHint"></p>
@@ -199,6 +204,63 @@
 <!-- Static prose rather than anything generated, because none of it depends on the search. It
      lives here so the one place a claim about the game is worded is the same place it is read,
      and every item below is a real difference between what a seed decides and what a run does. -->
+<!-- Somebody else's unlock state. A sheet rather than a panel because it is read once, acted on
+     once, and then wanted out of the way: the same shape as the "why" sheet beside it. -->
+<dialog class="sheet" id="epochSheet">
+  <div class="sheet-head">
+    <h2>Import Friend Epoch</h2>
+    <button type="button" class="picker-close" id="epochClose" aria-label="Close" title="Close">&times;</button>
+  </div>
+  <div class="sheet-body">
+    <p class="lead">Relics and cards are handed out from pools that grow as an account unlocks
+      more of the game. Everyone in a lobby brings their own, and the run is built out of all of
+      them at once, so a prediction made from your save alone can be wrong for the party.</p>
+
+    <h3>What an epoch is</h3>
+
+    <p>An <b>epoch</b> is one batch of content an account has revealed, three relics or three
+      cards at a time. A new account has fewer of them than a finished one. Yours is read
+      automatically from your own save, and shown at the top of this page.</p>
+
+    <h3>Why a friend&rsquo;s epochs change your run too</h3>
+
+    <p>The game shuffles <b>one relic bag per player, one after another, off a single shared
+      stream of random numbers</b>. A smaller bag uses up
+      fewer of those numbers, so a player who is missing epochs shifts everything drawn after
+      their bag: <b>the bosses, the events and the Ancients, for the whole party</b> rather than
+      for them alone. Their own shop relics and card rewards move as well.</p>
+
+    <p>Your own shop relics survive only if they are drawn before theirs, which means only if you
+      joined the lobby first. The treasure chests and the acts themselves are safe as long as
+      nobody has unlocked something you have not.</p>
+
+    <h3>When you can skip all of this</h3>
+
+    <p>If everyone in the lobby has unlocked everything, there is nothing to import and the
+      defaults are already correct.</p>
+
+    <h3>Getting the file</h3>
+
+    <p>Ask your friend for <b>progress.save</b>. They can paste this into the address bar of a
+      File Explorer window and it will open the folder it lives in, whatever drive the game is
+      on:</p>
+
+    <p><code class="epoch-path">%APPDATA%\SlayTheSpire2</code></p>
+
+    <p>From there it is <code class="epoch-path">steam</code>, then their Steam id, then
+      <code class="epoch-path">profile1</code>, then <code class="epoch-path">saves</code>. They
+      send you that one file, you drop it below. If they run this tool themselves, the code at the
+      bottom of this box is the same thing in one line, and is easier to paste into a chat than a
+      file is to send.</p>
+
+    <div id="epochSlots"></div>
+
+    <p class="sheet-foot">The file is read here and thrown away. Nothing is stored, and nothing
+      leaves this machine. Only the list of revealed epochs is used, and the rest of the save is
+      ignored.</p>
+  </div>
+</dialog>
+
 <dialog class="sheet" id="whySheet">
   <div class="sheet-head">
     <h2>Why did my seed produce unexpected results?</h2>
@@ -227,9 +289,13 @@
       are actually going to play and both take care of themselves.</p>
 
     <p><b>What everybody has unlocked.</b> A relic pool is filtered by what that player has
-      revealed, and the run uses everyone&rsquo;s unlocks combined. Only your own save is readable
-      from this machine, so if a partner has revealed more or less than you, their offers and parts
-      of the run can differ from what you see here.</p>
+      revealed, and the run is built from everyone&rsquo;s unlocks combined. Only your own save is
+      readable from this machine, so by default the tool assumes the rest of the lobby matches it.
+      When that is wrong it is not confined to the player it is wrong about: the relic bags are
+      shuffled one per player off a single shared stream, so a partner whose pools are a different
+      size moves every draw after their bag, and that includes the bosses, the events and the
+      Ancients. If a partner has unlocked more or less of the game than you, use
+      <b>Import Friend Epoch</b> under Lobby and the prediction accounts for it.</p>
 
     <p><b>The game version.</b> Predictions are computed for one build. A patch resizes the content
       pools, pool size decides how many draws a shuffle costs, and everything after that lands

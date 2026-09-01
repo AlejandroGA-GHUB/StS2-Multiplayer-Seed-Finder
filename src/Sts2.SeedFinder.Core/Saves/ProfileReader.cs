@@ -50,12 +50,20 @@ public static class ProfileReader
 
     public static ProfileInfo? ReadFile(string path)
     {
+        try { return Parse(File.ReadAllText(path), path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>
+    /// The same reading, over content that never came off this machine's disk — a partner's
+    /// imported <c>progress.save</c>. <paramref name="path"/> only labels the result, so a
+    /// caller holding bytes rather than a file can pass whatever names them.
+    /// </summary>
+    public static ProfileInfo? Parse(string json, string path)
+    {
         JsonDocument doc;
-        try { doc = JsonDocument.Parse(File.ReadAllText(path)); }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
-        {
-            return null;
-        }
+        try { doc = JsonDocument.Parse(json); }
+        catch (JsonException) { return null; }
 
         using (doc)
         {

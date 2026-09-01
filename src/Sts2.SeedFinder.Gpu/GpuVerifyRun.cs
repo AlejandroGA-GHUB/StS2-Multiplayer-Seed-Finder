@@ -91,9 +91,14 @@ public static class GpuVerifyRun
     /// </summary>
     private static bool Satisfies(SearchCriteria criteria, ulong runSeed)
     {
+        // playerUnlocks matters as much as the run's own state: it sizes each player's bag, and
+        // the bags are shuffled before act generation. Leaving it off here would compare a
+        // fully-unlocked reference against a kernel that was correctly honouring a mixed lobby,
+        // and report the kernel as broken for being right.
         var run = RunGenerator.GenerateRun(
             runSeed, criteria.Unlocks, isMultiplayer: true, criteria.Characters,
-            acts: null, criteria.Ascension, withShopRelics: criteria.NeedsShopRelics);
+            acts: null, criteria.Ascension, withShopRelics: criteria.NeedsShopRelics,
+            playerUnlocks: criteria.PlayerUnlocks);
 
         foreach (var want in criteria.ShopRelicsWanted)
         {

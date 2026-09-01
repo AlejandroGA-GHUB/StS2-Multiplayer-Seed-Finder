@@ -6,6 +6,7 @@ using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
 using Sts2.SeedFinder.Core.Neow;
+using Sts2.SeedFinder.Core.Saves;
 using Sts2.SeedFinder.Gpu;
 
 namespace Sts2.SeedFinder.Cli.Tools;
@@ -341,6 +342,52 @@ public static class GpuDoctor
             ShopRelicsWanted = new[] { new ShopRelicCriterion(0, shop) },
             Bosses = new[] { new BossCriterion(3, "QueenBoss") },
         }, 8_000);
+
+        // A lobby whose players have DIFFERENT unlock states, which is what importing a partner's
+        // profile produces. This is its own kind of failure rather than a variation on the bag
+        // burn above: the kernel skips the bag shuffles by a count it derives on the host, and
+        // that count is now per player. If it keeps sizing every bag the same way while the CPU
+        // sizes P2's from P2's own epochs, the kernel lands several draws early and every act
+        // after it is wrong, silently and only for mixed lobbies.
+        var mixed = new[] { new UnlockState(), PartlyUnlocked };
+
+        yield return ("act1 boss, partner partly unlocked", Build(duo) with
+        {
+            Bosses = new[] { new BossCriterion(1, "TheKinBoss") },
+            Unlocks = UnlockState.Union(mixed),
+            PlayerUnlocks = mixed,
+        }, 8_000);
+
+        // The other end of the same stream: P2's deque both starts somewhere else AND holds
+        // fewer relics, so a kernel that got either half right on its own would still fail here.
+        yield return ("shop p2, partner partly unlocked", Build(duo) with
+        {
+            ShopRelicsWanted = new[] { new ShopRelicCriterion(1, shop) },
+            Unlocks = UnlockState.Union(mixed),
+            PlayerUnlocks = mixed,
+        }, 4_000);
+    }
+
+    /// <summary>
+    /// A partner missing the five shared relic epochs and both of the Silent's, which is roughly
+    /// what a newer account looks like next to a finished one.
+    ///
+    /// Derived from <see cref="UnlockCode.Epochs"/> rather than written out, so a patch that adds
+    /// an epoch cannot quietly turn this case into a fully-unlocked one that tests nothing.
+    /// </summary>
+    private static UnlockState PartlyUnlocked
+    {
+        get
+        {
+            string[] missing =
+            {
+                "Relic1Epoch", "Relic2Epoch", "Relic3Epoch", "Relic4Epoch", "Relic5Epoch",
+                "Silent3Epoch", "Silent6Epoch",
+            };
+            return UnlockState.FromRevealedEpochs(UnlockCode.Epochs
+                .Where(e => !missing.Contains(e))
+                .Select(GameHash.Slugify));
+        }
     }
 
     /// <summary>

@@ -285,7 +285,7 @@ app.MapGet("/api/profile", (IConfiguration config) =>
             SearchedIn: SaveLocations.Roots(configured).ToArray(),
             OverrideVariable: SaveLocations.OverrideVariable,
             RevealedEpochs: 0, TotalEpochs: 0, FullyUnlocked: false,
-            DiscoveredActs: [], Lobby: null), json);
+            DiscoveredActs: [], Lobby: null, Code: null), json);
     }
 
     return Results.Json(new ProfileDto(
@@ -298,7 +298,113 @@ app.MapGet("/api/profile", (IConfiguration config) =>
         FullyUnlocked: profile.FullyUnlocked,
         DiscoveredActs: profile.DiscoveredActs.ToArray(),
         Lobby: run is null ? null : new LobbyDto(
-            run.Seed, run.Characters.ToArray(), run.Ascension, run.IsMultiplayer)), json);
+            run.Seed, run.Characters.ToArray(), run.Ascension, run.IsMultiplayer),
+        Code: UnlockCode.Encode(profile.Unlocks)), json);
+});
+
+// ---- Somebody else's unlock state ---------------------------------------------------------
+
+// Unlock state is per player and only the local profile is readable, so a partner's has to
+// arrive from their machine. The whole party's generation depends on it, not just theirs: the
+// relic bags are shuffled off one shared stream in lobby order, so a partner whose pools are a
+// different size moves every draw after their bag, and act generation comes after all of them.
+//
+// The file is read and thrown away. Nothing is stored and nothing leaves this machine, which
+// matters because the thing being handed over is somebody else's save.
+app.MapPost("/api/epochs/import", async (HttpRequest req, CancellationToken ct) =>
+{
+    // A progress.save is a few tens of KB. This cap is not defending a local server from an
+    // attacker, it is failing fast and legibly when somebody drags in the wrong file.
+    const int MaxBytes = 8 * 1024 * 1024;
+
+    using var buffer = new MemoryStream();
+    var chunk = new byte[64 * 1024];
+    int read;
+    while ((read = await req.Body.ReadAsync(chunk, ct)) > 0)
+    {
+        if (buffer.Length + read > MaxBytes)
+            return Results.BadRequest(new
+            {
+                error = "that file is far bigger than a progress.save, so it is probably not one."
+            });
+        buffer.Write(chunk, 0, read);
+    }
+
+    // A save written with a byte-order mark parses fine as a file and not at all as a string.
+    var text = System.Text.Encoding.UTF8.GetString(buffer.ToArray()).TrimStart('\uFEFF');
+
+    var profile = ProfileReader.Parse(text, "imported");
+    if (profile is null || profile.TotalEpochs == 0)
+        return Results.BadRequest(new
+        {
+            error = "no epochs were found in that file. It should be progress.save, which sits "
+                  + "beside the saves folder rather than inside it."
+        });
+
+    // Counted over the epochs that gate something we predict, not over every epoch the save
+    // lists. A profile carries more than we model, and reporting its total here would put a
+    // denominator on screen that the code beside it does not carry.
+    var missing = UnlockCode.Missing(profile.Unlocks).ToArray();
+
+    return Results.Json(new EpochImportDto(
+        Code: UnlockCode.Encode(profile.Unlocks),
+        Revealed: UnlockCode.RevealedCount(profile.Unlocks),
+        Total: UnlockCode.Epochs.Count,
+        FullyUnlocked: missing.Length == 0,
+        Missing: missing), json);
+});
+
+// Reading back a code someone pasted, so the page can say what it means before a search runs
+// rather than failing at search time with the row already filled in.
+app.MapGet("/api/epochs/decode", (string? code) =>
+{
+    var state = UnlockCode.Decode(code);
+    if (state is null)
+        return Results.BadRequest(new
+        {
+            error = "that is not an unlock code this build can read. Codes are tied to the epochs "
+                  + "a build knows about, so one made by a different version has to be imported again."
+        });
+
+    var missing = UnlockCode.Missing(state).ToArray();
+    return Results.Json(new EpochImportDto(
+        Code: UnlockCode.Encode(state),
+        Revealed: UnlockCode.RevealedCount(state),
+        Total: UnlockCode.Epochs.Count,
+        FullyUnlocked: missing.Length == 0,
+        Missing: missing), json);
+});
+
+// ---- Facts for a bug report -----------------------------------------------------------------
+
+// Reports are filed by opening a prefilled GitHub issue in the user's own browser. Nothing is
+// posted from here and no token exists, so this endpoint only gathers what the page cannot see
+// for itself: the assembly hash behind the drift verdict, the accelerator actually chosen, and
+// the baseline this build was verified against.
+//
+// Most "the seed was wrong" reports resolve to join order, player count, a patch, mods, or
+// partial unlocks. All five are answerable from this block without a round trip, which is the
+// whole reason for collecting it rather than asking.
+app.MapGet("/api/report", (IConfiguration config, Sts2.SeedFinder.Gpu.GpuSearchPlanner planner) =>
+{
+    var profile = ProfileReader.Read(config["Saves:Directory"]);
+    var repo = config["Updates:Repository"];
+
+    return Results.Json(new ReportDto(
+        Repository: string.IsNullOrWhiteSpace(repo) ? UpdateCheck.DefaultRepository : repo.Trim(),
+        ToolVersion: AppVersion.Load().Version,
+        GameVersion: GameVersion,
+        VerifiedVersion: verified.Version,
+        Drift: drift.Drift.ToString(),
+        HasMods: release.HasMods,
+        DriftWarning: drift.Warn ? drift.Message : null,
+        Engine: planner.Status.Available ? planner.Status.Backend.ToLowerInvariant() : "cpu",
+        Device: planner.Status.Available ? planner.Status.DeviceName : "-",
+        ProfileFound: profile is not null,
+        RevealedEpochs: profile?.RevealedEpochs ?? 0,
+        TotalEpochs: profile?.TotalEpochs ?? 0,
+        Platform: $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription} / "
+                + $"{System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}"), json);
 });
 
 // ---- Is this copy still the newest one? -----------------------------------------------------
@@ -356,11 +462,14 @@ app.MapGet("/api/explain", (HttpContext http, IConfiguration config, string seed
     {
         // The inspect panel honours ?pick= the same way a search does, so a seed looked at
         // with "P1 takes Arcane Scroll" set reads its card rewards one draw along.
+        var unlocks = Query.LobbyUnlocks(http.Request.Query, players, config["Saves:Directory"]);
+
         return Results.Json(Predictions.Describe(
             canonical, players, Query.Characters(characters), null, Query.Ascension(http.Request.Query),
-            Query.Unlocks(http.Request.Query, config["Saves:Directory"]),
+            unlocks.Run,
             Query.Int(http.Request.Query, "extraChests") ?? 0,
-            Query.RewardPriorDraws(http.Request.Query, players, Query.Characters(characters))), json);
+            Query.RewardPriorDraws(http.Request.Query, players, Query.Characters(characters)),
+            unlocks.PerPlayer), json);
     }
     catch (ArgumentException ex)
     {
@@ -463,7 +572,7 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
             found++;
             await Send("hit", Predictions.Describe(
                 hit.Seed, players, chars, hit, criteria.Ascension, criteria.Unlocks,
-                criteria.ExtraChestPicks, criteria.RewardPriorDraws()));
+                criteria.ExtraChestPicks, criteria.RewardPriorDraws(), criteria.PlayerUnlocks));
         }
     }
     catch (OperationCanceledException) { /* client navigated away or hit cancel */ }

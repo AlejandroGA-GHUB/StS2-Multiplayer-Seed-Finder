@@ -122,10 +122,48 @@ public sealed record CatalogDto(
 /// so moves every later draw in the run.
 /// </param>
 /// <param name="Lobby">The run in progress, if any, so its settings can be copied in.</param>
+/// <param name="Code">
+/// This profile's own epochs as a shareable code, so the person running the tool can hand their
+/// state to someone else's lobby as easily as they can import one.
+/// </param>
 public sealed record ProfileDto(
     bool Found, string? Path, string[] SearchedIn, string OverrideVariable,
     int RevealedEpochs, int TotalEpochs, bool FullyUnlocked,
-    string[] DiscoveredActs, LobbyDto? Lobby);
+    string[] DiscoveredActs, LobbyDto? Lobby, string? Code);
+
+/// <summary>
+/// The machine half of a bug report: everything about this install that a reader would need and
+/// a reporter would never type correctly.
+///
+/// Assembled server-side because most of it only exists here (the assembly hash, the accelerator
+/// actually in use, the verified baseline), and returned as fields rather than as finished prose
+/// so the wording lives with the rest of the page's copy.
+///
+/// Deliberately absent: the save file's PATH, which carries a Steam id, and the folders searched
+/// when no save was found. GitHub issues are public, and neither adds anything a maintainer
+/// could act on.
+/// </summary>
+/// <param name="Repository">
+/// Where reports go, as "owner/repo". Follows <c>Updates:Repository</c> so a fork collects its
+/// own rather than sending strangers' reports upstream.
+/// </param>
+public sealed record ReportDto(
+    string Repository, string ToolVersion, string GameVersion, string VerifiedVersion,
+    string Drift, bool HasMods, string? DriftWarning,
+    string Engine, string Device,
+    bool ProfileFound, int RevealedEpochs, int TotalEpochs,
+    string Platform);
+
+/// <summary>
+/// What an imported partner's <c>progress.save</c> turned out to say.
+/// </summary>
+/// <param name="Missing">
+/// The epochs that profile has NOT revealed, named for a reader. An empty list is the good news
+/// case and says so plainly; a short list is the one worth reading, because those are exactly
+/// the pools that will be a different size from the ones a default prediction assumes.
+/// </param>
+public sealed record EpochImportDto(
+    string Code, int Revealed, int Total, bool FullyUnlocked, string[] Missing);
 
 /// <param name="Characters">Character names in lobby order, which is what decides each slot's RNG.</param>
 public sealed record LobbyDto(string? Seed, string[] Characters, int Ascension, bool IsMultiplayer);
@@ -259,6 +297,57 @@ public static class Query
         return ProfileReader.Read(savesDirectory)?.Unlocks ?? new UnlockState();
     }
 
+    /// <summary>
+    /// Everyone's unlock state: one per player, plus the run-level superset the game generates
+    /// the shared parts against.
+    ///
+    /// Repeated ?epochs=&lt;player&gt;:&lt;code&gt; — e.g. epochs=p2:36-fffffffff — where the code
+    /// comes from importing that player's <c>progress.save</c>. Anyone not named is assumed to
+    /// match the local profile, which is the only thing knowable about an account on another
+    /// machine and is what the tool assumed for everybody before this existed.
+    ///
+    /// Returns a null per-player list when nothing was imported. That is not a shortcut but the
+    /// point: <c>RunGenerator</c> caches its bag plan on reference equality, and a list saying
+    /// "everyone matches the run" would rebuild that plan for no change in the answer.
+    /// </summary>
+    public static (UnlockState Run, IReadOnlyList<UnlockState>? PerPlayer) LobbyUnlocks(
+        IQueryCollection q, int players, string? savesDirectory)
+    {
+        var mine = Unlocks(q, savesDirectory);
+
+        var imported = new UnlockState?[players];
+        bool any = false;
+
+        foreach (var raw in (StringValues)q["epochs"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2 || parts[1].Length == 0)
+                throw new ArgumentException($"epochs wants <player>:<code>, got '{raw}'");
+
+            var t = parts[0].StartsWith('p') || parts[0].StartsWith('P') ? parts[0][1..] : parts[0];
+            if (!int.TryParse(t, out var n) || n < 1 || n > players)
+                throw new ArgumentException($"'{parts[0]}' is not a player in a {players}-player lobby");
+
+            imported[n - 1] = UnlockCode.Decode(parts[1])
+                ?? throw new ArgumentException(
+                    $"'{parts[1]}' is not an unlock code this build can read. Codes are tied to "
+                    + "the epochs a build knows about, so one made by a different version has to "
+                    + "be imported again.");
+            any = true;
+        }
+
+        if (!any) return (mine, null);
+
+        var perPlayer = new UnlockState[players];
+        for (int i = 0; i < players; i++) perPlayer[i] = imported[i] ?? mine;
+
+        // The game builds the run's state as the superset of every player's, and that is what
+        // act generation, the Ancients and the shared chest bag all read.
+        return (UnlockState.Union(perPlayer), perPlayer);
+    }
+
     public static (SearchCriteria, int Players, IReadOnlyList<Character>) BuildCriteria(
         IQueryCollection q, string? savesDirectory = null)
     {
@@ -284,6 +373,8 @@ public static class Query
         // The search-wide rule. Still read, because it is what a one-relic link carries and
         // what a row without its own rule falls back to.
         var (requirement, slots) = ParseRequire(q["require"].ToString(), players);
+
+        var lobbyUnlocks = LobbyUnlocks(q, players, savesDirectory);
 
         // Repeated ?relic=<slug>[:<require>] — e.g. silken_tress, silken_tress:all,
         // golden_pearl:p2. Shaped like ?ancient= on purpose: wanting one relic for the whole
@@ -364,7 +455,8 @@ public static class Query
             NeowPicks = NeowPicks(q, players),
             Ascension = Ascension(q),
             Characters = chars,
-            Unlocks = Unlocks(q, savesDirectory),
+            Unlocks = lobbyUnlocks.Run,
+            PlayerUnlocks = lobbyUnlocks.PerPlayer,
         };
         return (criteria, players, chars);
     }
@@ -681,12 +773,19 @@ public static class Predictions
     /// ? rooms that became treasure rooms before Act 1's chest. Must match what the search used,
     /// or the chest shown would be a different one from the chest matched.
     /// </param>
+    /// <param name="playerUnlocks">
+    /// Each player's own state, when a partner's has been imported. Card pools and relic bags
+    /// are per player, so a slot reads its own rather than the run's superset.
+    /// </param>
     public static SeedResultDto Describe(
         string seed, int players, IReadOnlyList<Character> characters, SeedHit? hit = null,
         int ascension = 0, UnlockState? unlocks = null, int extraChestPicks = 0,
-        int[]? priorDraws = null)
+        int[]? priorDraws = null, IReadOnlyList<UnlockState>? playerUnlocks = null)
     {
         unlocks ??= new UnlockState();
+
+        UnlockState Own(int slot) =>
+            playerUnlocks is { } own && (uint)slot < (uint)own.Count ? own[slot] : unlocks;
         ulong runSeed = SeedCodec.RunSeed(seed);
         var ctx = new NeowContext { PlayerCount = players };
 
@@ -722,6 +821,7 @@ public static class Predictions
             ? ready
             : RunGenerator.GenerateRun(runSeed, unlocks, isMultiplayer: true,
                                        characters, selected, ascension, withShopRelics: true,
+                                       playerUnlocks: playerUnlocks,
                                        withChestRelics: true,
                                        extraChestPicksBefore: extraChestPicks);
 
@@ -767,7 +867,8 @@ public static class Predictions
             {
                 if (!NeowCardPayload.IsPredictable(relic.Slug)) continue;
 
-                var cards = NeowCardPayload.Generate(runSeed, slot, characters[slot], relic.Slug, unlocks);
+                var cards = NeowCardPayload.Generate(
+                    runSeed, slot, characters[slot], relic.Slug, Own(slot));
                 if (cards.Count > 0)
                     payloads.Add(new NeowPayloadDto(slot, relic.Slug, cards.Select(c => c.Slug).ToArray()));
             }
@@ -776,7 +877,7 @@ public static class Predictions
         var firstFight = Enumerable.Range(0, players).SelectMany(slot =>
             CardRewardGenerator
                 .Hallway(runSeed, slot, characters[slot],
-                         CardRewardGenerator.MaxPredictableFight, ascension, unlocks,
+                         CardRewardGenerator.MaxPredictableFight, ascension, Own(slot),
                          prior[slot])
                 .Fights
                 .Select((reward, i) => new FirstFightDto(

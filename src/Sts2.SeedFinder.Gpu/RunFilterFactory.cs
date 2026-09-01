@@ -173,7 +173,8 @@ public sealed class RunFilterTables
             {
                 UpFrontNameHash = GameHash.Deterministic(GameHash.SnakeCase("UpFront")),
                 ActNameHash = GameHash.Deterministic("act_selection"),
-                BagBurnDraws = RunGenerator.RelicBagDraws(criteria.Characters, unlocks),
+                BagBurnDraws = RunGenerator.RelicBagDraws(
+                    criteria.Characters, unlocks, criteria.PlayerUnlocks),
                 SharedAncientCount = sharedCount,
                 SharedAncientId = sharedCount > 0 ? AncientIdOf(ActData.SharedAncients[0]) : UnknownId,
 
@@ -229,7 +230,7 @@ public sealed class RunFilterTables
     {
         if (criteria.ShopRelicsWanted.Count == 0) return Array.Empty<int>();
 
-        var deques = RunGenerator.ShopDeques(criteria.Characters, unlocks);
+        var deques = RunGenerator.ShopDeques(criteria.Characters, unlocks, criteria.PlayerUnlocks);
         var probes = new List<int>();
 
         for (int c = 0; c < criteria.ShopRelicsWanted.Count; c++)

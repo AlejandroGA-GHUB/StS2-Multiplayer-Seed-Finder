@@ -41,18 +41,22 @@ public sealed class NeowPlan
     private readonly int _curseCandidateCount;
     private readonly Item[] _items;
     private readonly IReadOnlyList<Character> _characters;
-    private readonly UnlockState? _unlocks;
+    /// <summary>
+    /// Each slot's own unlock state. Per slot rather than one for the lobby because a payload is
+    /// drawn from that player's card pool, and card pools are gated by that player's own epochs.
+    /// </summary>
+    private readonly UnlockState[] _unlocksBySlot;
 
     private NeowPlan(
         NeowContext context, int curseCandidateCount, Item[] items,
-        IReadOnlyList<Character> characters, UnlockState? unlocks)
+        IReadOnlyList<Character> characters, UnlockState[] unlocksBySlot)
     {
         _context = context;
         _playerCount = context.PlayerCount;
         _curseCandidateCount = curseCandidateCount;
         _items = items;
         _characters = characters;
-        _unlocks = unlocks;
+        _unlocksBySlot = unlocksBySlot;
     }
 
     /// <summary>True when the search has no Neow requirement, so every seed passes this stage.</summary>
@@ -84,7 +88,7 @@ public sealed class NeowPlan
             .ToArray();
 
         return new NeowPlan(
-            context, curseCandidates.Count, items, criteria.Characters, criteria.Unlocks);
+            context, curseCandidates.Count, items, criteria.Characters, criteria.UnlocksBySlot());
     }
 
     /// <summary>Does this run seed satisfy every Neow criterion?</summary>
@@ -125,7 +129,8 @@ public sealed class NeowPlan
         // them. One draw for an Arcane Scroll, three for a Hefty Tablet, off a stream nothing
         // else has touched yet.
         return NeowCardPayload.Offers(
-            runSeed, slot, _characters[slot], item.Relic.Slug, _unlocks, item.WantedBySlot[slot]);
+            runSeed, slot, _characters[slot], item.Relic.Slug, _unlocksBySlot[slot],
+            item.WantedBySlot[slot]);
     }
 
     private bool OfferMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)
@@ -164,7 +169,7 @@ public sealed class NeowPlan
 
             var character = criteria.Characters[slot];
             rows[slot] = want.Cards
-                .Select(c => NeowCardPayload.TypeIdOf(character, criteria.Unlocks, c))
+                .Select(c => NeowCardPayload.TypeIdOf(character, criteria.UnlocksFor(slot), c))
                 .ToArray();
         }
         return rows;

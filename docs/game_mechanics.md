@@ -376,8 +376,29 @@ rng)` reads `player.UnlockState`, while `RunState.UnlockState` is
 "the superset of all players' unlock states", used for Ancients and act generation. So each
 player's bag is filtered by their own epochs and only the local profile's are readable; a
 partner's live on their machine. `RunGenerator.GenerateRun` takes an optional `playerUnlocks`
-for this. Searching still assumes the lobby matches the local profile, which is the only
-assumption available about a stranger's account.
+for this.
+
+**A partner's state is now an input rather than an assumption** (2026-09-01). `UnlockCode`
+encodes one account's revealed epochs as a bitmask over a canonical epoch list, the web app
+imports a dropped `progress.save` through `ProfileReader.Parse`, and `SearchCriteria` carries
+`PlayerUnlocks` alongside `Unlocks`. Three things about it are worth not re-deriving:
+
+- **The run-level state is the UNION, and must be rebuilt when anything is imported.** It is what
+  act generation, the Ancients and the shared chest bag read. `UnlockState.Union` does this;
+  `Query.LobbyUnlocks` is the only caller that matters.
+- **The blast radius is not the player who is wrong.** `PopulateRelicGrabBags` consumes one
+  stream in a fixed order: shared deques, then each player's bag in lobby order, then act
+  generation. A shuffle of n costs exactly n-1 draws, so a partner with differently sized pools
+  moves everything drawn after their bag. Measured on seed `8NZJ8J63RAKH` with P2 missing
+  Relic1-5 and Silent3/6: Act 1's boss went Vantom to Ceremonial Beast, the Act 2 and 3 Ancients
+  both changed, P2's shops changed and **P1's did not**, because P1 is shuffled first.
+- **Card pools are per player too.** `CardRewardGenerator.PoolFor` and `NeowCardPayload` take a
+  slot's own state, not the run's, which is why `SearchCriteria.UnlocksFor(slot)` exists and why
+  `NeowPlan` carries an array rather than one state.
+
+Not modelled, and unchanged by this: `NeowContext.AllCharactersUnlocked` and
+`ScrollBoxesAvailable` are per-account too, so a partner who has not unlocked every character can
+be offered a different Neow set. Both are still manual flags defaulting to true.
 
 ### Bosses and events as search criteria
 `ActCatalog.cs` is the naming and pool layer over `ActData`. Encounter type names carry their

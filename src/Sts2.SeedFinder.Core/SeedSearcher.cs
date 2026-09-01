@@ -412,7 +412,42 @@ public sealed record SearchCriteria
     /// </summary>
     public int Ascension { get; init; }
 
+    /// <summary>
+    /// The state the RUN generates against, which is the superset of everybody's. Build it with
+    /// <see cref="UnlockState.Union"/> whenever <see cref="PlayerUnlocks"/> is set, because act
+    /// generation and the shared chest bag read this one.
+    /// </summary>
     public UnlockState Unlocks { get; init; } = new();
+
+    /// <summary>
+    /// Each player's OWN unlock state, in lobby order, or null when everyone is assumed to match
+    /// <see cref="Unlocks"/>.
+    ///
+    /// Worth setting whenever it is actually known, because the cost of getting it wrong is not
+    /// confined to the player it is wrong about: the bags are shuffled off the shared UpFront
+    /// stream in lobby order, so a partner whose pools are a different size moves every draw
+    /// after their bag, and act generation comes after all of them.
+    ///
+    /// Held by reference for the whole search — <c>RunGenerator</c> caches its bag plan on
+    /// reference equality, so handing it a fresh list per seed would rebuild the plan every time.
+    /// </summary>
+    public IReadOnlyList<UnlockState>? PlayerUnlocks { get; init; }
+
+    /// <summary>
+    /// One player's own state, falling back to the run's. Card pools are per player too, so
+    /// anything reading a character's cards wants this rather than <see cref="Unlocks"/>.
+    /// </summary>
+    public UnlockState UnlocksFor(int slot) =>
+        PlayerUnlocks is { } own && (uint)slot < (uint)own.Count ? own[slot] : Unlocks;
+
+    /// <summary>Every slot's own state, sized to the lobby. For callers that resolve it once.</summary>
+    public UnlockState[] UnlocksBySlot()
+    {
+        var result = new UnlockState[PlayerCount];
+        for (int i = 0; i < result.Length; i++) result[i] = UnlocksFor(i);
+        return result;
+    }
+
     public SlotRequirement Requirement { get; init; } = SlotRequirement.Any;
     public IReadOnlyList<int> RequiredSlots { get; init; } = Array.Empty<int>();
     public OfferSlot Where { get; init; } = OfferSlot.Anywhere;
@@ -517,7 +552,7 @@ public static class SeedSearcher
             var offered = new HallwayRewards?[playerCount];
             HallwayRewards For(int slot) => offered[slot] ??= CardRewardGenerator.Hallway(
                 runSeed, slot, criteria.Characters[slot], deepest, criteria.Ascension,
-                criteria.Unlocks, priorDraws[slot]);
+                criteria.UnlocksFor(slot), priorDraws[slot]);
 
             bool Offers(int slot, CardCriterion want) =>
                 For(slot).Fight(want.Fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
@@ -601,6 +636,7 @@ public static class SeedSearcher
             var run = RunGenerator.GenerateRun(
                 runSeed, criteria.Unlocks, isMultiplayer: true, criteria.Characters, acts,
                 criteria.Ascension, criteria.NeedsShopRelics,
+                playerUnlocks: criteria.PlayerUnlocks,
                 withChestRelics: criteria.NeedsChestRelics,
                 extraChestPicksBefore: criteria.ExtraChestPicks);
 
@@ -921,7 +957,7 @@ public static class SeedSearcher
             foreach (var card in want.Cards)
             {
                 bool Holds(int s, Func<Character, UnlockState?, IEnumerable<CardEntry>> pool) =>
-                    s < c.Characters.Count && pool(c.Characters[s], c.Unlocks).Any(e => e.TypeName == card);
+                    s < c.Characters.Count && pool(c.Characters[s], c.UnlocksFor(s)).Any(e => e.TypeName == card);
 
                 bool reachable = everySlot
                     ? slots.Count > 0 && slots.All(s => Holds(s, NeowCardPayload.Offerable))
@@ -1295,7 +1331,7 @@ public static class SeedSearcher
 
             // "Any player" only needs SOMEONE who could be offered it.
             var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
-            if (slots.Any(s => CardCatalog.Offerable(c.Characters[s], c.Unlocks)
+            if (slots.Any(s => CardCatalog.Offerable(c.Characters[s], c.UnlocksFor(s))
                     .Any(e => e.TypeName == want.Card)))
                 continue;
 
@@ -1313,7 +1349,7 @@ public static class SeedSearcher
         foreach (var want in c.Cards.Where(w => !CardRewardGenerator.CanOfferRare(w.Fight)))
         {
             var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
-            if (slots.Any(s => CardCatalog.FirstFightOfferable(c.Characters[s], c.Unlocks)
+            if (slots.Any(s => CardCatalog.FirstFightOfferable(c.Characters[s], c.UnlocksFor(s))
                     .Any(e => e.TypeName == want.Card)))
                 continue;
 
