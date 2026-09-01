@@ -59,7 +59,13 @@ public static class HistoryVerifier
         string Seed,
         string Build,
         string Mode,
-        bool HasModifiers);
+        bool HasModifiers,
+        /// <summary>
+        /// A character the save names that this build does not have. Almost always a mod: a
+        /// modded character adds cards and relics to the model database, which resizes the pools
+        /// and moves every shuffle, so such a run is not ours to check.
+        /// </summary>
+        string? UnknownCharacter);
 
     public static int Run(string? historyDir, bool verbose)
     {
@@ -205,6 +211,11 @@ public static class HistoryVerifier
         if (!CompatibleBuilds.Contains(run.Build)) return $"build {run.Build} (data is for {string.Join("/", CompatibleBuilds)})";
         if (!string.Equals(run.Mode, "standard", StringComparison.OrdinalIgnoreCase)) return $"game mode {run.Mode}";
         if (run.HasModifiers) return "run modifiers active";
+        // Named before the empty case, because it is the one with a cause worth knowing: a
+        // modded character resizes the content pools for the WHOLE run, so declining is right
+        // and "no players recorded" would send someone looking for a parser bug instead.
+        if (run.UnknownCharacter is { Length: > 0 } who)
+            return $"character {who} is not in this build (a mod?)";
         if (run.Characters.Count == 0) return "no players recorded";
         if (run.Acts.Count == 0) return "no acts recorded";
         if (string.IsNullOrWhiteSpace(run.Seed)) return "no seed";
@@ -467,13 +478,18 @@ public static class HistoryVerifier
         // player_stats entries carry a player_id rather than a position, so map through this
         // rather than trusting their order to match.
         var slotOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        string? unknownCharacter = null;
         if (root.TryGetProperty("players", out var players))
         {
             foreach (var p in players.EnumerateArray())
             {
                 var id = p.TryGetProperty("character", out var c) ? c.GetString()
                        : p.TryGetProperty("character_id", out var c2) ? c2.GetString() : null;
-                if (!TryParseCharacter(Entry(id), out var ch)) continue;
+                if (!TryParseCharacter(Entry(id), out var ch))
+                {
+                    unknownCharacter ??= Entry(id);
+                    continue;
+                }
                 if (p.TryGetProperty("id", out var pid))
                     slotOf[pid.ToString()] = characters.Count;
                 characters.Add(ch);
@@ -504,23 +520,30 @@ public static class HistoryVerifier
                 {
                     var type = point.TryGetProperty("map_point_type", out var t) ? t.GetString() : null;
 
+                    // A `?` room resolves into something else, and the save records what it
+                    // BECAME in `rooms` while `map_point_type` still says "unknown". So the room
+                    // is the authority on what happened here, not the map point.
+                    bool isShop = type == "shop";
+
                     if (point.TryGetProperty("rooms", out var rooms) && rooms.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var room in rooms.EnumerateArray())
                         {
                             var roomType = room.TryGetProperty("room_type", out var rt) ? rt.GetString() : null;
+                            if (roomType == "shop") isShop = true;
+
                             var modelId = room.TryGetProperty("model_id", out var mi) ? mi.GetString() : null;
                             if (modelId is null) continue;
 
                             if (roomType == "boss") b.Add(Entry(modelId));
-                            else if (roomType == "monster") m.Add(Entry(modelId));
+                            else if (roomType == "monster" && !IsEventEncounter(modelId)) m.Add(Entry(modelId));
                             // The act opener is an event room, and it is the Ancient.
                             else if (roomType == "event" && type == "ancient" && ancient is null)
                                 ancient = Entry(modelId);
                         }
                     }
 
-                    if (type == "shop" && point.TryGetProperty("player_stats", out var stats))
+                    if (isShop && point.TryGetProperty("player_stats", out var stats))
                     {
                         foreach (var ps in stats.EnumerateArray())
                         {
@@ -556,7 +579,8 @@ public static class HistoryVerifier
             root.TryGetProperty("build_id", out var bd) ? bd.GetString() ?? "" : "",
             root.TryGetProperty("game_mode", out var gm) ? gm.GetString() ?? "" : "",
             root.TryGetProperty("modifiers", out var mods) && mods.ValueKind == JsonValueKind.Array
-                && mods.GetArrayLength() > 0);
+                && mods.GetArrayLength() > 0,
+            unknownCharacter);
     }
 
     private static HashSet<string>? _shopSlugs;
@@ -570,6 +594,22 @@ public static class HistoryVerifier
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return _shopSlugs.Contains(slug);
     }
+
+    /// <summary>
+    /// Whether a recorded combat was started by an EVENT rather than by walking into a fight.
+    ///
+    /// These are the reason a `?` room can produce a `room_type: "monster"` that is not the next
+    /// entry of the act's encounter list: the event brings its own fixed encounter and draws
+    /// nothing. Counting one as a normal encounter shifts every comparison after it and reports
+    /// a correct prediction as a failure, which is exactly what it used to do.
+    ///
+    /// The suffix is the game's own naming and it is exact rather than a heuristic: the assembly
+    /// declares six <c>*EventEncounter</c> types (Battleworn Dummy, Dense Vegetation, Fake
+    /// Merchant, Mysterious Knight, Punch Off, The Architect) and <see cref="ActData"/> holds
+    /// none of them in any act's normal pool, so nothing this drops could have been a match.
+    /// </summary>
+    private static bool IsEventEncounter(string modelId) =>
+        modelId.EndsWith("_EVENT_ENCOUNTER", StringComparison.OrdinalIgnoreCase);
 
     private static string Entry(string? modelId)
     {

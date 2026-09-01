@@ -64,6 +64,23 @@ public sealed record ChestRelicDto(
 /// </summary>
 public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 
+/// <summary>
+/// A Neow option that touches a player's card stream, and how.
+/// </summary>
+/// <param name="PayloadCards">
+/// How many cards this tool can NAME for the relic: 1 for Arcane Scroll, 3 for Hefty Tablet,
+/// 0 for the rest. Non-zero is what makes the payload picker appear on a Neow row.
+/// </param>
+/// <param name="Draws">
+/// Draws it takes off that player's Rewards stream before the first fight rolls, which is what
+/// shifts their card rewards. Zero for every option not listed here.
+/// </param>
+/// <param name="DefectDraws">
+/// The same for a Defect. Only Scroll Boxes differs, by the two extra all-Claw checks it rolls.
+/// </param>
+public sealed record NeowCardRelicDto(
+    string Slug, string Name, int PayloadCards, int Draws, int DefectDraws);
+
 /// <param name="AncientArtSlugs">
 /// Ancient slugs the install can serve node art for. Separate from <see cref="AncientDto"/>
 /// because it covers Neow as well, which opens Act 1 but has no searchable offer and so is not
@@ -89,7 +106,7 @@ public sealed record CatalogDto(
     RelicDto[] NeowCurses, RelicDto[] NeowPositives, RelicDto[] NeowCoinFlip,
     AncientDto[] Ancients, CharacterDto[] Characters, string[] Act1Maps, ActContentDto[] ActContent,
     CardPoolDto[] CardPools, ShopRelicDto[] ShopRelics, ChestRelicDto[] ChestRelics,
-    string[] AncientArtSlugs, string[] EventArtSlugs);
+    string[] AncientArtSlugs, string[] EventArtSlugs, NeowCardRelicDto[] NeowCardRelics);
 
 /// <summary>
 /// What the local game install knows about this player, for the "sync from my save" button.
@@ -167,9 +184,23 @@ public sealed record ChestSlotDto(string Rarity, string Relic, string[] Alternat
 /// </summary>
 public sealed record ChestDto(int Act, int Floor, ChestSlotDto[] Slots);
 
+/// <summary>
+/// What a Neow relic would hand this player if they took it.
+/// </summary>
+/// <param name="Cards">
+/// One rare for Arcane Scroll, three for Hefty Tablet, in the order the factory produced them.
+/// </param>
+/// <remarks>
+/// Reported for every offer that contains one of those two, whether or not the search asked
+/// about it, because it is the thing the player is choosing between and it costs one draw to
+/// answer.
+/// </remarks>
+public sealed record NeowPayloadDto(int Slot, string Relic, string[] Cards);
+
 public sealed record SeedResultDto(
     string Seed, NeowOfferDto[] Neow, ActDto[] Acts, AncientOfferDto[] AncientOffers,
-    FirstFightDto[] FirstFight, ShopSequenceDto[] Shops, ChestDto[] Chests);
+    FirstFightDto[] FirstFight, ShopSequenceDto[] Shops, ChestDto[] Chests,
+    NeowPayloadDto[] NeowPayloads);
 
 // ---- Query parsing ------------------------------------------------------------------------
 
@@ -263,17 +294,24 @@ public static class Query
         foreach (var raw in (StringValues)q["relic"])
         {
             if (string.IsNullOrWhiteSpace(raw)) continue;
-            var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+            var parts = raw.Split(':', 3, StringSplitOptions.TrimEntries);
             if (parts[0].Length == 0 || parts[0] == "any") continue;
 
             var found = NeowRelics.Find(parts[0])
                 ?? throw new ArgumentException($"unknown relic '{parts[0]}'");
 
-            var (rowRule, rowSlots) = parts.Length == 2 && parts[1].Length > 0
+            var (rowRule, rowSlots) = parts.Length >= 2 && parts[1].Length > 0
                 ? ParseRequire(parts[1], players)
                 : (requirement, slots);
 
-            neowWanted.Add(new NeowCriterion(found, rowRule, rowSlots, where));
+            // A third field names the cards the relic itself hands over, comma separated:
+            // relic=arcane_scroll:p1:corruption. Resolved against the pools of the players the
+            // row is aimed at, since a card slug only means something inside a character's pool.
+            var payload = parts.Length == 3 && parts[2].Length > 0
+                ? ParsePayloadCards(parts[2], found, rowRule, rowSlots, chars, players)
+                : null;
+
+            neowWanted.Add(new NeowCriterion(found, rowRule, rowSlots, where, payload));
         }
 
         var act1 = q["act1"].ToString();
@@ -323,6 +361,7 @@ public static class Query
             ShopRelicsWanted = ParseShopRelics(q, players),
             ChestRelicsWanted = ParseChestRelics(q),
             ExtraChestPicks = ExtraChestPicks(q),
+            NeowPicks = NeowPicks(q, players),
             Ascension = Ascension(q),
             Characters = chars,
             Unlocks = Unlocks(q, savesDirectory),
@@ -362,6 +401,91 @@ public static class Query
             wanted.Add(new ChestRelicCriterion(act, relic.Slug, tolerance));
         }
         return wanted;
+    }
+
+    /// <summary>
+    /// The comma-separated card slugs on a ?relic= row, resolved to the game's type names.
+    ///
+    /// Which pools to look in follows the row's own slot rule, exactly as the validator does:
+    /// a row for P1 resolves against P1's character, and a row for "any player" against
+    /// anybody's. Resolving here rather than in Core keeps slugs a wire concern.
+    /// </summary>
+    private static IReadOnlyList<string> ParsePayloadCards(
+        string csv, NeowRelic relic, SlotRequirement rule, IReadOnlyList<int> slots,
+        IReadOnlyList<Character> chars, int players)
+    {
+        if (chars.Count != players)
+            throw new ArgumentException(
+                "naming the cards a Neow relic gives needs every player's character, because "
+                + "they come out of that player's own rare pool.");
+
+        var looking = rule switch
+        {
+            SlotRequirement.Specific => slots,
+            SlotRequirement.All => Enumerable.Range(0, players).ToArray(),
+            _ => Enumerable.Range(0, players).ToArray(),
+        };
+
+        var resolved = new List<string>();
+        foreach (var name in csv.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            string? found = null;
+            foreach (var slot in looking)
+                if (CardCatalog.Find(chars[slot], name) is { } hit) { found = hit; break; }
+
+            resolved.Add(found ?? throw new ArgumentException(
+                $"'{name}' is not a card {relic.Name} can hand to "
+                + (rule == SlotRequirement.Any
+                    ? "anyone in this party"
+                    : string.Join(" or ", looking.Select(x => $"P{x + 1}")))));
+        }
+        return resolved;
+    }
+
+    /// <summary>
+    /// Repeated ?pick=&lt;slot&gt;:&lt;relic&gt; — which Neow option a player is assumed to take.
+    ///
+    /// Not a criterion: it asks nothing of the seed. It exists because the five card-drawing
+    /// options draw off the same stream the fight rewards come from, so taking one shifts every
+    /// card that player is later offered. The slot is 1-based on the wire, as everywhere else.
+    /// </summary>
+    public static IReadOnlyList<NeowPick> NeowPicks(IQueryCollection q, int players)
+    {
+        var picks = new List<NeowPick>();
+        foreach (var raw in (StringValues)q["pick"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2 || parts[1].Length == 0 || parts[1] == "none") continue;
+
+            var t = parts[0].StartsWith('p') || parts[0].StartsWith('P') ? parts[0][1..] : parts[0];
+            if (!int.TryParse(t, out var n) || n < 1 || n > players)
+                throw new ArgumentException($"'{parts[0]}' is not a player in a {players}-player lobby");
+
+            var relic = NeowRelics.Find(parts[1])
+                ?? throw new ArgumentException($"unknown relic '{parts[1]}'");
+
+            picks.Add(new NeowPick(n - 1, relic.Slug));
+        }
+        return picks;
+    }
+
+    /// <summary>
+    /// ?pick= as per-slot draws off the Rewards stream, which is the only thing a prediction
+    /// does with it. Zero for a player who took nothing that hands out cards.
+    /// </summary>
+    public static int[] RewardPriorDraws(
+        IQueryCollection q, int players, IReadOnlyList<Character> chars)
+    {
+        var draws = new int[players];
+        if (chars.Count != players) return draws;
+
+        foreach (var pick in NeowPicks(q, players))
+            draws[pick.Slot] = Math.Max(
+                CardRewardGenerator.NeowRewardDrawCost(pick.RelicSlug, chars[pick.Slot]), 0);
+
+        return draws;
     }
 
     /// <summary>?extraChests=n — ? rooms that became treasure rooms before Act 1's chest.</summary>
@@ -559,7 +683,8 @@ public static class Predictions
     /// </param>
     public static SeedResultDto Describe(
         string seed, int players, IReadOnlyList<Character> characters, SeedHit? hit = null,
-        int ascension = 0, UnlockState? unlocks = null, int extraChestPicks = 0)
+        int ascension = 0, UnlockState? unlocks = null, int extraChestPicks = 0,
+        int[]? priorDraws = null)
     {
         unlocks ??= new UnlockState();
         ulong runSeed = SeedCodec.RunSeed(seed);
@@ -581,7 +706,10 @@ public static class Predictions
                 Array.Empty<AncientOfferDto>(),
                 Array.Empty<FirstFightDto>(),
                 Array.Empty<ShopSequenceDto>(),
-                Array.Empty<ChestDto>());
+                Array.Empty<ChestDto>(),
+                // A payload is drawn from the character's own rare pool, so with nobody picked
+                // there is nothing to say — unlike the offer itself, which is party-independent.
+                Array.Empty<NeowPayloadDto>());
 
         if (characters.Count != players)
             throw new ArgumentException(
@@ -623,10 +751,33 @@ public static class Predictions
         // never touches, so it needs nothing from the run above.
         // Both fights come off ONE walk of each player's stream: fight 2 continues where fight 1
         // stopped and inherits both of its pity counters, so they cannot be computed apart.
+        // What each player's assumed Neow pick already spent on that stream, computed by the
+        // caller so a search and the seed it displays cannot disagree: naming the cards a relic
+        // gives is itself a claim that the player took it, and only the criteria know that.
+        var prior = priorDraws is { } given && given.Length >= players ? given : new int[players];
+
+        // What Arcane Scroll or Hefty Tablet would hand each player, reported against the OFFER
+        // rather than against a pick: it is what that player is deciding about, and it costs one
+        // draw per card off a stream nothing else has touched yet.
+        var payloads = new List<NeowPayloadDto>();
+        for (int slot = 0; slot < players; slot++)
+        {
+            var offer = offers[slot];
+            foreach (var relic in new[] { offer.Positive1, offer.Positive2, offer.Curse })
+            {
+                if (!NeowCardPayload.IsPredictable(relic.Slug)) continue;
+
+                var cards = NeowCardPayload.Generate(runSeed, slot, characters[slot], relic.Slug, unlocks);
+                if (cards.Count > 0)
+                    payloads.Add(new NeowPayloadDto(slot, relic.Slug, cards.Select(c => c.Slug).ToArray()));
+            }
+        }
+
         var firstFight = Enumerable.Range(0, players).SelectMany(slot =>
             CardRewardGenerator
                 .Hallway(runSeed, slot, characters[slot],
-                         CardRewardGenerator.MaxPredictableFight, ascension, unlocks)
+                         CardRewardGenerator.MaxPredictableFight, ascension, unlocks,
+                         prior[slot])
                 .Fights
                 .Select((reward, i) => new FirstFightDto(
                     slot, reward.Cards.Select(c => c.Slug).ToArray(), reward.HasPotion, i + 1)))
@@ -650,7 +801,8 @@ public static class Predictions
                 s.Candidates.Skip(1).Take(ChestAlternatesShown).Select(r => r.Slug).ToArray())).ToArray()
         )).ToArray();
 
-        return new SeedResultDto(seed, neow, acts, ancientOffers.ToArray(), firstFight, shops, chests);
+        return new SeedResultDto(
+            seed, neow, acts, ancientOffers.ToArray(), firstFight, shops, chests, payloads.ToArray());
     }
 }
 

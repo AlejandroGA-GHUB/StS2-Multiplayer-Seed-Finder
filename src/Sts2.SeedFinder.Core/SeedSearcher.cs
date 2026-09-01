@@ -59,13 +59,25 @@ public enum OfferSlot
 /// <paramref name="Where"/> is almost never worth setting. Neow's curse and positive pools are
 /// disjoint, so the relic already decides its own branch and constraining it can only agree
 /// with that or contradict it.
+///
+/// <paramref name="PayloadCards"/> asks about what the relic HANDS you rather than about the
+/// offer: the rares an Arcane Scroll or a Hefty Tablet would produce, which
+/// <see cref="Cards.NeowCardPayload"/> draws off the same player's Rewards stream. It rides on
+/// this criterion rather than being one of its own because the two questions are joined by the
+/// player: "somebody is offered Arcane Scroll, and somebody's scroll gives Corruption" is a
+/// weaker thing than asking both of the SAME player, and the weaker one is not what anyone
+/// means. Cards are unordered — Hefty Tablet shows three at once and you keep one.
 /// </summary>
 public sealed record NeowCriterion(
     NeowRelic Relic,
     SlotRequirement Requirement = SlotRequirement.Any,
     IReadOnlyList<int>? RequiredSlots = null,
-    OfferSlot Where = OfferSlot.Anywhere)
+    OfferSlot Where = OfferSlot.Anywhere,
+    IReadOnlyList<string>? PayloadCards = null)
 {
+    /// <summary>Cards the relic's payload must include. Never null; empty is the normal case.</summary>
+    public IReadOnlyList<string> Cards => PayloadCards ?? Array.Empty<string>();
+
     /// <summary>Slots this criterion has to hold for. Empty for <see cref="SlotRequirement.Any"/>.</summary>
     public IReadOnlyList<int> ResolveSlots(int playerCount) => Requirement switch
     {
@@ -74,13 +86,20 @@ public sealed record NeowCriterion(
         _ => Array.Empty<int>(),
     };
 
-    public override string ToString() => Requirement switch
+    public override string ToString()
     {
-        SlotRequirement.All => $"{Relic.Name}, for every player",
-        SlotRequirement.Specific =>
-            $"{Relic.Name}, for {string.Join(" and ", (RequiredSlots ?? []).Select(s => $"P{s + 1}"))}",
-        _ => $"{Relic.Name}, for any player",
-    };
+        string what = Cards.Count == 0
+            ? Relic.Name
+            : $"{Relic.Name} giving {string.Join(" and ", Cards.Select(CardCatalog.Display))}";
+
+        return Requirement switch
+        {
+            SlotRequirement.All => $"{what}, for every player",
+            SlotRequirement.Specific =>
+                $"{what}, for {string.Join(" and ", (RequiredSlots ?? []).Select(s => $"P{s + 1}"))}",
+            _ => $"{what}, for any player",
+        };
+    }
 }
 
 /// <summary>
@@ -163,6 +182,25 @@ public sealed record CardCriterion(int Slot, string Card, int Fight = 1)
     public override string ToString() =>
         $"{(Slot < 0 ? "Any player" : $"P{Slot + 1}")} is offered {CardCatalog.Display(Card)} "
         + (Fight <= 1 ? "after the first fight" : $"after fight {Fight}");
+}
+
+/// <summary>
+/// A Neow option a player is ASSUMED to take, which is a different claim from any criterion
+/// here: nothing about the seed decides it, the player does.
+///
+/// It exists because five of Neow's options draw cards the moment they are taken, off the same
+/// <c>Rewards</c> stream the fight rewards come from, so taking one moves every card that
+/// player is offered for the rest of the predictable hallway. The cost is in
+/// <see cref="Cards.CardRewardGenerator.NeowRewardDrawCost"/>; everything else Neow can hand out
+/// costs nothing and needs no pick.
+///
+/// A pick affects only its own slot, and only the card rewards. Nothing else in a run reads
+/// that stream, so a wrong guess here cannot move a boss, an Ancient or a shop relic.
+/// </summary>
+public sealed record NeowPick(int Slot, string RelicSlug)
+{
+    public override string ToString() =>
+        $"P{Slot + 1} takes {Neow.NeowRelics.Find(RelicSlug)?.Name ?? RelicSlug} at Neow";
 }
 
 /// <summary>
@@ -275,6 +313,51 @@ public sealed record SearchCriteria
     public IReadOnlyList<CardCriterion> Cards { get; init; } = Array.Empty<CardCriterion>();
 
     /// <summary>
+    /// Which Neow option each player is assumed to take. Not a criterion — an input, like the
+    /// party or the ascension. See <see cref="NeowPick"/>.
+    /// </summary>
+    public IReadOnlyList<NeowPick> NeowPicks { get; init; } = Array.Empty<NeowPick>();
+
+    /// <summary>
+    /// Draws each player's Neow pick takes off their <c>Rewards</c> stream before the first
+    /// fight rolls, indexed by slot. Zero for the great majority of picks.
+    ///
+    /// Two sources, and the criterion wins. Naming the cards an Arcane Scroll gives P1 asserts
+    /// that P1 TOOK the scroll, so their fight rewards have to be read one draw along; leaving
+    /// that to a separate switch the user could forget would quietly predict the wrong cards.
+    /// Only a criterion that PINS a slot can do this: "for any player" does not say whose
+    /// stream moves, so it sets nothing and the explicit pick stands.
+    ///
+    /// Computed once per search rather than per seed — it depends on the party and the
+    /// criteria, neither of which the scan changes.
+    /// </summary>
+    public int[] RewardPriorDraws()
+    {
+        var draws = new int[PlayerCount];
+
+        void Set(int slot, string slug)
+        {
+            if (slot < 0 || slot >= draws.Length) return;
+            var character = slot < Characters.Count ? Characters[slot] : Character.Ironclad;
+            int cost = CardRewardGenerator.NeowRewardDrawCost(slug, character);
+
+            // -1 is Neow's Bones, whose shuffle length this tool does not model. Treating it as
+            // zero would be a silent lie; the validator rejects it before we get here.
+            draws[slot] = Math.Max(cost, 0);
+        }
+
+        foreach (var pick in NeowPicks) Set(pick.Slot, pick.RelicSlug);
+
+        foreach (var want in NeowCriteria)
+        {
+            if (want.Cards.Count == 0 || want.Requirement == SlotRequirement.Any) continue;
+            foreach (var slot in want.ResolveSlots(PlayerCount)) Set(slot, want.Relic.Slug);
+        }
+
+        return draws;
+    }
+
+    /// <summary>
     /// Relics a player's shop must stock in its third slot. These come out of the relic bags
     /// that upfront generation shuffles, so they need the run generated — but only the bag half
     /// of it, which is why <see cref="NeedsShopRelics"/> is tracked apart from the act criteria.
@@ -310,7 +393,14 @@ public sealed record SearchCriteria
     /// character's, even though they do not need the run generated. Chests do not read any
     /// character pool, but they still need the party SIZE, which the context carries.
     /// </summary>
-    public bool NeedsCharacters => NeedsRun || Cards.Count > 0 || ShopRelicsWanted.Count > 0;
+    public bool NeedsCharacters => NeedsRun || Cards.Count > 0 || ShopRelicsWanted.Count > 0
+                                   || NeedsNeowPayloads || NeowPicks.Count > 0;
+
+    /// <summary>
+    /// Whether any Neow criterion asks about the cards its relic hands out. Those come off the
+    /// character's own rare pool, so they need the party even though they need no run.
+    /// </summary>
+    public bool NeedsNeowPayloads => NeowCriteria.Any(n => n.Cards.Count > 0);
 
     /// <summary>Party in lobby order. Required whenever <see cref="NeedsCharacters"/>.</summary>
     public IReadOnlyList<Character> Characters { get; init; } = Array.Empty<Character>();
@@ -410,6 +500,10 @@ public static class SeedSearcher
 
         bool NeowMatches(ulong runSeed) => neowPlan.Matches(runSeed);
 
+        // What each player's Neow pick costs their Rewards stream before the first fight ever
+        // rolls. Resolved once: it depends on the party and the criteria, not on the seed.
+        var priorDraws = criteria.RewardPriorDraws();
+
         // Each player's first card reward, tested against that player's own Rewards stream.
         // Roughly fourteen draws per slot, so this sits between the Neow filter and the run.
         bool CardsMatch(ulong runSeed)
@@ -422,7 +516,8 @@ public static class SeedSearcher
             int deepest = DeepestFight(criteria);
             var offered = new HallwayRewards?[playerCount];
             HallwayRewards For(int slot) => offered[slot] ??= CardRewardGenerator.Hallway(
-                runSeed, slot, criteria.Characters[slot], deepest, criteria.Ascension, criteria.Unlocks);
+                runSeed, slot, criteria.Characters[slot], deepest, criteria.Ascension,
+                criteria.Unlocks, priorDraws[slot]);
 
             bool Offers(int slot, CardCriterion want) =>
                 For(slot).Fight(want.Fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
@@ -714,7 +809,11 @@ public static class SeedSearcher
     {
         // Named by criterion rather than by flag: this runs in the web app as well as the CLI,
         // and a list of command-line switches is not an instruction anyone can follow there.
-        if (c.NeowCriteria.Count == 0 && c.Act1 is null && !c.NeedsCharacters)
+        // NeedsCharacters is deliberately not the test here: a Neow pick sets it without asking
+        // anything of the seed, so a search carrying only picks would otherwise be accepted and
+        // then match everything.
+        if (c.NeowCriteria.Count == 0 && c.Act1 is null
+            && !c.NeedsRun && c.Cards.Count == 0 && c.ShopRelicsWanted.Count == 0)
             throw new ArgumentException(
                 "Nothing to search for. Set at least one criterion: a Neow relic, the Act 1 map, "
                 + "an Ancient's offer, a boss, an event, a card reward, a shop relic or a "
@@ -774,6 +873,111 @@ public static class SeedSearcher
         }
 
         ValidateNeowCombinations(c);
+        ValidateNeowPayloads(c);
+    }
+
+    /// <summary>
+    /// Rejects payload and pick requests that no run could produce.
+    ///
+    /// Payloads are the narrowest thing this tool predicts: two relics, a fixed count each, and
+    /// a pool of nothing but that character's rares. Every way of getting it wrong is therefore
+    /// something the user can be told precisely, rather than left to discover as a search that
+    /// finds nothing.
+    /// </summary>
+    private static void ValidateNeowPayloads(SearchCriteria c)
+    {
+        foreach (var want in c.NeowCriteria)
+        {
+            if (want.Cards.Count == 0) continue;
+
+            int capacity = NeowCardPayload.CardCount(want.Relic.Slug);
+            if (capacity == 0)
+                throw new ArgumentException(
+                    $"{want.Relic.Name} does not hand out cards this tool can name. Only "
+                    + string.Join(" and ", NeowCardPayload.Predictable.Select(s => NeowRelics.Find(s)!.Name))
+                    + " do: they run the ordinary reward factory over your own rares, with the "
+                    + "rarity and upgrade rolls removed.");
+
+            if (want.Cards.Count > capacity)
+                throw new ArgumentException(
+                    $"{want.Relic.Name} hands out {capacity} card{(capacity == 1 ? "" : "s")}, so it "
+                    + $"cannot give all {want.Cards.Count} of those at once.");
+
+            var dupes = want.Cards.GroupBy(x => x).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+            if (dupes.Count > 0)
+                throw new ArgumentException(
+                    $"{want.Relic.Name} cannot give two of {CardCatalog.Display(dupes[0])}: each pick "
+                    + "is blacklisted from the ones after it.");
+
+            // Whose pool has to hold the card, and how many of them. "For any player" needs
+            // somebody in the party who could be handed it; a row that pins slots needs EVERY
+            // one of them, because it asks the same thing of each. Rare pools differ by
+            // character, so "for every player" is where an impossible ask usually comes from.
+            var slots = want.Requirement == SlotRequirement.Any
+                ? Enumerable.Range(0, c.PlayerCount).ToList()
+                : want.ResolveSlots(c.PlayerCount).ToList();
+            bool everySlot = want.Requirement != SlotRequirement.Any;
+
+            foreach (var card in want.Cards)
+            {
+                bool Holds(int s, Func<Character, UnlockState?, IEnumerable<CardEntry>> pool) =>
+                    s < c.Characters.Count && pool(c.Characters[s], c.Unlocks).Any(e => e.TypeName == card);
+
+                bool reachable = everySlot
+                    ? slots.Count > 0 && slots.All(s => Holds(s, NeowCardPayload.Offerable))
+                    : slots.Any(s => Holds(s, NeowCardPayload.Offerable));
+                if (reachable) continue;
+
+                // Split apart because the two are different mistakes: a card from the wrong
+                // character's pool, and a card of the wrong rarity entirely.
+                bool inSomePool = slots.Any(s => Holds(s, CardCatalog.Offerable));
+
+                throw new ArgumentException(inSomePool && !everySlot
+                    ? $"{want.Relic.Name} only ever gives Rares, and {CardCatalog.Display(card)} is not one."
+                    : $"{CardCatalog.Display(card)} is not in the rare pool of "
+                      + (want.Requirement == SlotRequirement.Any
+                            ? "anyone in this party"
+                            : string.Join(" and ", slots.Select(x => $"P{x + 1} ({(x < c.Characters.Count ? c.Characters[x].ToString() : "?")})")))
+                      + ", so no seed can hand it over.");
+            }
+        }
+
+        foreach (var pick in c.NeowPicks)
+        {
+            if (pick.Slot < 0 || pick.Slot >= c.PlayerCount)
+                throw new ArgumentException(
+                    $"a Neow pick names P{pick.Slot + 1}, but the lobby has {c.PlayerCount} players.");
+
+            var relic = NeowRelics.Find(pick.RelicSlug)
+                ?? throw new ArgumentException($"'{pick.RelicSlug}' is not a relic Neow offers.");
+
+            // Neow's Bones shuffles a list whose length depends on the lobby's own Neow pool,
+            // and that shuffle is not modelled. Guessing zero would silently predict the wrong
+            // cards for every fight that player has.
+            if (CardRewardGenerator.NeowRewardDrawCost(relic.Slug, Character.Ironclad) < 0)
+                throw new ArgumentException(
+                    $"{relic.Name} shifts the card rewards by an amount this tool does not model "
+                    + "yet, so it cannot be assumed as a pick. Leave it unset and read the card "
+                    + "rewards as though nothing was taken.");
+        }
+
+        foreach (var group in c.NeowPicks.GroupBy(p => p.Slot).Where(g => g.Count() > 1))
+            throw new ArgumentException(
+                $"P{group.Key + 1} has {group.Count()} Neow picks. A player takes one option.");
+
+        // A criterion that names a payload has already said which relic that player takes, so a
+        // pick naming a different one is two contradictory claims about the same stream.
+        foreach (var want in c.NeowCriteria)
+        {
+            if (want.Cards.Count == 0 || want.Requirement == SlotRequirement.Any) continue;
+            foreach (var slot in want.ResolveSlots(c.PlayerCount))
+                foreach (var pick in c.NeowPicks)
+                    if (pick.Slot == slot && !string.Equals(pick.RelicSlug, want.Relic.Slug, StringComparison.Ordinal))
+                        throw new ArgumentException(
+                            $"P{slot + 1} cannot both take {NeowRelics.Find(pick.RelicSlug)?.Name ?? pick.RelicSlug} "
+                            + $"and be handed cards by {want.Relic.Name}: naming the cards a relic gives "
+                            + "says that player took it.");
+        }
     }
 
     /// <summary>

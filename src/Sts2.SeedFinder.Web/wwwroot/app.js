@@ -23,9 +23,14 @@ let catalog = null;
 function defaultState() {
   return {
     players: 2, characters: ['Ironclad', 'Silent'], act1: 'any', ascension: 0,
-    // Neow requirements, one per row: { relic, require }. A list for the same reason the
-    // Ancients are one — each row carries its own slot rule.
+    // Neow requirements, one per row: { relic, require, cards }. A list for the same reason
+    // the Ancients are one, each row carrying its own slot rule. `cards` is only ever filled
+    // for the two relics that hand cards over, and naming one says that player takes it.
     neow: [],
+    // Which Neow option each player is assumed to take, by slot: '' for nothing that draws
+    // cards. Not a criterion — it asks nothing of the seed, it says how to READ that player's
+    // card rewards, because five of Neow's options draw off the same stream first.
+    neowPicks: [],
     ancients: [], bosses: [], events: [], cards: [], shops: [], chests: [],
     // Exact by default: a pick's badge means the fight it names until the user says otherwise.
     cardOrder: 'exact',
@@ -555,9 +560,9 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
 
   const hint = $('#pickerHint');
   hint.hidden = !multi;
-  if (multi) hint.textContent =
-    `Click up to ${multi.max} cards. The first is fight 1, the next fight 2, and so on. `
-    + 'Close this when you have the ones you want.';
+  if (multi) hint.textContent = multi.hint
+    ?? `Click up to ${multi.max} cards. The first is fight 1, the next fight 2, and so on. `
+       + 'Close this when you have the ones you want.';
 
   render('');
 
@@ -594,7 +599,12 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
           const at = pickerMulti.chosen.indexOf(r.slug);
           if (at >= 0) {
             tile.classList.add('is-picked');
-            tile.appendChild(el('span', 'fight-badge', String(at + 1)));
+            // Numbered only where the order MEANS something. A Neow payload shows all its
+            // cards at once and you keep one, so a badge reading "2" there would invent an
+            // ordering the search does not have.
+            tile.appendChild(pickerMulti.ordered === false
+              ? el('span', 'fight-badge is-tick', '✓')
+              : el('span', 'fight-badge', String(at + 1)));
           }
           // Disabled only while nothing is chosen: the next pick would be fight 1 then. Once
           // something holds fight 1 the same card is a legal fight 2 or 3.
@@ -839,6 +849,30 @@ function cardPoolFor(slot) {
   return (c && catalog.cardPools.find(p => p.character === c)?.cards) || [];
 }
 
+/**
+ * The Neow option a criterion has already committed this player to, or null.
+ *
+ * Naming the cards a relic gives says that player TOOK it, so the pick is settled and the
+ * control below shows it rather than offering a second, contradictable answer. Only a row that
+ * PINS the slot can do this: "for any player" does not say whose stream moved.
+ */
+function pinnedPick(slot) {
+  const row = state.neow.find(n =>
+    n.relic && (n.cards?.length ?? 0) > 0
+    && (n.require === 'all' || n.require === `p${slot + 1}`));
+  return row ? row.relic : null;
+}
+
+/**
+ * How many draws a player's assumed Neow pick costs their card stream, for the hint. The
+ * Defect pays two more for Scroll Boxes, which is a real difference rather than a rounding.
+ */
+function pickDraws(slot, slug) {
+  const relic = neowCardRelic(slug);
+  if (!relic) return 0;
+  return state.characters[slot] === 'Defect' ? relic.defectDraws : relic.draws;
+}
+
 function renderCards() {
   const box = $('#cards');
   hideTip();
@@ -846,9 +880,43 @@ function renderCards() {
 
   state.cards.length = state.players;
 
+  state.neowPicks.length = state.players;
+
   for (let i = 0; i < state.players; i++) {
     const pool = cardPoolFor(i);
     const want = state.cards[i] || (state.cards[i] = { picks: [] });
+
+    // What that player took at Neow, which decides where their stream starts. Five of Neow's
+    // options draw cards off it before the first fight ever rolls; everything else is free.
+    const pinned = pinnedPick(i);
+    if (pinned) state.neowPicks[i] = pinned;
+
+    const pickRow = el('div', 'row');
+    pickRow.appendChild(el('label', null, `P${i + 1} took at Neow`));
+
+    const options = [
+      { label: 'Nothing that draws cards', value: '' },
+      ...(catalog.neowCardRelics ?? [])
+        .filter(r => r.draws > 0)
+        .map(r => ({
+          label: `${r.name} (${pickDraws(i, r.slug)} draw${pickDraws(i, r.slug) === 1 ? '' : 's'})`,
+          value: r.slug,
+        })),
+    ];
+    if (!options.some(o => o.value === (state.neowPicks[i] || ''))) state.neowPicks[i] = '';
+
+    const picker = dropdown(options, state.neowPicks[i] || '', v => {
+      state.neowPicks[i] = v;
+      renderCards();
+    });
+    // Settled by a criterion above, so it is shown rather than offered: changing it here would
+    // let the search look for one thing and the results be read as another.
+    if (pinned) {
+      picker.disabled = true;
+      picker.title = 'Set by the Neow requirement that names the cards this relic gives.';
+    }
+    pickRow.appendChild(picker);
+    box.appendChild(pickRow);
     // Changing character strands whatever was picked for the old one.
     want.picks = (want.picks ?? []).filter(slug => pool.some(c => c.slug === slug));
 
@@ -926,9 +994,10 @@ function renderCards() {
       + `so fight 1 needs no assumptions. Pick up to ${MAX_FIGHT} cards per player: the first is `
       + 'fight 1, the next fight 2, then fight 3. Every fight after the first assumes you walk '
       + 'straight into the next monster room, with no shop, elite, event or rest between, so all '
-      + `${MAX_FIGHT} have to be consecutive. Fight 1 can never offer a Rare; later ones can. `
-      + 'Taking Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll Boxes or Neow’s Bones draws '
-      + 'from the same stream first and shifts all of them.'
+      + `${MAX_FIGHT} have to be consecutive. Fight 1 can never offer a Rare; later ones can, and `
+      + 'that does not change with what was taken at Neow: the rare penalty is a counter those '
+      + 'relics never touch. Say what a player took above and their rewards are read from the '
+      + 'right place in the stream, since those five options draw off it first.'
     : 'Pick a character to choose from their card pool.';
 }
 
@@ -1423,6 +1492,34 @@ function actHead(n, act, ancient) {
 const cardNames = new Map();   // slug -> display name, across every character's pool
 const relicNames = new Map();  // slug -> display name, for shop relics shown in results
 
+/**
+ * "Arcane Scroll gives -> Corruption", under the offer it belongs to.
+ *
+ * Wanted cards are highlighted the same way a fight reward's are, and against the same rule:
+ * a payload is a set rather than an order, so a named card counts wherever in it it landed.
+ */
+function payloadRow(pay) {
+  const row = el('div', 'slot is-payload');
+  const name = relicNames.get(pay.relic) ?? pay.relic;
+  const label = el('div', 'slot-label');
+  label.appendChild(iconFor(pay.relic, name, 16));
+  label.appendChild(el('span', null, 'gives'));
+  row.appendChild(label);
+
+  const wanted = new Set(state.neow.filter(n => n.relic === pay.relic).flatMap(n => n.cards ?? []));
+
+  const offer = el('div', 'offer');
+  for (const slug of pay.cards) {
+    const cardName = cardNames.get(slug) ?? slug;
+    const p = el('span', 'pill is-card' + (wanted.has(slug) ? ' is-match' : ''));
+    p.appendChild(iconFor(slug, cardName, 20, 'card'));
+    p.appendChild(el('span', null, cardName));
+    offer.appendChild(withTip(p, slug, cardName, 'card'));
+  }
+  row.appendChild(offer);
+  return row;
+}
+
 /** The three cards the first fight offers each player, and whether a potion comes with them. */
 function firstFightBlock(rewards) {
   if (!rewards?.length) return null;
@@ -1598,6 +1695,12 @@ function renderHit(hit) {
     offer.appendChild(pill(o.curse, 'curse'));
     slot.appendChild(offer);
     act1.appendChild(slot);
+
+    // What Arcane Scroll or Hefty Tablet would hand this player. Shown for every seed that
+    // offers one, not just when the search asked: it is the thing being decided at Neow, and
+    // it costs one draw per card to answer.
+    for (const pay of (hit.neowPayloads ?? []).filter(x => x.slot === o.slot))
+      act1.appendChild(payloadRow(pay));
   }
   // The first fight sits in Act 1 because that is where it happens, and after Neow because the
   // Neow pick is what can shift it.
@@ -1673,8 +1776,20 @@ function buildQuery() {
 
   // One parameter per row, carrying that row's own slot rule. A row with no relic chosen is a
   // half-filled form rather than a wildcard, so it is skipped instead of being sent as one.
-  for (const n of state.neow)
-    if (n.relic) q.append('relic', `${n.relic}:${n.require || 'any'}`);
+  // A row that names the cards its relic gives sends them as a third field, which the server
+  // reads as one criterion about one player rather than two loose ones.
+  for (const n of state.neow) {
+    if (!n.relic) continue;
+    const cards = (n.cards ?? []).filter(Boolean);
+    q.append('relic', `${n.relic}:${n.require || 'any'}` + (cards.length ? `:${cards.join(',')}` : ''));
+  }
+
+  // Assumed Neow picks, which shift a player's card rewards without asking anything of the
+  // seed. A pick a criterion already implies is left out: the server derives that one itself,
+  // and sending both would be two places saying the same thing.
+  state.neowPicks.forEach((slug, i) => {
+    if (slug && !pinnedPick(i)) q.append('pick', `${i + 1}:${slug}`);
+  });
   if (state.cardOrder === 'any') q.set('cardOrder', 'any');
   // Clamped here as well as in the markup, because `max` on a number input only governs the
   // spinner and native validation: a typed or pasted 2500 sails straight through. Written back
@@ -1907,6 +2022,50 @@ function neowCatalog() {
   return [...catalog.neowCurses, ...catalog.neowPositives, ...catalog.neowCoinFlip];
 }
 
+/**
+ * What this Neow relic does to a player's card stream, from the catalog, or null.
+ *
+ * Both numbers come off Core: `payloadCards` is how many cards the tool can NAME, `draws` what
+ * taking it costs the fight rewards that follow. They are not the same question — Massive
+ * Scroll costs nine draws and names nothing.
+ */
+function neowCardRelic(slug) {
+  return (catalog.neowCardRelics ?? []).find(r => r.slug === slug) ?? null;
+}
+
+/**
+ * Which lobby slots a Neow row is aimed at. "For any player" is every slot, because the row
+ * only has to be true of somebody and any of them could be that somebody.
+ */
+function slotsOfRow(crit) {
+  if (crit.require === 'any' || crit.require === 'all' || !crit.require)
+    return Array.from({ length: state.players }, (_, i) => i);
+  const n = parseInt(crit.require.replace('p', ''), 10);
+  return Number.isFinite(n) && n >= 1 && n <= state.players ? [n - 1] : [];
+}
+
+/**
+ * The rares a payload row can name.
+ *
+ * A payload is drawn from ONE player's own pool, so the list depends on who the row is aimed
+ * at: a row for P1 offers P1's rares, and a row that any player could satisfy offers the union.
+ * Under "for every player" it is the intersection instead — a card only one character has could
+ * never be handed to all of them, and offering it would build a search with no answers.
+ */
+function payloadPool(crit) {
+  const slots = slotsOfRow(crit).filter(i => state.characters[i]);
+  if (!slots.length) return [];
+
+  const rareOf = i => cardPoolFor(i).filter(c => c.rarity === 'Rare');
+  const lists = slots.map(rareOf);
+
+  if (crit.require === 'all')
+    return lists[0].filter(c => lists.every(l => l.some(x => x.slug === c.slug)));
+
+  const seen = new Set();
+  return lists.flat().filter(c => !seen.has(c.slug) && seen.add(c.slug));
+}
+
 function renderNeow() {
   const box = $('#neow');
   // Rows are rebuilt wholesale, so a tooltip anchored to one would be orphaned on screen: the
@@ -1927,13 +2086,13 @@ function renderNeow() {
         { title: 'Positive pool', items: catalog.neowPositives },
         { title: 'Coin-flip pairs: one of each pair joins the pool', items: catalog.neowCoinFlip },
       ]);
-      if (picked) { crit.relic = picked.slug; renderNeow(); }
+      if (picked) { crit.relic = picked.slug; crit.cards = []; renderNeow(); renderCards(); }
     };
 
     const rm = el('button', 'icon-btn', '×');
     rm.type = 'button';
     rm.title = 'Remove';
-    rm.onclick = () => { state.neow.splice(idx, 1); renderNeow(); };
+    rm.onclick = () => { state.neow.splice(idx, 1); renderNeow(); renderCards(); };
 
     row.append(what, rm);
 
@@ -1948,9 +2107,83 @@ function renderNeow() {
       // Shrinking the lobby can strand a selection on a player who no longer exists.
       if (!choices.some(o => o.value === crit.require)) crit.require = 'any';
 
-      const req = dropdown(choices, crit.require, v => { crit.require = v; renderNeow(); });
+      const req = dropdown(choices, crit.require, v => { crit.require = v; renderNeow(); renderCards(); });
       req.classList.add('span');
       row.appendChild(req);
+    }
+
+    // Only the two relics that hand cards over get a payload row, and only once a relic is
+    // chosen. Everything else Neow offers gives you a relic and nothing to predict.
+    const payload = chosen && neowCardRelic(chosen.slug);
+    if (payload?.payloadCards > 0) {
+      crit.cards = (crit.cards ?? []);
+      const pool = payloadPool(crit);
+      // Changing character, lobby size or who the row is for can strand a card that the new
+      // pools do not hold.
+      crit.cards = crit.cards.filter(slug => pool.some(c => c.slug === slug));
+
+      const field = el('button', 'relic-field card-field span');
+      field.type = 'button';
+      field.disabled = pool.length === 0;
+
+      if (!crit.cards.length) {
+        // Three different empties, and they are not the same problem. No character yet is a
+        // half-filled form; an empty pool with characters set means "for every player" left no
+        // rare all of them could be handed, which is worth saying rather than looking broken.
+        const ready = slotsOfRow(crit).every(i => state.characters[i]);
+        field.appendChild(anyIcon(28));
+        field.appendChild(el('span', 'name',
+          pool.length ? 'Any rare card'
+          : !ready ? 'Pick a character first'
+          : 'No rare every player could be given'));
+      } else {
+        const list = el('span', 'picks');
+        for (const slug of crit.cards) {
+          const card = pool.find(c => c.slug === slug);
+          const chip = el('span', 'pick');
+          chip.appendChild(iconFor(slug, card?.name ?? slug, 20, 'card'));
+          chip.appendChild(el('span', null, card?.name ?? slug));
+          list.appendChild(withTip(chip, slug, card?.name ?? slug, 'card'));
+        }
+        field.appendChild(list);
+        const clear = el('span', 'clear', '×');
+        clear.dataset.clear = '1';
+        clear.title = 'Clear';
+        field.appendChild(clear);
+      }
+
+      field.onclick = async e => {
+        if (e.target.dataset.clear) { crit.cards = []; renderNeow(); renderCards(); return; }
+        const picked = await openPicker(
+          `${chosen.name} hands over…`,
+          [{ title: payload.payloadCards === 1 ? 'Rares' : `Rares (up to ${payload.payloadCards})`, items: pool }],
+          'card',
+          {
+            max: payload.payloadCards,
+            initial: crit.cards,
+            ordered: false,
+            itemFor: slug => pool.find(c => c.slug === slug),
+            hint: payload.payloadCards === 1
+              ? 'One rare, drawn from that player’s own pool. Close this when you have it.'
+              : `All ${payload.payloadCards} are shown at once and you keep one, so naming `
+                + 'fewer is the looser search. Close this when you have the ones you want.',
+          });
+        if (picked) { crit.cards = picked; renderNeow(); renderCards(); }
+      };
+
+      row.appendChild(field);
+
+      if (crit.cards.length) {
+        const draws = `${payload.draws} draw${payload.draws === 1 ? '' : 's'}`;
+        const cost = el('div', 'branch span');
+        cost.append(
+          el('span', 'branch-tag', 'Takes it'),
+          el('span', null, `moves their fight card rewards ${draws} along, and is set for you `
+            + 'under Fight card rewards'));
+        row.appendChild(cost);
+      }
+    } else if (chosen) {
+      crit.cards = [];
     }
 
     const note = chosen && BRANCH_NOTE[chosen.group];
@@ -1980,7 +2213,7 @@ function renderAct1() {
 }
 
 $('#addNeow').onclick = () => {
-  state.neow.push({ relic: '', require: 'any' });
+  state.neow.push({ relic: '', require: 'any', cards: [] });
   renderNeow();
 };
 
@@ -2082,7 +2315,7 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
   // Not `list.forEach(note)`: forEach hands the callback the index as a second argument, which
   // would land in `kind` and file every relic under "0:", "1:", … where nothing looks for it.
   for (const list of [catalog.neowCurses, catalog.neowPositives, catalog.neowCoinFlip])
-    for (const r of list) note(r);
+    for (const r of list) { note(r); relicNames.set(r.slug, r.name); }
   for (const a of catalog.ancients) for (const r of a.relics) note(r);
 
   // Card pools overlap heavily between characters, so these all write the same entries more

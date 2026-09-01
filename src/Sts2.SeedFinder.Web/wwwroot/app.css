@@ -299,6 +299,7 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
    than the control beside it, so here it stretches to the row instead. */
 .ancient-row.relic-first .icon-btn { align-self: stretch; }
 
+
 /* "Within the first [n]" reads as one sentence, so the label and the box sit on one line
    and the box is only as wide as a two-digit number needs. */
 .within { display: flex; align-items: center; gap: 8px; }
@@ -408,6 +409,13 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
 
 .slot { display: grid; grid-template-columns: 34px 1fr; gap: 8px; margin-bottom: 7px; }
 .slot.is-fight { grid-template-columns: 64px 1fr; }
+
+/* What a Neow relic would hand over, under the offer it belongs to. Indented and dimmed
+   because it is conditional on taking that option, where the offer above it is not. */
+.slot.is-payload { grid-template-columns: 64px 1fr; margin: -3px 0 8px 10px; }
+.slot.is-payload .slot-label {
+  display: flex; align-items: center; gap: 4px; padding-top: 3px; font-size: 11.5px;
+}
 .slot-label { color: var(--text-2); font-size: 12px; padding-top: 5px; }
 .offer { display: flex; flex-wrap: wrap; gap: 5px; }
 
@@ -510,6 +518,10 @@ dialog::backdrop { background: #0009; }
   font-size: 12px;
 }
 .card-field .pick .fight-badge { width: 15px; height: 15px; font-size: 9.5px; }
+
+/* A Neow payload is a set, not an order: all of its cards are shown at once and you keep one.
+   So its tiles carry a tick where a fight pick carries the number of the fight it means. */
+.fight-badge.is-tick { font-size: 11px; }
 /* Taller than a single-pick field, and only when it holds chips, so an empty row keeps the same
    height as the Neow and shop fields above it. */
 .card-field { align-items: center; min-height: 44px; }

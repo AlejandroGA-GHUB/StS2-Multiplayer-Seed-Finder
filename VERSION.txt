@@ -1,5 +1,13 @@
-v1.3.1
+v1.4.0
 
-Release Date: 08/08/2026
+Release Date: 08/31/2026
 
 v0.111.0 beta steam release 
+
+# CHANGELOG
+
+1. Arcane Scroll and Hefty Tablet now support Rare card selection.
+
+2. Fight 1-3 card rewards now support neow card selection, meaning if any neow option that grants a card reward is chosen, the prediction will account that
+and show you the correct card rewards assuming that the chosen Neow Relic which grants a card reward is actually selected once in-game. This had to be added
+as choosing a card from Neow makes the initial 1-3 card rewards incorrect if left alone, which I hadn't implemented the fix for until now.

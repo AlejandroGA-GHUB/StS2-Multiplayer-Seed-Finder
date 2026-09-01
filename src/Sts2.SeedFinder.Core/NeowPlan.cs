@@ -1,3 +1,5 @@
+using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Cards;
 using Sts2.SeedFinder.Core.Neow;
 
 namespace Sts2.SeedFinder.Core;
@@ -21,23 +23,36 @@ namespace Sts2.SeedFinder.Core;
 ///
 /// The slow path caches each slot's offer for the seed being tested, because two positive-branch
 /// criteria aimed at the same player would otherwise generate that player's offer twice.
+///
+/// PAYLOADS ride along here rather than living in a stage of their own, and the reason is the
+/// "for any player" rule. "Somebody is offered Arcane Scroll" and "somebody's scroll would give
+/// Corruption" are two questions a separate stage would answer about two different players, and
+/// a seed satisfying them apart satisfies nobody at the table. Tested per slot, they are one
+/// question about one player. See <see cref="NeowCardPayload"/>.
 /// </summary>
 public sealed class NeowPlan
 {
     private readonly record struct Item(
-        NeowRelic Relic, OfferSlot Where, int CurseIndex, bool AnySlot, IReadOnlyList<int> Slots);
+        NeowRelic Relic, OfferSlot Where, int CurseIndex, bool AnySlot, IReadOnlyList<int> Slots,
+        int[][]? WantedBySlot);
 
     private readonly NeowContext _context;
     private readonly int _playerCount;
     private readonly int _curseCandidateCount;
     private readonly Item[] _items;
+    private readonly IReadOnlyList<Character> _characters;
+    private readonly UnlockState? _unlocks;
 
-    private NeowPlan(NeowContext context, int curseCandidateCount, Item[] items)
+    private NeowPlan(
+        NeowContext context, int curseCandidateCount, Item[] items,
+        IReadOnlyList<Character> characters, UnlockState? unlocks)
     {
         _context = context;
         _playerCount = context.PlayerCount;
         _curseCandidateCount = curseCandidateCount;
         _items = items;
+        _characters = characters;
+        _unlocks = unlocks;
     }
 
     /// <summary>True when the search has no Neow requirement, so every seed passes this stage.</summary>
@@ -60,12 +75,16 @@ public sealed class NeowPlan
                     want.Where,
                     fast ? curseIndex : -1,
                     want.Requirement == SlotRequirement.Any,
-                    want.ResolveSlots(context.PlayerCount));
+                    want.ResolveSlots(context.PlayerCount),
+                    WantedTypeIds(want, criteria));
             })
-            .OrderByDescending(i => i.CurseIndex >= 0)
+            // Cheapest first, and a payload is a handful of draws on top of whatever settled the
+            // relic, so it goes behind the bare form of the same branch.
+            .OrderBy(i => (i.CurseIndex >= 0 ? 0 : 2) + (i.WantedBySlot is null ? 0 : 1))
             .ToArray();
 
-        return new NeowPlan(context, curseCandidates.Count, items);
+        return new NeowPlan(
+            context, curseCandidates.Count, items, criteria.Characters, criteria.Unlocks);
     }
 
     /// <summary>Does this run seed satisfy every Neow criterion?</summary>
@@ -99,6 +118,18 @@ public sealed class NeowPlan
 
     private bool SlotMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)
     {
+        if (!OfferMatches(runSeed, slot, item, ref offers)) return false;
+        if (item.WantedBySlot is null) return true;
+
+        // The offer put the relic in front of this player; now ask what taking it would hand
+        // them. One draw for an Arcane Scroll, three for a Hefty Tablet, off a stream nothing
+        // else has touched yet.
+        return NeowCardPayload.Offers(
+            runSeed, slot, _characters[slot], item.Relic.Slug, _unlocks, item.WantedBySlot[slot]);
+    }
+
+    private bool OfferMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)
+    {
         if (item.CurseIndex >= 0)
         {
             var rng = new Rng(NeowGenerator.RngSeed(runSeed, slot));
@@ -108,6 +139,35 @@ public sealed class NeowPlan
         offers ??= new NeowOffer?[_playerCount];
         var offer = offers[slot] ??= NeowGenerator.PredictOffer(runSeed, slot, _context);
         return SeedSearcher.OfferSatisfies(offer, item.Relic, item.Where);
+    }
+
+    /// <summary>
+    /// The wanted payload cards as pool type ids, one row per player slot, or null when this
+    /// criterion asks about no cards.
+    ///
+    /// Resolved per slot because type ids are only comparable within one character's pool, and
+    /// a lobby is normally several different pools. A slot whose character cannot hold the card
+    /// gets an id of -1, which nothing draws, so an impossible ask fails that slot rather than
+    /// matching it — <c>Validate</c> rejects the outright impossible cases before a scan starts.
+    /// </summary>
+    private static int[][]? WantedTypeIds(NeowCriterion want, SearchCriteria criteria)
+    {
+        if (want.Cards.Count == 0) return null;
+
+        var rows = new int[criteria.PlayerCount][];
+        for (int slot = 0; slot < rows.Length; slot++)
+        {
+            // Unreachable: NeedsCharacters covers payload criteria, so Validate has already
+            // demanded a full party. An id of -1 is nonetheless the safe answer rather than an
+            // empty row, which would read as "nothing wanted" and match everything.
+            if (slot >= criteria.Characters.Count) { rows[slot] = [-1]; continue; }
+
+            var character = criteria.Characters[slot];
+            rows[slot] = want.Cards
+                .Select(c => NeowCardPayload.TypeIdOf(character, criteria.Unlocks, c))
+                .ToArray();
+        }
+        return rows;
     }
 
     private static int IndexOf(IReadOnlyList<NeowRelic> candidates, NeowRelic relic)

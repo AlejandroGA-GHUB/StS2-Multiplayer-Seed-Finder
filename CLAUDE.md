@@ -10,14 +10,20 @@ would have to supply. The analysis is done, so re-deriving it wastes a session: 
 
 **Capsule and Neow's Bones payloads are PENDING too** (requested 2026-08-08). What Small
 Capsule, Large Capsule and Neow's Bones actually hand you is not modelled anywhere — only how
-many draws they cost (`CardRewardGenerator.NeowRewardDrawCost`). It is new prediction work, not
-a fix, and it needs three things: a fresh decompile of each relic's `AfterObtained` (there is no
-`sts2src/` in the checkout and `--show` only prints methods already mirrored), the shared bag
-drained IN ORDER across the two capsules, and Oracle coverage before it ships. The ordering
-requirement is not theoretical: the author of searchthespire shipped exactly that bug, building
-the grab bag twice so both capsules pulled from a fresh copy and Frozen Egg appeared in both.
-`ChestRelics.Generate` already solves the same problem correctly (its `taken` set, tracked by
-identity so the Act 3 rarity gate cannot shift an index) and is the pattern to copy.
+many draws they cost (`CardRewardGenerator.NeowRewardDrawCost`), and Neow's Bones not even that.
+It is new prediction work, not a fix, and it needs three things: a fresh decompile of each
+relic's `AfterObtained` (there is no `sts2src/` in the checkout and `--show` only prints methods
+already mirrored), the shared bag drained IN ORDER across the two capsules, and Oracle coverage
+before it ships. The ordering requirement is not theoretical: the author of searchthespire
+shipped exactly that bug, building the grab bag twice so both capsules pulled from a fresh copy
+and Frozen Egg appeared in both. `ChestRelics.Generate` already solves the same problem correctly
+(its `taken` set, tracked by identity so the Act 3 rarity gate cannot shift an index) and is the
+pattern to copy.
+
+**Arcane Scroll's and Hefty Tablet's card payloads ARE done** (2026-08-31), in
+`Core/Cards/NeowCardPayload.cs`, searchable, GPU-ported and Oracle-verified. Massive Scroll and
+Scroll Boxes are the two left whose shapes are now known: read the payload section of
+`docs/game_mechanics.md` before starting either, and do not re-derive it.
 
 `docs/plan.md` holds the open queue, what was built, and the reasoning behind each decision.
 **It is gitignored and exists only in the author's checkout** — it is personal working notes, so
@@ -57,7 +63,9 @@ is a relic the run records someone taking out of the shared bag first.
 
 Searchable criteria, all combinable in one search: **Neow relics** (a LIST since 2026-08-08,
 each with its own slot rule, shaped exactly like the Ancient criteria — see `NeowPlan` and
-`NeowCriterion`), **Act 1 map**, **boss**
+`NeowCriterion`), the **cards Arcane Scroll and Hefty Tablet hand over** (2026-08-31, carried on
+the Neow criterion itself so relic and cards stay one question about one player), **Act 1 map**,
+**boss**
 (per act, and negatable), **event** (per act, "within the first n"), **Ancient** (optionally
 offering a given relic), **card rewards for fights 1 to 3** (per player, in pick order or in any
 permutation), the **shop's third
@@ -84,6 +92,8 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --car
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --shop p1:belt_buckle --shop p2:orrery:2 --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --chest 1:war_paint --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 --characters ironclad,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression --characters ironclad,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --neow-pick p1:massive_scroll --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 0BUJY7ZRE8TP --players 2
 dotnet run -c Release --project src\Sts2.SeedFinder.Oracle              # differential test vs sts2.dll
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --gpu-verify # GPU kernels vs Core (no GPU needed)
@@ -126,6 +136,7 @@ working from memory. Each of these records something that was got wrong at least
 | `Core/Acts/` shop relics | *Shops: the third relic slot IS predictable* |
 | `Core/Acts/ChestRelics.cs` | *Treasure chests* |
 | `Core/Cards/` | *Card rewards, fights 1 and 2* (the mechanics; the cap is now `MaxPredictableFight` = 3) |
+| `Core/Cards/NeowCardPayload.cs` | *The Neow chain*, payload section: why a payload is one draw per card, and why none of them unlocks a fight-1 rare |
 | `Core/Ancients/` | *Ancients' offers* |
 | Search criteria, the web pickers | *Bosses and events as search criteria* |
 | `Web/Assets/` | *Localization strings*, *Card art* |

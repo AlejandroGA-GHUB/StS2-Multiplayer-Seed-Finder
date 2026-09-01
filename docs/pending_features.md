@@ -6,8 +6,11 @@ reasons and not holding any in-repo pushable assets, but still overall supports 
 
 # PENDING
 
-1. The actual cards from Neow options that give you cards (Hefty Tablet, Arcane Scroll). It already accounts for the draws they use, it just won't show you what you'd
-get. 
+1. Massive Scroll's three cards, and Scroll Boxes' two bundles. Both are accounted for in draws, neither is named yet. Arcane Scroll and Hefty Tablet ARE named now, and
+searchable: a Neow row for either one grows a card box, and picking a card there also tells the fight predictor that player took the relic. Massive Scroll is the closer of
+the two to done, since it is the ordinary reward factory with base odds; Scroll Boxes builds two bundles of 2 commons + 1 uncommon out of one shared used-card set, plus a
+1-in-100 all-Claw check per bundle for the Defect. Neow's Bones remains furthest away: it shuffles a lobby-dependent relic list and then offers them through a RewardsSet,
+so even its DRAW COST is unsettled, which is why it is the one option the "took at Neow" control refuses. 
 
 2. Small/Large capsule and Neows Bones offering selections, to choose which relics/curses you will see from those.
 

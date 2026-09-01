@@ -360,6 +360,37 @@ instead of generating the whole offer, worth ~6× on a 4-player Silken Tress sea
 path used to be gated on the user having chosen "Curse branch", so the default setting silently
 paid full price; it is now keyed on the relic's pool.
 
+#### The payload row
+
+Two of Neow's options hand you cards as well as a relic, and a row holding one of them grows a
+**third full-width field** under the relic and the "who must get it" dropdown, reading **"Any
+rare card"** until something is picked. It was briefly a labelled sub-row and that was worse: the
+three controls are one stack of equal boxes now, so the row reads top to bottom as relic, who,
+what it gives, with no second visual grammar to learn.
+
+- Only **Arcane Scroll** (one rare) and **Hefty Tablet** (three) have it. The catalog reports
+  `neowCardRelics` with a `payloadCards` count per relic, so the page never carries its own copy
+  of which relics those are or what they cost.
+- The picker offers **rares only**, from the pool of whoever the row is aimed at: one player's
+  rares for a pinned row, the union for "for any player", and the **intersection** for "for every
+  player" — a card only one character has could never be handed to all of them, so offering it
+  would build a search with no answers.
+- Its tiles carry a tick rather than a number. A payload is a set: all of Hefty Tablet's three are
+  shown at once and you keep one, so numbering them would invent an order the search does not
+  have. Naming fewer than three is the looser search.
+- **Naming a card sets that player's "took at Neow" and locks it** (see Card rewards), and the
+  note under the field says exactly that: *moves their fight card rewards N draws along, and is
+  set for you under Fight card rewards*. It states the consequence rather than restating the tag
+  above it. This is the one cross-panel coupling in the app, and it is here because the
+  alternative is worse:
+  saying "P1's scroll gives Corruption" while reading P1's fight rewards as though they took
+  nothing is silently, invisibly wrong. The server derives the same thing from the criterion, so
+  a hand-written URL cannot get it wrong either.
+- On the wire this is a third field on the existing parameter: `relic=arcane_scroll:p1:corruption`,
+  comma-separated for several. It rides on the relic criterion rather than being its own because
+  "somebody is offered Arcane Scroll" and "somebody's scroll gives Corruption" asked separately
+  can be satisfied by two different players, which is not what anybody means.
+
 ### Ancient requirements
 A repeatable block: `[Ancient ▾]` with a remove button, then a full-width relic field below it,
 then the per-row "who must get it" once a relic is set.
@@ -385,7 +416,18 @@ player gets one reward per fight, so the row carries a fight selector rather tha
 The shape is the point: it makes the per-player streams visible, which is what lets a co-op search
 ask two players for two different cards at once.
 
-- Each row is `P{n} is offered [card field] [fight]`, opening the picker on **that player's
+- Each player gets **two** rows: `P{n} took at Neow [relic ▾]` above `P{n} is offered [card
+  field]`. The first is an assumption rather than a criterion — nothing about the seed decides
+  what somebody picks — and it lists only the options that draw cards, with their cost:
+  Arcane Scroll (1 draw), Hefty Tablet (3), Massive Scroll (9), Scroll Boxes (6, or 8 for the
+  Defect). Neow's Bones is deliberately absent: its shuffle length is not modelled, so offering
+  it would be offering a wrong answer. Set it and that player's fights are read from the right
+  place in their stream; leave it and they read as though nothing was taken, which is right for
+  the great majority of picks.
+- The row is **disabled and pre-filled** when a Neow requirement above already names the cards
+  that player's relic hands over. It is shown rather than hidden so the assumption is visible,
+  and locked because the two controls would otherwise be free to contradict each other.
+- Each card row is `P{n} is offered [card field]`, opening the picker on **that player's
   character's pool**, grouped Common / Uncommon / Rare. Two players on different characters see
   different lists.
 - **The fight selector is 1 or 2**, appearing only once a card is chosen — same rule as the shop
@@ -403,10 +445,17 @@ ask two players for two different cards at once.
 - Changing a character clears a pick that its pool no longer contains.
 - The hint names the five Neow relics that shift the result (Arcane Scroll, Hefty Tablet,
   Massive Scroll, Scroll Boxes, Neow's Bones) — they draw off the same stream first. Everything
-  else, Silken Tress included, leaves it alone.
+  else, Silken Tress included, leaves it alone. It also says the thing users assume wrongly:
+  **a Neow pick does not make fight 1 able to offer a rare**. The rare penalty is a counter, and
+  none of those relics moves it, so the picker keeps refusing rares on fight 1 whatever is set.
 
-In results this appears **inside Act 1, after Neow**, as an indented sub-block: it happens in
-Act 1, and the Neow pick above it is the thing that can move it. Three card pills per player
+In results, an offer holding Arcane Scroll or Hefty Tablet gets a **"gives"** line directly under
+it, carrying the relic's own icon and the cards it would hand that player, with anything the
+search asked for highlighted. It is shown for every such seed rather than only when a criterion
+asked, because it is the thing being decided at Neow and it costs one draw per card to answer.
+
+The fight rewards appear **inside Act 1, after Neow**, as an indented sub-block: they happen in
+Act 1, and the Neow pick above them is the thing that can move them. Three card pills per player
 with art, the requested card highlighted, plus a `+ potion` marker when the potion roll lands —
 shown because it is the same roll, and a potion costs two extra draws that change which cards
 come out.
@@ -581,6 +630,20 @@ enum name every other endpoint speaks, `slug` is what the art route takes.
 `shop` is `?shop=<slot>:<slug>[:<visit>]`, both numbers 1-based on the wire. Shop relics reuse
 the relic art and text routes and needed no new asset endpoint: they are the same relics,
 reached a different way.
+
+`relic` takes an optional third field for the cards the relic itself hands over:
+`?relic=arcane_scroll:p1:corruption`, comma-separated for Hefty Tablet's three. Only those two
+relics accept it, only rares resolve, and the pools searched follow the row's own slot rule.
+
+`pick` is `?pick=<slot>:<slug>`, which player is ASSUMED to take which Neow option. Not a
+criterion: it asks nothing of the seed, it says where that player's Rewards stream starts, so
+`/api/explain` honours it as well as `/api/search`. A pick a `relic=` row already implies is
+derived server-side and need not be sent; sending a contradicting one is an error rather than a
+silent override. Neow's Bones is rejected, because the length of the shuffle it runs is not
+modelled and guessing zero would quietly predict the wrong cards for every fight that player has.
+
+`/api/explain` and each search hit also carry `neowPayloads`: `{slot, relic, cards[]}` for every
+offer holding Arcane Scroll or Hefty Tablet, whether or not the search asked about it.
 
 **Unlock state is applied server-side to every request**, read from `progress.save` rather than
 assumed. This is not a nicety. Locked epochs shrink the relic pools, pool size sets how many

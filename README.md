@@ -188,6 +188,14 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --che
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --ascension 10 \
     --boss 3:queen --boss 3:aeonglass --characters ironclad,silent
 
+# P1's Arcane Scroll hands over Aggression
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression \
+    --characters ironclad,silent
+
+# ... and P2 is offered Deflect in fight 1, read after P2 takes a Massive Scroll
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression \
+    --card p2:deflect --neow-pick p2:massive_scroll --characters ironclad,silent
+
 # Vakuu offering Fiddle, plus Silken Tress from Neow
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress --require all \
     --ancient-relic vakuu:fiddle --characters ironclad,silent
@@ -249,7 +257,7 @@ Two things that surprise people:
 | Card rewards from fight 4 on | Not supported yet |
 | A shop's other two relics, cards or potions | Not supported yet |
 | Relics from elite fights | Not supported yet |
-| Card payloads (Hefty Tablet's rares, Arcane Scroll's rare) | Not supported yet |
+| Arcane Scroll's rare and Hefty Tablet's three | Verified against the game's own RNG |
 | What's inside Small Capsule, Large Capsule or Neow's Bones | Not supported yet |
 
 Five independent checks back this up:
@@ -272,6 +280,11 @@ Neow's relic, the Act 1 map, each act's **boss**, each act's **events**, which *
 Acts 2 and 3 (optionally offering a particular relic), the **card reward from fights 1 to 3**,
 the **third relic in a shop**, and each act's **treasure chest**. Combine as many as you like in
 one search.
+
+Two of Neow's options hand you cards rather than only a relic, and you can search on those too:
+**Arcane Scroll's rare** and **Hefty Tablet's three**. Choose the relic, then name the card, and
+the seed has to give that player both. Naming a card also says that player takes the relic, so
+their fight rewards are read from one draw (or three) further along the stream.
 
 Neow, the Ancients, card rewards and shop relics are rolled per player, so those are per-slot.
 The boss, the event order and the chest are the same for everybody in the lobby. The chest
@@ -318,8 +331,14 @@ Things to know:
 - **Nothing is upgraded in Act 1.** Upgrade odds scale with the act.
 - **Five Neow options change the answer.** Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll
   Boxes and Neow's Bones all draw cards from the same stream first, which shifts what the fights
-  hand you. Every other Neow pick, Silken Tress included, leaves it alone. The prediction
-  assumes you took one of those.
+  hand you. Every other Neow pick, Silken Tress included, leaves it alone. Say who took what in
+  the **took at Neow** row and the rewards are read from the right place in the stream; leave it
+  alone and they read as though nobody took a card. Neow's Bones is the one that cannot be
+  named, because the length of the shuffle it runs is not modelled.
+- **What was taken does NOT unlock rares in fight 1.** The rare penalty is a counter, and none
+  of those five relics moves it: two of them roll no rarity at all, and the rest roll it in a
+  mode that leaves the counter alone. Taking a card at Neow changes which commons and uncommons
+  you see, nothing more.
 
 Past fight 3 it stops, because each further room makes the unbroken-hallway assumption less
 likely than it is worth. See [What the seed cannot decide](#what-the-seed-cannot-decide).
@@ -564,8 +583,13 @@ co-op path, since the game will not start a multiplayer lobby with one player in
 
 Expect `--verify-history` to skip runs from older game builds, and to report some co-op runs
 under "Lobby". A finished run does not record which epochs each player had revealed at the time,
-and that changes generation, so the tool fits a state rather than pretending to know one. Runs
-on the build you are on now should match with no fitting.
+and that changes generation, so the tool fits a state rather than pretending to know one.
+
+It also skips a run played with a **modded character**, and says so by name. That is not
+squeamishness: a mod that adds a character adds its cards and relics to the game's model
+database, which resizes the pools every shuffle draws from, so such a run is generated against
+content this tool does not have. The same is true of any mod that adds content, whoever in the
+lobby was playing it.
 
 ---
 

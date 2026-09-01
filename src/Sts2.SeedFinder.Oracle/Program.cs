@@ -67,6 +67,7 @@ internal static class Program
         failures += CheckRelicPools();
         failures += CheckShopSlotIsUndrained();
         failures += CheckFirstFightReward();
+        failures += CheckNeowCardPayload();
         failures += CheckCurseFastPath();
 
         Console.WriteLine();
@@ -154,6 +155,35 @@ internal static class Program
         for (int i = 0; i + 4 < il.Length; i++)
             if (il[i] == 0x22) found.Add(BitConverter.ToSingle(il, i + 1));
 
+        return found.ToArray();
+    }
+
+    /// <summary>
+    /// Int literals in a property getter's IL, the sibling of
+    /// <see cref="GamePropertyFloatLiterals"/>. Used for counts a relic declares as decimal
+    /// vars, which reflection cannot read without constructing the model.
+    ///
+    /// Only the short forms are read: ldc.i4.0 through ldc.i4.8 (0x16-0x1E) and ldc.i4.s
+    /// (0x1F). A count outside that range would show up as a literal we do not find, which the
+    /// call site reports rather than silently accepting.
+    /// </summary>
+    private static int[] GamePropertyIntLiterals(string typeName, string property)
+    {
+        var t = _sts2.GetTypes().FirstOrDefault(x => x.Name == typeName)
+                ?? throw new MissingMemberException(typeName);
+        var p = t.GetProperty(property, BindingFlags.Public | BindingFlags.NonPublic
+                                        | BindingFlags.Static | BindingFlags.Instance)
+                ?? throw new MissingMemberException(typeName, property);
+
+        var il = p.GetGetMethod(nonPublic: true)?.GetMethodBody()?.GetILAsByteArray()
+                 ?? throw new InvalidOperationException($"{typeName}.{property} has no IL body");
+
+        var found = new List<int>();
+        for (int i = 0; i < il.Length; i++)
+        {
+            if (il[i] >= 0x16 && il[i] <= 0x1E) found.Add(il[i] - 0x16);
+            else if (il[i] == 0x1F && i + 1 < il.Length) { found.Add(il[i + 1]); i++; }
+        }
         return found.ToArray();
     }
 
@@ -707,6 +737,100 @@ internal static class Program
             bad.Count == 0
                 ? "5 characters x 120 seeds x 2 slots matched, and 4 odds constants agree "
                   + "(RegularRareOdds / RarityGrowth are ascension-gated properties, not readable headless)"
+                : string.Join(" | ", bad));
+    }
+
+    /// <summary>
+    /// Holds <c>NeowCardPayload</c> to the game, on the two things that can make it wrong.
+    ///
+    /// FIRST, the draw sequence, replayed with the game's own <c>Rng</c>. The whole claim of a
+    /// payload is what it does NOT draw: <c>CreateForReward</c> branches on Uniform odds and
+    /// never reaches <c>RollForRarity</c>, and <c>NoUpgradeRoll</c> removes the other roll, so
+    /// each card is one <c>NextItem</c> and nothing else. If that reading were wrong this check
+    /// diverges on the first card of the first seed, because our picks would be reading the
+    /// wrong position of the stream.
+    ///
+    /// SECOND, how many cards each relic hands out, read off the game's own
+    /// <c>CanonicalVars</c>. That number is a balance lever rather than a mechanism, so it is
+    /// exactly the kind of thing a patch retunes quietly. It reaches the IL rather than
+    /// constructing the relic because a <c>CardsVar</c> is built from a decimal literal, which
+    /// is the one shape reflection cannot read without a live model.
+    ///
+    /// What no headless check can reach is the branch itself: the game's factory needs a live
+    /// Player. So this proves our chain consumes the stream exactly as the game's Rng hands it
+    /// over, not that <c>CreateForReward</c> still takes the Uniform path. A played run is the
+    /// final authority there, as it is for Neow's two positive options.
+    /// </summary>
+    private static int CheckNeowCardPayload()
+    {
+        var bad = new List<string>();
+
+        // CanonicalVars is `new CardsVar(N)` for both relics, and a decimal literal small
+        // enough to fit an int compiles to `ldc.i4 N; newobj decimal(int)`. Anything else in
+        // that getter would break the count assertion below rather than pass quietly.
+        foreach (var slug in Sts2.SeedFinder.Core.Cards.NeowCardPayload.Predictable)
+        {
+            var relic = Sts2.SeedFinder.Core.Neow.NeowRelics.Find(slug)!;
+            string typeName = relic.Name.Replace("'", "").Replace(" ", "");
+            int ours = Sts2.SeedFinder.Core.Cards.NeowCardPayload.CardCount(slug);
+
+            var literals = GamePropertyIntLiterals(typeName, "CanonicalVars");
+            if (literals.Length != 1)
+            {
+                bad.Add($"{typeName}.CanonicalVars: expected one int literal (the card count), "
+                        + $"found {literals.Length}. The relic's vars are no longer a single "
+                        + "CardsVar and need re-reading.");
+                continue;
+            }
+            if (literals[0] != ours)
+                bad.Add($"{typeName} hands out {literals[0]} cards, we predict {ours}");
+        }
+
+        foreach (var character in Sts2.SeedFinder.Core.Cards.CardCatalog.Characters)
+        {
+            var pool = Sts2.SeedFinder.Core.Cards.CardRewardGenerator.PoolFor(character);
+            var rares = pool.Where(c => c.Rarity == Sts2.SeedFinder.Core.Cards.CardRarity.Rare).ToList();
+
+            foreach (var slug in Sts2.SeedFinder.Core.Cards.NeowCardPayload.Predictable)
+            {
+                int count = Sts2.SeedFinder.Core.Cards.NeowCardPayload.CardCount(slug);
+
+                for (ulong seed = 0; seed < 80 && bad.Count < 5; seed++)
+                {
+                    ulong runSeed = seed * 6364136223846793005uL + 1442695040888963407uL;
+
+                    for (int slot = 0; slot < 2; slot++)
+                    {
+                        // The payload is the FIRST thing on this stream, so the game's Rng is
+                        // used from its very first draw. No potion roll, no gold, no rarity and
+                        // no upgrade: that absence is the thing under test.
+                        var rng = NewGameRng(unchecked(runSeed + (ulong)slot), "rewards");
+
+                        var theirs = new List<string>(count);
+                        for (int i = 0; i < count; i++)
+                        {
+                            var candidates = rares.Where(c => !theirs.Contains(c.TypeName)).ToList();
+                            var picked = (Sts2.SeedFinder.Core.Cards.CardEntry)GameNextItem(rng, candidates)!;
+                            theirs.Add(picked.TypeName);
+                        }
+
+                        var mine = Sts2.SeedFinder.Core.Cards.NeowCardPayload
+                            .Generate(runSeed, slot, character, slug)
+                            .Select(c => c.TypeName)
+                            .ToList();
+
+                        if (!mine.SequenceEqual(theirs))
+                            bad.Add($"{character} {slug} seed#{seed} P{slot + 1}: "
+                                    + $"ours=[{string.Join(",", mine)}] game=[{string.Join(",", theirs)}]");
+                    }
+                }
+            }
+        }
+
+        return Check("Neow card payloads, draw-for-draw vs game Rng", bad.Count == 0,
+            bad.Count == 0
+                ? "Arcane Scroll and Hefty Tablet: 5 characters x 80 seeds x 2 slots matched, "
+                  + "and both card counts agree with the game's own CanonicalVars"
                 : string.Join(" | ", bad));
     }
 

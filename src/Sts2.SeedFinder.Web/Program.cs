@@ -217,6 +217,21 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
             text?.Description);
     }).ToArray();
 
+    // The Neow options that touch a player's card stream, with both numbers the UI needs: how
+    // many cards the tool can name for it, and what taking it costs the fight rewards. Sent as
+    // a table rather than hardcoded in the page, because both come out of Core and a second
+    // copy in JavaScript would be free to drift after a patch.
+    var neowCardRelics = NeowRelics.Curses.Concat(NeowRelics.Positives).Concat(NeowRelics.CoinFlips)
+        .Where(InCoop)
+        .Select(r => new NeowCardRelicDto(
+            r.Slug,
+            assets.TryGetText(r.Slug)?.Title ?? r.Name,
+            NeowCardPayload.CardCount(r.Slug),
+            CardRewardGenerator.NeowRewardDrawCost(r.Slug, Character.Ironclad),
+            CardRewardGenerator.NeowRewardDrawCost(r.Slug, Character.Defect)))
+        .Where(r => r.PayloadCards > 0 || r.Draws != 0)
+        .ToArray();
+
     return Results.Json(new CatalogDto(
         GameVersion,
         AppVersion.Load().Version,
@@ -243,7 +258,8 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         assets.AvailableAncientSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
         // Events carry their art the same way: a flat list rather than a flag on each event,
         // since an event appears once per act it can turn up in and the art does not.
-        assets.AvailableEventSlugs.Select(s => s.ToLowerInvariant()).ToArray()), json);
+        assets.AvailableEventSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
+        neowCardRelics), json);
 });
 
 // ---- The player's own profile --------------------------------------------------------------
@@ -338,10 +354,13 @@ app.MapGet("/api/explain", (HttpContext http, IConfiguration config, string seed
 
     try
     {
+        // The inspect panel honours ?pick= the same way a search does, so a seed looked at
+        // with "P1 takes Arcane Scroll" set reads its card rewards one draw along.
         return Results.Json(Predictions.Describe(
             canonical, players, Query.Characters(characters), null, Query.Ascension(http.Request.Query),
             Query.Unlocks(http.Request.Query, config["Saves:Directory"]),
-            Query.Int(http.Request.Query, "extraChests") ?? 0), json);
+            Query.Int(http.Request.Query, "extraChests") ?? 0,
+            Query.RewardPriorDraws(http.Request.Query, players, Query.Characters(characters))), json);
     }
     catch (ArgumentException ex)
     {
@@ -444,7 +463,7 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
             found++;
             await Send("hit", Predictions.Describe(
                 hit.Seed, players, chars, hit, criteria.Ascension, criteria.Unlocks,
-                criteria.ExtraChestPicks));
+                criteria.ExtraChestPicks, criteria.RewardPriorDraws()));
         }
     }
     catch (OperationCanceledException) { /* client navigated away or hit cancel */ }

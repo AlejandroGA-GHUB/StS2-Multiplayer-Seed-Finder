@@ -92,8 +92,11 @@ public sealed class GpuSearchPlanner : IDisposable
         public required MemoryBuffer1D<int, Stride1D.Dense> Fight { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> TypeId { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> PoolOfSlot { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> PriorDraws { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> PayloadPicks { get; init; }
 
-        public CardCriteriaView View => new(Slot.View, Fight.View, TypeId.View, PoolOfSlot.View);
+        public CardCriteriaView View => new(
+            Slot.View, Fight.View, TypeId.View, PoolOfSlot.View, PriorDraws.View, PayloadPicks.View);
 
         public void Dispose()
         {
@@ -101,6 +104,8 @@ public sealed class GpuSearchPlanner : IDisposable
             Fight.Dispose();
             TypeId.Dispose();
             PoolOfSlot.Dispose();
+            PriorDraws.Dispose();
+            PayloadPicks.Dispose();
             Pools.Dispose();
         }
     }
@@ -170,7 +175,7 @@ public sealed class GpuSearchPlanner : IDisposable
 
         var cards = default(CardFilterParams);
         CardResources? cardResources = null;
-        if (criteria.Cards.Count > 0)
+        if (criteria.Cards.Count > 0 || criteria.NeedsNeowPayloads)
             cardResources = TryBuildCards(criteria, out cards);
 
         var runStage = GpuRunStage.TryCreate(_engine, criteria);
@@ -204,11 +209,17 @@ public sealed class GpuSearchPlanner : IDisposable
         p = default;
         if (_engine is null) return null;
         if (criteria.Characters.Count != criteria.PlayerCount) return null;
-        if (criteria.Cards.Count > 32) return null;
+
+        // Payload criteria join a relic to the cards it hands out. The kernel tests only the
+        // card half — the Neow stage answers the relic half, and for "any player" the two are
+        // not joined at all, so a seed can pass here that the CPU then rejects. That is the
+        // direction a pre-filter is allowed to be wrong in.
+        var payloads = criteria.NeowCriteria.Where(x => x.Cards.Count > 0).ToList();
+        int n = criteria.Cards.Count + payloads.Sum(x => x.Cards.Count);
+        if (n > 32) return null;
 
         var pools = new GpuCardPools(_engine.Accelerator, criteria.Characters, criteria.Unlocks);
 
-        int n = criteria.Cards.Count;
         var slot = new int[n];
         var fight = new int[n];
         var typeId = new int[n];
@@ -216,9 +227,10 @@ public sealed class GpuSearchPlanner : IDisposable
         // Taken from Core rather than recomputed. Under any-order this is deeper than the
         // criteria's own fights, and a kernel that walked the shallower distance would reject
         // seeds the CPU would have accepted, which is the one failure a pre-filter must not have.
-        int deepest = SeedSearcher.DeepestFight(criteria);
+        // Zero when nothing asks about a fight, which is what a payload-only search looks like.
+        int deepest = criteria.Cards.Count == 0 ? 0 : SeedSearcher.DeepestFight(criteria);
 
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < criteria.Cards.Count; i++)
         {
             var want = criteria.Cards[i];
             typeId[i] = pools.TypeIdOf(want.Card);
@@ -228,6 +240,37 @@ public sealed class GpuSearchPlanner : IDisposable
             fight[i] = want.Fight;
         }
 
+        // How many payload cards each slot has to have drawn for it. A criterion naming no slot
+        // has to be looked for on every player, so it arms them all.
+        var payloadPicks = new int[criteria.PlayerCount];
+        int next = criteria.Cards.Count;
+
+        foreach (var want in payloads)
+        {
+            int picks = NeowCardPayload.CardCount(want.Relic.Slug);
+            var armed = want.Requirement == SlotRequirement.Any
+                ? Enumerable.Range(0, criteria.PlayerCount)
+                : want.ResolveSlots(criteria.PlayerCount);
+            foreach (var s in armed)
+                if (s >= 0 && s < payloadPicks.Length) payloadPicks[s] = Math.Max(payloadPicks[s], picks);
+
+            // "Any player" stays -1 here, exactly as a card criterion does: the kernel then
+            // accepts a payload match from whichever slot produced it.
+            int one = want.Requirement == SlotRequirement.Specific && (want.RequiredSlots?.Count ?? 0) == 1
+                ? want.RequiredSlots![0]
+                : -1;
+
+            foreach (var card in want.Cards)
+            {
+                typeId[next] = pools.TypeIdOf(card);
+                if (typeId[next] < 0) { pools.Dispose(); return null; }
+
+                slot[next] = one;
+                fight[next] = 0;      // 0 marks a payload rather than a fight
+                next++;
+            }
+        }
+
         p = new CardFilterParams
         {
             RewardsNameHash = GameHash.Deterministic(GameHash.SnakeCase("Rewards")),
@@ -235,6 +278,8 @@ public sealed class GpuSearchPlanner : IDisposable
             RarityGrowth = criteria.Ascension >= CardRewardGenerator.Scarcity ? 0.005f : 0.01f,
             PlayerCount = criteria.PlayerCount,
             CriterionCount = n,
+            // A payload-only search still has work to do even with no fight to walk.
+
             DeepestFight = deepest,
             AllMask = n == 32 ? -1 : (1 << n) - 1,
             Active = 1,
@@ -249,6 +294,8 @@ public sealed class GpuSearchPlanner : IDisposable
             Fight = acc.Allocate1D(fight),
             TypeId = acc.Allocate1D(typeId),
             PoolOfSlot = acc.Allocate1D(pools.PoolOfSlot),
+            PriorDraws = acc.Allocate1D(criteria.RewardPriorDraws()),
+            PayloadPicks = acc.Allocate1D(payloadPicks),
         };
     }
 

@@ -292,7 +292,7 @@ public static class CardRewardGenerator
 
     /// <summary>How many cards of one rarity the pool still offers, ignoring those already drawn
     /// into this reward.</summary>
-    private static int CountAvailable(
+    internal static int CountAvailable(
         PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken, CardRarity rarity)
     {
         // The pool cannot change during a reward, so the only thing that moves is the blacklist,
@@ -309,7 +309,7 @@ public static class CardRewardGenerator
     /// its index into <paramref name="pool"/>. Pool order is what the game indexes into, so this
     /// walks rather than sorting or hashing; it just walks one rarity's entries instead of all.
     /// </summary>
-    private static int NthAvailable(
+    internal static int NthAvailable(
         PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken, CardRarity rarity, int nth)
     {
         var group = index.Of(rarity);

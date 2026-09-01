@@ -4,6 +4,7 @@ using ILGPU.Runtime;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
+using Sts2.SeedFinder.Core.Cards;
 using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Gpu;
 
@@ -98,6 +99,33 @@ public static class GpuDoctor
                     new[] { Sts2.SeedFinder.Core.Acts.Character.Ironclad, Sts2.SeedFinder.Core.Acts.Character.Silent },
                     ascension, unlocks: null, start: 9_000_000_000, samples: 20_000, fight: fight);
                 Report(check with { Name = $"{check.Name} A{ascension}" });
+                ok &= check.Passed;
+            }
+        }
+
+        // The Neow payloads, and the burn a payload's relic costs the fights after it. Both are
+        // the same handful of draws at the front of the Rewards stream, and a kernel that got
+        // either wrong would still look healthy: it would simply answer about a different part
+        // of the stream than Core does.
+        {
+            var party = new[] { Character.Ironclad, Character.Silent };
+
+            foreach (var relic in NeowCardPayload.Predictable)
+            {
+                var check = GpuVerifyCards.RunPayload(
+                    engine, party, unlocks: null, start: 10_000_000_000, samples: 20_000, relicSlug: relic);
+                Report(check);
+                ok &= check.Passed;
+            }
+
+            // Hefty Tablet's three draws against Arcane Scroll's one, so a burn that is off by
+            // any amount shows up rather than only a burn that is missing entirely.
+            foreach (var draws in new[] { new[] { 1, 0 }, new[] { 3, 9 } })
+            {
+                var check = GpuVerifyCards.Run(
+                    engine, party, ascension: 0, unlocks: null,
+                    start: 10_500_000_000, samples: 20_000, fight: 2, priorDraws: draws);
+                Report(check with { Name = $"{check.Name} ({draws[0]}/{draws[1]})" });
                 ok &= check.Passed;
             }
         }

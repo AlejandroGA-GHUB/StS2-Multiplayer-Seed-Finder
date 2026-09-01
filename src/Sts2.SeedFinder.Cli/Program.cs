@@ -132,9 +132,9 @@ internal static class Program
         for (int slot = 0; slot < offers.Length; slot++)
         {
             var o = offers[slot];
-            Console.WriteLine($"    P{slot + 1}:  {o.Positive1.Name}");
-            Console.WriteLine($"         {o.Positive2.Name}");
-            Console.WriteLine($"         {o.Curse.Name}  (curse branch)");
+            Console.WriteLine($"    P{slot + 1}:  {o.Positive1.Name}{Payload(seed, slot, o.Positive1, opts)}");
+            Console.WriteLine($"         {o.Positive2.Name}{Payload(seed, slot, o.Positive2, opts)}");
+            Console.WriteLine($"         {o.Curse.Name}{Payload(seed, slot, o.Curse, opts)}  (curse branch)");
             if (slot < offers.Length - 1) Console.WriteLine();
         }
         if (opts.Characters.Count > 0)
@@ -145,6 +145,27 @@ internal static class Program
 
         Console.WriteLine();
         return 0;
+    }
+
+    /// <summary>
+    /// "  -> Corruption" for the two Neow options whose cards are predictable, and nothing at
+    /// all for every other relic.
+    ///
+    /// Printed against the OFFER rather than against a pick, because whether the player takes it
+    /// is theirs to decide and this is what they would be deciding about. It costs one draw per
+    /// card off a stream nothing has touched yet, so it is free to show for every seed.
+    /// </summary>
+    private static string Payload(string seed, int slot, NeowRelic relic, Options opts)
+    {
+        if (opts.Characters.Count != opts.PlayerCount) return "";
+        if (!NeowCardPayload.IsPredictable(relic.Slug)) return "";
+
+        var cards = NeowCardPayload.Generate(
+            SeedCodec.RunSeed(seed), slot, opts.Characters[slot], relic.Slug);
+
+        return cards.Count == 0
+            ? ""
+            : "  -> " + string.Join(", ", cards.Select(c => CardCatalog.Display(c.TypeName)));
     }
 
     /// <summary>
@@ -167,8 +188,22 @@ internal static class Program
                           + "assume you walk straight into");
         Console.WriteLine("  the next monster room each time, with no shop, elite, event or rest between");
         Console.WriteLine("  them, so they have to be consecutive.");
-        Console.WriteLine("  All assume the Neow pick took no cards. Arcane Scroll, Hefty Tablet, Massive");
-        Console.WriteLine("  Scroll, Scroll Boxes and Neow's Bones draw off the same stream first.");
+        var told = opts.NeowPicks
+            .Where(x => CardRewardGenerator.NeowRewardDrawCost(x.RelicSlug, opts.Characters[x.Slot]) > 0)
+            .ToList();
+
+        if (told.Count > 0)
+        {
+            Console.WriteLine("  Read after the Neow pick you named: "
+                              + string.Join(", ", told.Select(x => x.ToString())) + ".");
+            Console.WriteLine("  Every other player is read as though they took nothing that draws cards.");
+        }
+        else
+        {
+            Console.WriteLine("  All assume the Neow pick took no cards. Arcane Scroll, Hefty Tablet, Massive");
+            Console.WriteLine("  Scroll, Scroll Boxes and Neow's Bones draw off the same stream first;");
+            Console.WriteLine("  --neow-pick p1:arcane_scroll says one was taken.");
+        }
     }
 
     /// <summary>
@@ -179,10 +214,18 @@ internal static class Program
     /// </summary>
     private static IEnumerable<string> FightLines(string seed, int slot, Options opts)
     {
+        // What that player's assumed Neow pick already spent, if one was named. Zero otherwise,
+        // which is right for every option but the five that hand out cards.
+        int prior = opts.NeowPicks
+            .Where(x => x.Slot == slot)
+            .Select(x => Math.Max(
+                CardRewardGenerator.NeowRewardDrawCost(x.RelicSlug, opts.Characters[slot]), 0))
+            .FirstOrDefault();
+
         var hallway = CardRewardGenerator.Hallway(
             SeedCodec.RunSeed(seed), slot, opts.Characters[slot],
             CardRewardGenerator.MaxPredictableFight, opts.Ascension,
-            new Sts2.SeedFinder.Core.Acts.UnlockState());
+            new Sts2.SeedFinder.Core.Acts.UnlockState(), prior);
 
         for (int i = 0; i < hallway.Fights.Count; i++)
         {
@@ -349,6 +392,45 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// Resolve the comma-separated card names on a --relic argument against the pools of the
+    /// players it is aimed at.
+    ///
+    /// A card name only means something against a character's pool, so this needs --characters
+    /// for the same reason --card does. Which pools to look in follows the criterion's own slot
+    /// rule: "for any player" only needs somebody in the party who could be handed it.
+    /// </summary>
+    private static IReadOnlyList<string> ResolvePayloadCards(
+        NeowRelic relic, string names, SlotRequirement rule, IReadOnlyList<int> slots, Options opts)
+    {
+        if (opts.Characters.Count != opts.PlayerCount)
+            throw new ArgumentException(
+                "naming the cards a Neow relic gives needs --characters, because they come out "
+                + "of that player's own rare pool.");
+
+        var looking = rule == SlotRequirement.Any
+            ? Enumerable.Range(0, opts.PlayerCount).ToList()
+            : (rule == SlotRequirement.All
+                ? Enumerable.Range(0, opts.PlayerCount)
+                : slots).ToList();
+
+        var resolved = new List<string>();
+        foreach (var name in names.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            string? found = null;
+            foreach (var slot in looking)
+                if (CardCatalog.Find(opts.Characters[slot], name) is { } hit) { found = hit; break; }
+
+            resolved.Add(found ?? throw new ArgumentException(
+                $"'{name}' is not a card "
+                + (rule == SlotRequirement.Any
+                    ? "anyone in the party"
+                    : string.Join(" or ", looking.Select(x => $"P{x + 1}")))
+                + $" can be handed by {relic.Name}. Use --list to see the pools."));
+        }
+        return resolved;
+    }
+
     private static int Search(Options opts)
     {
         // Keep the original default: a bare invocation still hunts Silken Tress. But once any
@@ -360,20 +442,26 @@ internal static class Program
             ? opts.Relics
             : actCriteria ? Array.Empty<string>() : new[] { "silken_tress" };
 
-        // Each --relic may carry its own ":who", falling back to --require. So
-        // `--relic silken_tress:all --relic golden_pearl:p2` is one search with two rules.
+        // Each --relic may carry its own ":who", falling back to --require, and after that the
+        // cards the relic itself hands over. So `--relic silken_tress:all --relic golden_pearl:p2`
+        // is one search with two rules, and `--relic arcane_scroll:p1:corruption` asks what P1's
+        // scroll would give as well as that P1 is offered it.
         var neowWanted = new List<NeowCriterion>();
         foreach (var arg in relicArgs)
         {
-            var parts = arg.Split(':', 2, StringSplitOptions.TrimEntries);
+            var parts = arg.Split(':', 3, StringSplitOptions.TrimEntries);
             var found = NeowRelics.Find(parts[0])
                 ?? throw new ArgumentException($"unknown relic '{parts[0]}'. Use --list to see them all.");
 
-            var (rule, slots) = parts.Length == 2 && parts[1].Length > 0
+            var (rule, slots) = parts.Length >= 2 && parts[1].Length > 0
                 ? Options.ParseRequireValue(parts[1], opts.PlayerCount)
                 : (opts.Requirement, opts.RequiredSlots);
 
-            neowWanted.Add(new NeowCriterion(found, rule, slots, opts.Where));
+            var payload = parts.Length == 3 && parts[2].Length > 0
+                ? ResolvePayloadCards(found, parts[2], rule, slots, opts)
+                : null;
+
+            neowWanted.Add(new NeowCriterion(found, rule, slots, opts.Where, payload));
         }
 
         var criteria = new SearchCriteria
@@ -390,6 +478,7 @@ internal static class Program
             ShopRelicsWanted = opts.ShopRelicsWanted,
             ChestRelicsWanted = opts.ChestRelicsWanted,
             ExtraChestPicks = opts.ExtraChestPicks,
+            NeowPicks = opts.NeowPicks,
             Ascension = opts.Ascension,
             Characters = opts.Characters,
         };
@@ -415,6 +504,8 @@ internal static class Program
             Console.WriteLine($"  Shop relic    : {sr}");
         foreach (var cr in opts.ChestRelicsWanted)
             Console.WriteLine($"  Chest relic   : {cr}");
+        foreach (var pick in opts.NeowPicks)
+            Console.WriteLine($"  Assumed pick  : {pick}");
         if (opts.ExtraChestPicks > 0)
             Console.WriteLine($"  extra chests  : {opts.ExtraChestPicks} before Act 1's "
                               + "(? rooms that became treasure rooms)");
@@ -528,12 +619,22 @@ internal static class Program
             sts2seed --verify [<run.save>] [--progress <progress.save>]
 
           OPTIONS
-            --relic <name>[:<who>]
+            --relic <name>[:<who>[:<card>,...]]
                                Neow relic to look for. Repeatable, and each one may carry its
                                own <who> (any | all | p1,p2,...) so different players can be
                                asked for different relics. Without one it uses --require.
                                Default: silken_tress, unless an --ancient flag is given, in
                                which case Neow is unconstrained.
+                               Arcane Scroll and Hefty Tablet may also name the cards they
+                               hand over: one rare for the scroll, up to three for the tablet.
+                               Doing so says that player TAKES it, so their fight rewards are
+                               read one (or three) draws along.
+            --neow-pick <who>:<relic>
+                               Assume this player takes this Neow option, which shifts their
+                               fight card rewards. Only the five that draw cards matter:
+                               arcane_scroll (1 draw), hefty_tablet (3), massive_scroll (9),
+                               scroll_boxes (6, or 8 for the Defect). Not a criterion: the
+                               seed does not decide what anybody picks.
             --act1 <map>       overgrowth | underdocks. Default: either. Rolled on its own
                                RNG, so this is close to free and is tested first.
             --players N        Lobby size, 2-4. Default: 2
@@ -731,10 +832,21 @@ internal static class Program
     private sealed record Options
     {
         /// <summary>
-        /// Raw --relic arguments, each <c>slug</c> or <c>slug:who</c>, in the order given. Empty
-        /// means no Neow requirement, which is only meaningful alongside an act criterion.
+        /// Raw --relic arguments, each <c>slug</c>, <c>slug:who</c> or
+        /// <c>slug:who:card[,card...]</c>, in the order given. Empty means no Neow requirement,
+        /// which is only meaningful alongside an act criterion.
         /// </summary>
         public IReadOnlyList<string> Relics { get; init; } = Array.Empty<string>();
+
+        /// <summary>
+        /// Raw --neow-pick arguments, each <c>who:slug</c>. Which Neow option a player is
+        /// ASSUMED to take, which shifts their card rewards; see <see cref="NeowPick"/>.
+        /// Deferred like the card args, because the cost of Scroll Boxes depends on the
+        /// character and --characters may come later on the command line.
+        /// </summary>
+        public IReadOnlyList<string> PickArgs { get; init; } = Array.Empty<string>();
+
+        public IReadOnlyList<NeowPick> NeowPicks { get; init; } = Array.Empty<NeowPick>();
 
         /// <summary>Act 1 map to require, or null for either.</summary>
         public string? Act1 { get; init; }
@@ -878,6 +990,9 @@ internal static class Program
                 switch (args[i])
                 {
                     case "--relic":   o = o with { Relics = o.Relics.Append(Next("--relic")).ToList() }; break;
+                    case "--neow-pick":
+                        o = o with { PickArgs = o.PickArgs.Append(Next("--neow-pick")).ToList() };
+                        break;
                     case "--act1":    o = o with { Act1 = Next("--act1") }; break;
                     case "--ancient": o = o with { Ancients = o.Ancients.Append(ParseAncient(Next("--ancient"))).ToList() }; break;
                     case "--ancient-relic":
@@ -970,7 +1085,54 @@ internal static class Program
             if (o.ChestArgs.Count > 0)
                 o = o with { ChestRelicsWanted = o.ChestArgs.Select(ParseChest).ToList() };
 
+            if (o.PickArgs.Count > 0)
+                o = o with { NeowPicks = o.PickArgs.Select(s => ParsePick(s, o)).ToList() };
+
             return o;
+        }
+
+        /// <summary>
+        /// "p1:arcane_scroll" — which player is assumed to take which Neow option.
+        ///
+        /// Not a criterion: nothing about the seed decides what a player picks. It exists
+        /// because five of Neow's options draw cards off the same stream the fight rewards
+        /// come from, so taking one moves every card that player is later offered.
+        /// </summary>
+        private static NeowPick ParsePick(string s, Options o)
+        {
+            var parts = s.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length != 2)
+                throw new ArgumentException(
+                    $"--neow-pick wants <player>:<relic>, e.g. p1:arcane_scroll, got '{s}'");
+
+            int slot = ParseSlot(parts[0], o, "--neow-pick");
+            if (slot < 0)
+                throw new ArgumentException(
+                    "--neow-pick names one player: a pick moves that player's own card stream "
+                    + "and nobody else's.");
+
+            var relic = NeowRelics.Find(parts[1])
+                ?? throw new ArgumentException($"unknown relic '{parts[1]}'. Use --list to see them all.");
+
+            return new NeowPick(slot, relic.Slug);
+        }
+
+        /// <summary>
+        /// "p1", "1" or "any" — one lobby slot, 0-based, or -1 for "any player". Shared by every
+        /// per-player argument so they cannot drift in what they accept.
+        /// </summary>
+        private static int ParseSlot(string who, Options o, string flag)
+        {
+            who = who.ToLowerInvariant();
+            if (who is "any" or "*") return -1;
+
+            if (!int.TryParse(who.TrimStart('p'), out var n) || n < 1)
+                throw new ArgumentException($"bad player '{who}' for {flag}: use p1, p2, ... or any");
+
+            if (n > o.PlayerCount)
+                throw new ArgumentException($"P{n} is not in a {o.PlayerCount}-player lobby");
+
+            return n - 1;
         }
 
         /// <summary>

@@ -9,7 +9,11 @@ public readonly struct CardCriteriaView
     /// <summary>Player slot the criterion names, or -1 for "any player in the lobby".</summary>
     public readonly ArrayView<int> Slot;
 
-    /// <summary>1-based fight, matching <c>CardCriterion.Fight</c>.</summary>
+    /// <summary>
+    /// 1-based fight, matching <c>CardCriterion.Fight</c>. ZERO means the criterion is about a
+    /// Neow payload rather than a fight — the rares an Arcane Scroll or Hefty Tablet hands over
+    /// before the run's first room, off the front of the same stream.
+    /// </summary>
     public readonly ArrayView<int> Fight;
 
     /// <summary>Global card type id, from <see cref="GpuCardPools.TypeIdOf"/>.</summary>
@@ -18,12 +22,34 @@ public readonly struct CardCriteriaView
     /// <summary>Which uploaded pool each player slot draws from.</summary>
     public readonly ArrayView<int> PoolOfSlot;
 
-    public CardCriteriaView(ArrayView<int> slot, ArrayView<int> fight, ArrayView<int> typeId, ArrayView<int> poolOfSlot)
+    /// <summary>
+    /// Draws this slot's assumed Neow pick takes off the Rewards stream before fight 1, indexed
+    /// by slot. Mirrors <c>SearchCriteria.RewardPriorDraws</c>, and getting it wrong here would
+    /// reject seeds the CPU accepts.
+    /// </summary>
+    public readonly ArrayView<int> PriorDraws;
+
+    /// <summary>
+    /// How many payload cards to MODEL for this slot, indexed by slot: 1 for Arcane Scroll, 3
+    /// for Hefty Tablet, 0 when nothing asks.
+    ///
+    /// Separate from <see cref="PriorDraws"/> on purpose. A criterion aimed at "any player"
+    /// names no slot, so every slot's payload has to be looked at, while nobody's fight stream
+    /// is known to have moved. The payload walk therefore runs on its own copy of the stream —
+    /// which is exact, since a payload is drawn before anything else touches it.
+    /// </summary>
+    public readonly ArrayView<int> PayloadPicks;
+
+    public CardCriteriaView(
+        ArrayView<int> slot, ArrayView<int> fight, ArrayView<int> typeId, ArrayView<int> poolOfSlot,
+        ArrayView<int> priorDraws, ArrayView<int> payloadPicks)
     {
         Slot = slot;
         Fight = fight;
         TypeId = typeId;
         PoolOfSlot = poolOfSlot;
+        PriorDraws = priorDraws;
+        PayloadPicks = payloadPicks;
     }
 }
 
@@ -186,7 +212,44 @@ public static class CardFilter
 
             // Player.cs seeds the whole PlayerRngSet with hash(seed) + slotIndex, then names
             // each generator within it.
+            // The Neow payload, when anything asks about this slot. One NextItem per card off
+            // the front of the stream: Uniform odds skip the rarity roll entirely and
+            // NoUpgradeRoll removes the other, so a pick IS a draw. See Core's NeowCardPayload.
+            int payloadPicks = criteria.PayloadPicks[slot];
+            if (payloadPicks > 0)
+            {
+                var prng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
+                int p0 = -1, p1 = -1, pTaken = 0;
+
+                for (int i = 0; i < payloadPicks; i++)
+                {
+                    int avail = CountAvailable(pools, pool, poolBase, Rare, p0, p1, pTaken);
+                    if (avail <= 0) break;
+
+                    int got = NthAvailable(pools, pool, poolBase, Rare, prng.NextInt(0, avail), p0, p1, pTaken);
+                    if (got < 0) break;
+
+                    int gotType = pools.TypeId[poolBase + got];
+                    for (int c = 0; c < p.CriterionCount; c++)
+                    {
+                        if (criteria.Fight[c] != 0) continue;
+                        int want = criteria.Slot[c];
+                        if (want >= 0 && want != slot) continue;
+                        if (criteria.TypeId[c] == gotType) satisfied |= 1 << c;
+                    }
+
+                    if (pTaken == 0) p0 = got; else if (pTaken == 1) p1 = got;
+                    pTaken++;
+                }
+            }
+
+            if (p.DeepestFight <= 0) continue;
+
             var rng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
+
+            // Whatever that player's Neow pick already spent. Zero for the great majority of
+            // picks, and the whole reason the five card-drawing options need naming at all.
+            rng.Burn(criteria.PriorDraws[slot]);
 
             float rarityOffset = BaseRarityOffset;
             float potionOdds = BasePotionRewardOdds;
@@ -219,6 +282,9 @@ public static class CardFilter
                     int type = pools.TypeId[poolBase + picked];
                     for (int c = 0; c < p.CriterionCount; c++)
                     {
+                        // A payload criterion is settled above and never by a fight, even under
+                        // any-order: its card is a Rare, and a later fight can offer one.
+                        if (criteria.Fight[c] == 0) continue;
                         if (p.AnyOrder == 0 && criteria.Fight[c] != fight) continue;
                         int want = criteria.Slot[c];
                         if (want >= 0 && want != slot) continue;
