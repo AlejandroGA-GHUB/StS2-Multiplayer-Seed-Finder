@@ -132,6 +132,35 @@ public sealed record ProfileDto(
     string[] DiscoveredActs, LobbyDto? Lobby, string? Code);
 
 /// <summary>
+/// The OS and runtime, named the way somebody reading a bug report would name them.
+/// </summary>
+public static class PlatformInfo
+{
+    /// <summary>
+    /// Windows 11 identifies itself as <c>10.0.x</c> through every version API .NET can reach:
+    /// Microsoft kept the major version at 10 and separated the two releases by build number,
+    /// 22000 being the first Windows 11 build. Reported raw, a report from Windows 11 reads
+    /// "Windows 10", which is precisely the kind of small wrongness that makes a reader distrust
+    /// the rest of the block.
+    ///
+    /// <c>Environment.OSVersion</c> rather than the description string because .NET Core 3.0 and
+    /// later resolve it through RtlGetVersion, so compatibility shimming cannot lie to it.
+    /// </summary>
+    public static string Describe()
+    {
+        var framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
+
+        if (OperatingSystem.IsWindows())
+        {
+            var v = Environment.OSVersion.Version;
+            return $"Windows {(v.Build >= 22000 ? 11 : 10)} (build {v.Build}) / {framework}";
+        }
+
+        return $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription} / {framework}";
+    }
+}
+
+/// <summary>
 /// The machine half of a bug report: everything about this install that a reader would need and
 /// a reporter would never type correctly.
 ///

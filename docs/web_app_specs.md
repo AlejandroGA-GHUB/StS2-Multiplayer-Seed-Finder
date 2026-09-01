@@ -391,6 +391,35 @@ what it gives, with no second visual grammar to learn.
   "somebody is offered Arcane Scroll" and "somebody's scroll gives Corruption" asked separately
   can be satisfied by two different players, which is not what anybody means.
 
+### Report a problem
+
+A header button, beside "Check for updates", opening a sheet that assembles a bug report.
+
+- **No server of ours is involved.** The report is built locally and handed to the user, who
+  either opens a prefilled GitHub issue (`issues/new?labels=bug&title=&body=`) or copies the text
+  for an email. That means no token, no account on our side, and nothing to rate limit. It also
+  means the user reads every character before anything leaves the machine.
+- **The diagnostics are the feature**, not the routing. `/api/report` returns what the page
+  cannot see for itself: the verified baseline behind the drift verdict, the accelerator actually
+  chosen, and the platform. Nearly every "the seed was wrong" report resolves to join order,
+  player count, a patch, mods or partial unlocks, and all five are answerable from that block
+  without a round trip.
+- **The last query is captured when it runs**, not rebuilt when the sheet opens. Somebody who
+  notices a bad result and then edits the lobby before reporting would otherwise describe
+  criteria that never ran.
+- **Left out on purpose:** the save file's path, which carries a Steam id, and the folders
+  searched when no save was found. Issues are public and neither is actionable. An imported
+  partner appears as a count, not as their code.
+- The GitHub button **disables past ~7k of URL**, where GitHub starts truncating a prefilled
+  body, and points at Copy instead. Copy is also the whole answer for anyone without a GitHub
+  account, which is why it is not hidden behind the primary action.
+- Repository follows `Updates:Repository`, the key `UpdateCheck` already reads, so a fork
+  collects its own reports rather than sending strangers' upstream.
+- No `.github/ISSUE_TEMPLATE` is shipped, deliberately. GitHub's `.yml` issue *forms* cannot be
+  prefilled by `body=`, so a form template would fight the button. A legacy markdown template
+  would be compatible, but `blank_issues_enabled` must stay true either way or the direct link is
+  redirected to the chooser.
+
 ### Import Friend Epoch
 
 A button in the Lobby panel opening a sheet, the same shape as "Why did my seed produce

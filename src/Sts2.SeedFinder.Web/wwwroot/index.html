@@ -17,6 +17,8 @@
     <span class="update-note" id="updateNote" hidden></span>
     <button type="button" class="icon-btn" id="whyBtn"
             title="Ways a correct seed still gives you the wrong run">Why did my seed produce unexpected results?</button>
+    <button type="button" class="icon-btn" id="reportBtn"
+            title="Send a bug report, with what this build knows about itself">Report a problem</button>
     <button type="button" class="icon-btn" id="updateBtn"
             title="Compare this copy with the newest release on GitHub">Check for updates</button>
   </div>
@@ -204,6 +206,51 @@
 <!-- Static prose rather than anything generated, because none of it depends on the search. It
      lives here so the one place a claim about the game is worded is the same place it is read,
      and every item below is a real difference between what a seed decides and what a run does. -->
+<!-- Bug reports. No server of ours is involved: the report is assembled here and handed to the
+     user, who files it themselves on GitHub or pastes it wherever they prefer. The value is not
+     the routing, it is the block of facts underneath, which no reporter would type correctly. -->
+<dialog class="sheet" id="reportSheet">
+  <div class="sheet-head">
+    <h2>Report a problem</h2>
+    <button type="button" class="picker-close" id="reportClose" aria-label="Close" title="Close">&times;</button>
+  </div>
+  <div class="sheet-body">
+    <p class="lead">Before anything else, it is worth a look at
+      <b>Why did my seed produce unexpected results?</b> Most surprises are join order, player
+      count or an unlock difference rather than a bug, and that sheet names all of them.</p>
+
+    <p>Still wrong? Describe it below. Everything this build knows about itself is gathered for
+      you.</p>
+
+    <h3>What went wrong</h3>
+
+    <textarea id="reportWhat" class="report-desc" rows="4"
+      placeholder="What did you expect, and what actually happened? For example: the tool said the Act 2 boss was Knowledge Demon, I got Kaiser Crab. Two player co-op, I was P1."></textarea>
+
+    <div class="report-seed">
+      <label for="reportSeed">Seed</label>
+      <input type="text" id="reportSeed" placeholder="the seed that misbehaved, if there is one">
+    </div>
+
+    <h3>This will be included</h3>
+
+    <pre class="report-preview" id="reportPreview">Gathering…</pre>
+
+    <p class="report-note" id="reportNote"></p>
+
+    <div class="report-actions">
+      <button type="button" class="primary" id="reportGithub">Open a GitHub issue</button>
+      <button type="button" class="icon-btn" id="reportCopy">Copy report</button>
+    </div>
+
+    <p class="sheet-foot">Nothing is sent from this app. The GitHub button opens a prefilled issue
+      in your browser for you to review and submit. Copy puts the same text on your clipboard, to
+      send to <a href="mailto:aga.personal.dev@gmail.com">aga.personal.dev@gmail.com</a> or paste
+      into a chat instead, which needs no GitHub account. Your save file path is deliberately left
+      out, because it contains your Steam id and issues are public.</p>
+  </div>
+</dialog>
+
 <!-- Somebody else's unlock state. A sheet rather than a panel because it is read once, acted on
      once, and then wanted out of the way: the same shape as the "why" sheet beside it. -->
 <dialog class="sheet" id="epochSheet">

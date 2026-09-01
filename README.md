@@ -22,7 +22,13 @@ that space.
 > for multiplayer and not worth handling its own release for at the moment. See
 > [Which Steam branch](#which-steam-branch) for why, and what happens next.
 
-> Can reach out via aga.personal.dev@gmail.com with any queries regarding the app.
+> **Something wrong?** Use **Report a problem** in the app's header. It gathers the things a
+> report needs and nobody remembers to include (tool and game version, drift, mods, the
+> accelerator, your unlock state, and the exact query that produced the result), then either
+> opens a prefilled GitHub issue or copies the lot to your clipboard. Nothing is sent by the app
+> itself, and your save path is left out on purpose since issues are public.
+>
+> Or reach out via aga.personal.dev@gmail.com with any queries regarding the app.
 
 
 ---

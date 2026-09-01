@@ -403,8 +403,7 @@ app.MapGet("/api/report", (IConfiguration config, Sts2.SeedFinder.Gpu.GpuSearchP
         ProfileFound: profile is not null,
         RevealedEpochs: profile?.RevealedEpochs ?? 0,
         TotalEpochs: profile?.TotalEpochs ?? 0,
-        Platform: $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription} / "
-                + $"{System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}"), json);
+        Platform: PlatformInfo.Describe()), json);
 });
 
 // ---- Is this copy still the newest one? -----------------------------------------------------

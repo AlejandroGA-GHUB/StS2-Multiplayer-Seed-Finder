@@ -367,6 +367,40 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
 }
 .epoch-code:focus { outline: none; border-color: var(--accent-dim); }
 
+/* Bug report sheet. The preview is the point of the panel, so it gets the room. */
+.report-desc {
+  width: 100%; margin-top: 11px; padding: 9px 10px; resize: vertical;
+  background: var(--bg-1); color: var(--text-0);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: inherit; font-size: 13px; line-height: 1.5;
+}
+.report-desc:focus { outline: none; border-color: var(--accent-dim); }
+
+.report-seed { display: flex; align-items: center; gap: 9px; margin-top: 9px; }
+.report-seed label { flex: none; color: var(--text-2); font-size: 12px; }
+.report-seed input {
+  flex: 1; min-width: 0; padding: 7px 10px; letter-spacing: 1px;
+  background: var(--bg-1); color: var(--text-0);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: inherit; font-size: 12.5px; text-transform: uppercase;
+}
+.report-seed input:focus { outline: none; border-color: var(--accent-dim); }
+.report-seed input::placeholder { text-transform: none; letter-spacing: 0; }
+
+.report-preview {
+  margin: 11px 0 0; padding: 11px 12px; max-height: 260px; overflow: auto;
+  background: var(--bg-1); color: var(--text-1);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+
+.report-note { margin-top: 9px !important; font-size: 12px !important; color: var(--text-2) !important; }
+.report-note.is-warn { color: #e0b98a !important; }
+
+.report-actions { display: flex; align-items: center; gap: 9px; margin-top: 11px; }
+.report-actions .primary { width: auto; flex: 1; margin-top: 0; }
+.report-actions .icon-btn { flex: none; padding: 10px 14px; }
+
 /* Sits under the player rows, separated the way the sheet's own footer is: it belongs to this
    panel but answers the opposite question from everything above it. */
 .epoch-own {

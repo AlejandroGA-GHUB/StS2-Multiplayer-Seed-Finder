@@ -13,6 +13,11 @@ let catalog = null;
 // This machine's own profile, once /api/profile answers. Held because the epoch sheet offers
 // this account's code for sending to somebody else, which is the same exchange in reverse.
 let myProfile = null;
+
+// The last request this page actually made, for a bug report to quote. Captured at the moment
+// it is sent rather than rebuilt on demand: someone who notices a wrong result and then edits
+// the lobby before reporting would otherwise describe criteria that never ran.
+let lastQuery = null;
 // `bosses` and `events` are free lists of rows rather than one slot per act. Bosses need it
 // because Ascension 10 gives the final act two of them, so "exactly this pair" is two rows;
 // events because wanting two out of one act is normal.
@@ -684,6 +689,140 @@ $('#picker').addEventListener('click', e => { if (e.target === $('#picker')) $('
 $('#whyBtn').onclick = () => $('#whySheet').showModal();
 $('#whyClose').onclick = () => $('#whySheet').close();
 $('#whySheet').addEventListener('click', e => { if (e.target === $('#whySheet')) $('#whySheet').close(); });
+
+// ---- Bug reports ---------------------------------------------------------------------------
+//
+// Nothing is sent from here. The report is assembled locally and handed to the user, who files
+// it on GitHub or pastes it wherever they like. That keeps the whole feature free of servers,
+// tokens and accounts, and it means the user sees every character of what they are sending
+// before they send it.
+
+// What the server knows about this install, fetched when the sheet opens rather than at boot:
+// it is wanted once, and the accelerator it reports should be the one in use now.
+let reportFacts = null;
+
+// GitHub truncates a prefilled issue body somewhere past 8k of URL. Well short of that, the
+// button stops being the right route and Copy is offered instead.
+const REPORT_URL_LIMIT = 7000;
+
+$('#reportBtn').onclick = async () => {
+  $('#reportSeed').value = $('#reportSeed').value || $('#inspectSeed').value.trim();
+  $('#reportSheet').showModal();
+  renderReport();
+
+  if (!reportFacts) {
+    try {
+      const res = await fetch('/api/report');
+      reportFacts = res.ok ? await res.json() : null;
+    } catch { reportFacts = null; }
+    renderReport();
+  }
+};
+
+$('#reportClose').onclick = () => $('#reportSheet').close();
+$('#reportSheet').addEventListener('click', e => {
+  if (e.target === $('#reportSheet')) $('#reportSheet').close();
+});
+
+$('#reportWhat').oninput = renderReport;
+$('#reportSeed').oninput = renderReport;
+
+/**
+ * The report itself, as the text that will be filed.
+ *
+ * Written as plain labelled lines rather than a markdown table so it reads the same on a GitHub
+ * issue and pasted into an email, which are the two places it goes.
+ */
+function reportBody() {
+  const what = $('#reportWhat').value.trim();
+  const seed = $('#reportSeed').value.trim().toUpperCase();
+  const f = reportFacts;
+
+  const lines = ['**What happened**', what || '(not described)', ''];
+
+  if (seed) lines.push(`**Seed** \`${seed}\``);
+  lines.push(lastQuery
+    ? `**Last ${lastQuery.kind}** \`${lastQuery.text}\``
+    : '**Last query** (nothing run yet this session)');
+
+  const imported = state.epochs
+    .map((e, i) => (e ? `P${i + 1} ${e.revealed}/${e.total}` : null))
+    .filter(Boolean);
+  if (imported.length) lines.push(`**Imported partners** ${imported.join(', ')}`);
+
+  lines.push('');
+
+  if (!f) {
+    lines.push('**Diagnostics** could not be read from the local server.');
+    return lines.join('\n');
+  }
+
+  lines.push(
+    `**Tool** ${f.toolVersion}`,
+    `**Game** ${f.gameVersion} (verified against ${f.verifiedVersion}, drift ${f.drift})`,
+    `**Mods** ${f.hasMods ? 'a mods folder is present' : 'none detected'}`,
+    `**Engine** ${f.engine}${f.device && f.device !== '-' ? ` (${f.device})` : ''}`,
+    `**Profile** ${f.profileFound
+      ? `found, ${f.revealedEpochs}/${f.totalEpochs} epochs revealed`
+      : 'no save found, assuming fully unlocked'}`,
+    `**Platform** ${f.platform}`);
+
+  if (f.driftWarning) lines.push('', '**Drift warning shown to the user**', f.driftWarning);
+
+  return lines.join('\n');
+}
+
+/** A title that says something in an issue list, without asking for one. */
+function reportTitle() {
+  const what = $('#reportWhat').value.trim().split('\n')[0].trim();
+  if (!what) return '[bug] Unexpected result';
+  return '[bug] ' + (what.length > 70 ? what.slice(0, 67).trimEnd() + '…' : what);
+}
+
+function reportUrl() {
+  const repo = reportFacts?.repository;
+  if (!repo) return null;
+  return `https://github.com/${repo}/issues/new`
+    + `?labels=bug&title=${encodeURIComponent(reportTitle())}`
+    + `&body=${encodeURIComponent(reportBody())}`;
+}
+
+function renderReport() {
+  const body = reportBody();
+  $('#reportPreview').textContent = reportFacts ? body : body + '\n\nGathering…';
+
+  const url = reportUrl();
+  const note = $('#reportNote');
+  const github = $('#reportGithub');
+
+  const tooLong = url !== null && url.length > REPORT_URL_LIMIT;
+  github.disabled = url === null || tooLong;
+
+  note.classList.toggle('is-warn', tooLong);
+  note.textContent = url === null
+    ? 'Waiting for the local server before a GitHub issue can be prepared.'
+    : tooLong
+      ? 'That description is too long to carry in a link. Use Copy report and paste it into a '
+        + 'new issue, or shorten it.'
+      : 'GitHub issues are public, and filing one needs a GitHub account. Copy report works '
+        + 'without either.';
+}
+
+$('#reportGithub').onclick = () => {
+  const url = reportUrl();
+  if (url) window.open(url, '_blank', 'noopener,noreferrer');
+};
+
+$('#reportCopy').onclick = async () => {
+  const btn = $('#reportCopy');
+  try {
+    await navigator.clipboard.writeText(reportBody());
+    btn.textContent = 'Copied';
+  } catch {
+    btn.textContent = 'Copy blocked';
+  }
+  setTimeout(() => { btn.textContent = 'Copy report'; }, 1400);
+};
 
 // ---- Somebody else's unlock state --------------------------------------------------------
 
@@ -2072,6 +2211,7 @@ function startSearch() {
   let found = 0;
 
   const q = buildQuery();
+  lastQuery = { kind: 'search', text: q.toString() };
   stream = new EventSource('/api/search?' + q);
   setBusy(true, 'Searching…');
 
@@ -2517,6 +2657,8 @@ async function inspect() {
   const out = $('#out');
   out.replaceChildren();
   setBusy(true, 'Looking up…');
+
+  lastQuery = { kind: 'inspect', text: q.toString() };
 
   const res = await fetch('/api/explain?' + q);
   const body = await res.json();
