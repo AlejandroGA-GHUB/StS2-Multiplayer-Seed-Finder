@@ -1,4 +1,4 @@
-# Slay the Spire 2 Co-op Seed Finder
+# Slay the Spire 2 Multiplayer Seed Finder
 
 Find **co-op** seeds by what each player gets. An example being: "A seed where P1 and P2 are both offered Silken
 Tress, and Vakuu shows up in Act 3 with Fiddle for both players" is a search you can actually run.
