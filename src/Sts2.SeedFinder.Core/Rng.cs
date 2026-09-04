@@ -1,3 +1,5 @@
+using System;
+
 namespace Sts2.SeedFinder.Core;
 
 /// <summary>
@@ -57,6 +59,31 @@ public sealed class Rng
     {
         Counter++;
         return _random.NextDouble();
+    }
+
+    /// <summary>
+    /// Rng.NextGaussianInt — a normal draw, rounded, resampled until it lands in [min, max].
+    ///
+    /// Box-Muller, so each attempt costs TWO NextDouble draws, and the rejection loop means the
+    /// draw count is not fixed. That matters more here than the value does: map generation reads
+    /// this before anything else, so an attempt miscounted by one desynchronises the entire map.
+    ///
+    /// Two details are easy to get wrong and both are load-bearing. The transform uses SIN, where
+    /// the game's NextGaussianDouble on the very next lines uses COS. And the inputs are
+    /// 1 - NextDouble() rather than NextDouble(), which is what keeps Log() off zero.
+    /// </summary>
+    public int NextGaussianInt(int mean, int stdDev, int min, int max)
+    {
+        int value;
+        do
+        {
+            double d = 1.0 - NextDouble();
+            double u = 1.0 - NextDouble();
+            double gaussian = Math.Sqrt(-2.0 * Math.Log(d)) * Math.Sin(Math.PI * 2.0 * u);
+            value = (int)Math.Round(mean + stdDev * gaussian);
+        }
+        while (value < min || value > max);
+        return value;
     }
 
     /// <summary>Rng.NextItem — one bounded draw, used as an index. Returns default for an empty set.</summary>

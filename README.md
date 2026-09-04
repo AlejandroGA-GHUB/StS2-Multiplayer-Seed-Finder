@@ -260,6 +260,7 @@ Two things that surprise people:
 | The card reward from fight 3 | Same draw chain, not yet seen in a played run |
 | Every shop's third relic, per player, in order | Confirmed against real co-op runs |
 | Each act's treasure chest | Confirmed against a real co-op run |
+| Each act's full map layout | Verified node-for-node against a real run |
 | Card rewards from fight 4 on | Not supported yet |
 | A shop's other two relics, cards or potions | Not supported yet |
 | Relics from elite fights | Not supported yet |
@@ -278,6 +279,10 @@ Five independent checks back this up:
 - **`--gpu-verify`** runs the GPU search and the CPU one over the same seeds and compares the
   results as sets, so an accelerated search cannot quietly answer a different question.
 - Relics, bosses and the Act 1 map have been **confirmed across several played co-op runs**.
+
+**Map Visual**, next to Copy on any result, swaps the results for all three act maps drawn side by
+side, with the room icons from your own install. It is display-only: maps are computed for one
+seed on demand and never touch a search.
 
 
 ### What you can search on
@@ -434,10 +439,10 @@ and presenting it as fact.
 
 ## Art and descriptions
 
-The web UI shows real relic icons, card portraits, character portraits, Ancient icons, event
-illustrations, and the game's own description of what each one does, all read from **your own
-installed copy of the game** at runtime. Nothing is bundled and nothing is redistributed **(no
-game art or text ships in this repository or in a release).**
+The web UI shows real relic icons, card portraits, character portraits, Ancient and boss icons,
+map node art, event illustrations, and the game's own description of what each one does, all read
+from **your own installed copy of the game** at runtime. Nothing is bundled and nothing is
+redistributed **(no game art or text ships in this repository or in a release).**
 
 The single exception is the app's own icon, which cannot work that way because it is compiled into
 the executable. It is not game art: it is a sprout from

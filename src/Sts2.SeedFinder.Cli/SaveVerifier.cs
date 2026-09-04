@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Map;
 using Sts2.SeedFinder.Core.Saves;
 
 namespace Sts2.SeedFinder.Cli;
@@ -146,6 +147,23 @@ public static class SaveVerifier
             Console.WriteLine($"UpFront draws: ours {run.UpFrontDraws}, saved counter {saved}: {verdict}");
             if (saved < run.UpFrontDraws) failures++;
             Console.WriteLine();
+        }
+
+        // --- Check 5: the act maps --------------------------------------------------------
+        // Maps are built on ENTERING an act, not upfront, so a save only carries one for each act
+        // the run has actually reached. Acts without one are skipped silently rather than counted
+        // as passes, which is why a fresh run reports a single map here and a finished one three.
+        //
+        // This draws from its own stream ("act_n_map") and touches nothing above, so a failure
+        // here never implicates the checks before it, and vice versa.
+        var savedActElements = root.GetProperty("acts").EnumerateArray().ToList();
+        for (int i = 0; i < savedActElements.Count && i < run.Acts.Count; i++)
+        {
+            var map = ActMap.Generate(
+                runSeed, i, actsForGeneration[i]!, isMultiplayer, ascension,
+                hasSecondBoss: run.Acts[i].SecondBoss is not null);
+
+            failures += MapVerifier.Verify(savedActElements[i], map, $"Act {i + 1}: {savedActs[i].Act}");
         }
 
         Console.WriteLine(failures == 0

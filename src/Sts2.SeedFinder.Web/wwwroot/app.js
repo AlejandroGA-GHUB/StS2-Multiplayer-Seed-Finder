@@ -418,15 +418,6 @@ function hueOf(name) {
 
 function iconFor(slug, name, size, kind = 'relic') {
   if (artIndex.get(key(kind, slug))) {
-    // Map-node art is a white silhouette the game tints itself, so drawing it as an image gives
-    // a flat white blob. Mask with it and paint the colour here instead, one hue per Ancient.
-    if (kind === 'ancient') {
-      const badge = el('span', 'icon is-ancient-mask');
-      badge.style.setProperty('--art', `url("/api/asset/ancient/${slug}")`);
-      badge.style.setProperty('--tint', `hsl(${hueOf(name)} 52% 66%)`);
-      if (size) { badge.style.width = badge.style.height = size + 'px'; }
-      return badge;
-    }
     const img = el('img', 'icon' + (kind === 'relic' ? '' : ' is-' + kind));
     // Tint the box while the icon is in flight so the grid never shows empty holes — the
     // first request for each one has to decode a compressed texture server-side.
@@ -689,6 +680,356 @@ $('#picker').addEventListener('click', e => { if (e.target === $('#picker')) $('
 $('#whyBtn').onclick = () => $('#whySheet').showModal();
 $('#whyClose').onclick = () => $('#whySheet').close();
 $('#whySheet').addEventListener('click', e => { if (e.target === $('#whySheet')) $('#whySheet').close(); });
+
+// ---- Act maps ------------------------------------------------------------------------------
+//
+// Drawn from the same generator the CLI verifies against a real run save, so what is on screen is
+// the map the game will build, laid out with the coordinates the game itself would have saved.
+//
+// The results are hidden rather than thrown away, which is what makes Back to Results instant and
+// is the reason this is not a dialog: three acts side by side want the whole width.
+
+// Node art the game ships is a WHITE SILHOUETTE with an alpha channel, not coloured artwork —
+// every visible pixel is (255,255,255) and the game tints it at runtime. So the ancients and
+// bosses are painted here the same way the Ancient picker already paints them: the image becomes
+// a mask and the colour is ours. Drawing them as-is gives flat white blobs.
+//
+// The six room types have no file of their own at any size. They live inside a sprite atlas the
+// game addresses by region, so there is nothing to pull out, and these are drawn to match the
+// game's colour language instead: grey fights, purple elites, a campfire, a yellow `?`.
+// `sprite` is the game's own icon, cut from its map sprite sheet at request time and served
+// from the player's install. `icon` is the drawn fallback for an install we cannot read.
+// `color` is still used by both: it tints the ancient and boss silhouettes, which genuinely are
+// white masks, and it colours the fallback tokens.
+const MAP_NODES = {
+  // `icon` matters for these two as well: three bosses are Spine-animated and ship no still
+  // image, so without a token of their own they fell through to the generic `?` and read as
+  // unknown rooms. The crowned mask is the elite's, deliberately — a boss is what it escalates
+  // into, and it is unmistakable next to one at this size.
+  ancient:   { color: '#5cc9bf', label: 'Ancient', icon: 'ancient' },
+  boss:      { color: '#b07ce8', label: 'Boss',    icon: 'elite' },
+  monster:   { color: '#a39a90', label: 'Monster',   icon: 'monster',  sprite: 'map_monster' },
+  elite:     { color: '#a870d8', label: 'Elite',     icon: 'elite',    sprite: 'map_elite' },
+  unknown:   { color: '#e3c14f', label: 'Unknown',   icon: 'unknown',  sprite: 'map_unknown' },
+  shop:      { color: '#5fb87a', label: 'Shop',      icon: 'shop',     sprite: 'map_shop' },
+  rest_site: { color: '#e08a46', label: 'Rest site', icon: 'rest',     sprite: 'map_rest' },
+  treasure:  { color: '#c9993c', label: 'Treasure',  icon: 'treasure', sprite: 'map_chest' },
+};
+
+/** Icon names the current install can serve, from /api/map. Empty means draw our own. */
+let mapSprites = new Set();
+
+/**
+ * Scroll position at the moment the map view took over, so Back to Results can put it back.
+ *
+ * Read off `main.results` rather than the window: the results column is its own scroll container,
+ * so window.scrollY is always 0 here and saving it restores nothing.
+ */
+let resultsScrollY = 0;
+
+const MAP_BACKDROP = 'map_node_background';
+
+// Drawn in a 24x24 box and scaled onto the node. Paths rather than unicode so they render the
+// same everywhere and can carry the game's shapes rather than whatever a font happens to have.
+const MAP_ICONS = {
+  // A horned mask: the shape a normal fight uses in game.
+  monster: [
+    'M5.5 8.5 L3.5 3.8 L9 6.4 Z',
+    'M18.5 8.5 L20.5 3.8 L15 6.4 Z',
+    'M12 6.2 C16.4 6.2 19.4 9 19.4 12.8 C19.4 16.9 16.2 20 12 20 C7.8 20 4.6 16.9 4.6 12.8 C4.6 9 7.6 6.2 12 6.2 Z',
+  ],
+  // The same mask, crowned, which is how elites read against normal fights.
+  elite: [
+    'M4.6 7.6 L3 2.6 L8 5.6 L12 1.8 L16 5.6 L21 2.6 L19.4 7.6 Z',
+    'M12 7 C16.4 7 19.4 9.7 19.4 13.4 C19.4 17.4 16.2 20.4 12 20.4 C7.8 20.4 4.6 17.4 4.6 13.4 C4.6 9.7 7.6 7 12 7 Z',
+  ],
+  rest: [
+    'M12 2.6 C14.6 7 17 8.6 17 12.6 A5 5 0 0 1 7 12.6 C7 9.6 8.6 8.8 9.6 7.4 C10.2 9.2 11 9.6 11.6 9 C12.4 8.2 12.2 5.6 12 2.6 Z',
+    'M3.6 19.4 L20.4 16.6',
+    'M3.6 16.6 L20.4 19.4',
+  ],
+  // A four-pointed star, for an Ancient whose own art is missing.
+  ancient: [
+    'M12 1.6 C13.2 7.4 16.6 10.8 22.4 12 C16.6 13.2 13.2 16.6 12 22.4 C10.8 16.6 7.4 13.2 1.6 12 C7.4 10.8 10.8 7.4 12 1.6 Z',
+  ],
+  shop: [
+    'M3.4 8.6 L5.8 4.2 H18.2 L20.6 8.6 Z',
+    'M5 8.6 V20 H19 V8.6',
+    'M9.8 20 V13.6 H14.2 V20',
+  ],
+  treasure: [
+    'M3.6 9.4 C3.6 6.4 7.4 4.4 12 4.4 C16.6 4.4 20.4 6.4 20.4 9.4 V19.4 H3.6 Z',
+    'M3.6 11.6 H20.4',
+    'M10.6 11.6 H13.4 V15 H10.6 Z',
+  ],
+};
+
+const MAP_COL_GAP = 40;
+const MAP_ROW_GAP = 38;
+const MAP_PAD = 22;
+const MAP_RADIUS = 13;
+
+function svgEl(tag, attrs) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs || {})) node.setAttribute(k, v);
+  return node;
+}
+
+async function openMapView(seed) {
+  const q = new URLSearchParams({ seed, players: state.players });
+  if (charactersReady()) q.set('characters', state.characters.join(','));
+  if (state.ascension > 0) q.set('ascension', state.ascension);
+  // Act SELECTION depends on unlock state, so the lobby has to come along or a partly unlocked
+  // party would be shown maps for acts it will never see.
+  state.epochs.forEach((e, i) => { if (e) q.append('epochs', `${i + 1}:${e.code}`); });
+
+  // The status bar is holding the search summary — how many seeds were scanned, on what engine.
+  // setBusy empties it, and this is a side trip rather than a new search, so put it back after.
+  const bar = $('#status');
+  const summary = [...bar.childNodes];
+  const restoreSummary = () => bar.replaceChildren(...summary);
+
+  setBusy(true, 'Building maps…');
+  let body;
+  try {
+    const res = await fetch('/api/map?' + q);
+    body = await res.json();
+    if (!res.ok) throw new Error(body.error || 'Could not build the maps.');
+  } catch (err) {
+    setBusy(false, '');
+    restoreSummary();
+    // Surfaced where every other failure on this page is, rather than in a dialog: the results
+    // are still on screen and still correct, so this is a failed side trip, not a broken search.
+    $('#out').prepend(el('div', 'err', err.message));
+    return;
+  }
+  setBusy(false, '');
+  restoreSummary();
+
+  mapSprites = new Set(body.icons || []);
+  $('#mapSeed').textContent = body.seed;
+
+  const cols = $('#mapCols');
+  cols.replaceChildren();
+  for (const act of body.acts) cols.appendChild(renderActMap(act));
+
+  renderMapLegend();
+
+  // Where the results were, so Back to Results returns you to the card you opened rather than
+  // to the top of a list you had scrolled a long way down.
+  const pane = $('.results');
+  resultsScrollY = pane.scrollTop;
+
+  $('#out').hidden = true;
+  $('.top-bar').hidden = true;
+  $('#mapView').hidden = false;
+  pane.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function closeMapView() {
+  $('#mapView').hidden = true;
+  $('#out').hidden = false;
+  $('.top-bar').hidden = false;
+
+  // Restored after the results are visible again, since a hidden pane has no height to scroll
+  // into. Instant rather than smooth: this is a return to a known place, and animating it just
+  // makes the list appear to lurch.
+  $('.results').scrollTo({ top: resultsScrollY, behavior: 'instant' });
+}
+
+function renderMapLegend() {
+  const legend = $('#mapLegend');
+  legend.replaceChildren();
+
+  for (const [type, def] of Object.entries(MAP_NODES)) {
+    // Ancients and bosses are named in each column's own captions and are unmistakable on the
+    // map, so they earn no legend row. Skipped BY TYPE rather than by whether they have a token,
+    // since they do have one now: it is what an artless boss falls back to.
+    if (type === 'ancient' || type === 'boss') continue;
+
+    const item = el('span');
+
+    // Drawn with the same builder the map uses, so the key cannot drift from the nodes. The two
+    // that carry real art get a plain dot: their shape is whichever ancient or boss turned up.
+    const swatch = svgEl('svg', { viewBox: '0 0 20 20', width: 15, height: 15 });
+    if (def.sprite && mapSprites.has(def.sprite)) {
+      swatch.appendChild(svgEl('image', {
+        href: `/api/asset/mapicon/${def.sprite}`,
+        x: 1, y: 1, width: 18, height: 18, preserveAspectRatio: 'xMidYMid meet',
+      }));
+    } else if (def.icon) {
+      swatch.appendChild(mapIconFor({ ...def }, 10, 10));
+    } else {
+      swatch.appendChild(svgEl('circle', {
+        cx: 10, cy: 10, r: 6, fill: def.color + '40', stroke: def.color, 'stroke-width': 1.5,
+      }));
+    }
+
+    item.appendChild(swatch);
+    item.appendChild(document.createTextNode(def.label));
+    legend.appendChild(item);
+  }
+}
+
+/**
+  * The room-type token, drawn from a 24x24 path set and scaled onto the node.
+  *
+  * Named apart from the page's own iconFor, which serves relic and Ancient art: function
+  * declarations share one scope here, so a second iconFor would silently replace it everywhere.
+  */
+function mapIconFor(def, x, y) {
+  // `?` stays type rather than a path: it is a character, and drawing it as one keeps it crisp.
+  if (def.icon === 'unknown' || !MAP_ICONS[def.icon]) {
+    // Centring is set here rather than left to the stylesheet, because the legend reuses this
+    // outside .map-node where those rules do not reach.
+    const label = svgEl('text', {
+      x, y, fill: def.color, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+      'font-size': 13, 'font-weight': 600,
+    });
+    label.textContent = '?';
+    return label;
+  }
+
+  const size = MAP_RADIUS * 1.5;
+  const g = svgEl('g', {
+    transform: `translate(${x - size / 2} ${y - size / 2}) scale(${size / 24})`,
+    fill: def.color, stroke: def.color,
+    'stroke-width': 1.6, 'stroke-linejoin': 'round', 'stroke-linecap': 'round',
+  });
+
+  // Strokes carry the shape and a light fill gives it body, so the token reads at 20px without
+  // becoming a solid dot.
+  g.setAttribute('fill-opacity', '0.35');
+  for (const d of MAP_ICONS[def.icon]) g.appendChild(svgEl('path', { d }));
+  return g;
+}
+
+/** The node's own art from the player's install, or null to fall back to a drawn token. */
+function nodeArt(act, node) {
+  if (node === act.start) return act.ancientArt ? `/api/asset/ancient/${act.ancientArt}` : null;
+  if (node === act.bossNode) return act.bossArt ? `/api/asset/boss/${act.bossArt}` : null;
+  if (node === act.secondBossNode) return act.secondBossArt ? `/api/asset/boss/${act.secondBossArt}` : null;
+  return null;
+}
+
+function renderActMap(act) {
+  const box = el('div', 'map-col');
+  box.appendChild(el('h3', '', `Act ${act.index}: ${act.act}`));
+
+  // The boss is named here because the map shows only that a boss is at the end, and knowing
+  // which one is usually why somebody is looking at this act at all.
+  const boss = act.secondBoss ? `${act.boss} + ${act.secondBoss}` : act.boss;
+  box.appendChild(el('p', 'map-boss', boss));
+
+  // Every node the map can draw, including the two that live outside the grid.
+  const nodes = act.nodes.slice();
+  nodes.push(act.start, act.bossNode);
+  if (act.secondBossNode) nodes.push(act.secondBossNode);
+
+  const maxRow = nodes.reduce((m, n) => Math.max(m, n.row), 0);
+  const width = (act.width - 1) * MAP_COL_GAP + MAP_PAD * 2;
+  const height = maxRow * MAP_ROW_GAP + MAP_PAD * 2;
+
+  // A fixed box height with `meet` scales each act to fit inside it and centres what is left
+  // over. That is what keeps the three columns level despite act 1 being two rows taller, and
+  // what lets a whole act be read without scrolling.
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: 'xMidYMid meet',
+    role: 'img',
+    'aria-label': `Act ${act.index} map`,
+  });
+
+  // Row 0 is the ancient and the highest row is the boss, but the game draws the boss at the
+  // TOP and has you climb towards it, so rows are inverted on the way to the screen.
+  const at = (col, row) => [MAP_PAD + col * MAP_COL_GAP, MAP_PAD + (maxRow - row) * MAP_ROW_GAP];
+
+  // Edges first so the nodes sit on top of them.
+  for (const node of nodes) {
+    const [x1, y1] = at(node.col, node.row);
+    for (const child of node.children) {
+      const [col, row] = child.split(',').map(Number);
+      const [x2, y2] = at(col, row);
+      svg.appendChild(svgEl('line', { class: 'map-edge', x1, y1, x2, y2 }));
+    }
+  }
+
+  for (const node of nodes) {
+    const def = MAP_NODES[node.type] || { glyph: '●', color: '#888', label: node.type };
+    const [x, y] = at(node.col, node.row);
+
+    const g = svgEl('g', { class: 'map-node' });
+
+    const title = svgEl('title');
+    title.textContent = node === act.start ? `Ancient: ${act.ancient}`
+      : node === act.bossNode ? `Boss: ${act.boss}`
+      : node === act.secondBossNode ? `Second boss: ${act.secondBoss}`
+      : def.label;
+    g.appendChild(title);
+
+    // The ancient and the bosses are the two nodes the game ships as individual images, so they
+    // are drawn with the player's own art. Everything else lives inside a sprite atlas the game
+    // addresses by region, which is not something we can pull a single icon out of, so those keep
+    // a drawn token. Art is only requested when the install was found to have it.
+    const art = nodeArt(act, node);
+    if (art) {
+      // Drawn as it is. This is the run-history icon set, which is real colour art rather than
+      // the white silhouettes the map folder holds, so there is nothing to tint.
+      const size = MAP_RADIUS * 2.9;
+      g.appendChild(svgEl('image', {
+        href: art, x: x - size / 2, y: y - size / 2, width: size, height: size,
+        preserveAspectRatio: 'xMidYMid meet',
+      }));
+    } else if (def.sprite && mapSprites.has(def.sprite)) {
+      // The game's own icon, on the game's own disc. Both are cut from the map sprite sheet in
+      // the player's install, so this is the art they see in game rather than an approximation.
+      if (mapSprites.has(MAP_BACKDROP)) {
+        const disc = MAP_RADIUS * 2.5;
+        g.appendChild(svgEl('image', {
+          href: `/api/asset/mapicon/${MAP_BACKDROP}`,
+          x: x - disc / 2, y: y - disc / 2, width: disc, height: disc,
+        }));
+      }
+      // Fitted by the LONGER edge so the tall campfire and the wide chest end up the same
+      // visual weight rather than one filling the disc and the other rattling around in it.
+      const box = MAP_RADIUS * 1.7;
+      g.appendChild(svgEl('image', {
+        href: `/api/asset/mapicon/${def.sprite}`,
+        x: x - box / 2, y: y - box / 2, width: box, height: box,
+        preserveAspectRatio: 'xMidYMid meet',
+      }));
+    } else {
+      g.appendChild(svgEl('circle', {
+        cx: x, cy: y, r: MAP_RADIUS, fill: def.color + '20', stroke: def.color,
+      }));
+      g.appendChild(mapIconFor(def, x, y));
+    }
+
+    svg.appendChild(g);
+  }
+
+  box.appendChild(svg);
+
+  // The boss is named at the top because that is where it sits; the Ancient is named at the
+  // bottom for the same reason. Both are worth saying outright: the node art is a silhouette,
+  // and nobody should have to recognise an Ancient by its outline.
+  box.appendChild(el('p', 'map-ancient', act.ancient));
+
+  return box;
+}
+
+$('#mapBack').onclick = closeMapView;
+
+$('#mapCopy').onclick = async () => {
+  const btn = $('#mapCopy');
+  try {
+    await navigator.clipboard.writeText($('#mapSeed').textContent);
+    btn.textContent = 'Copied';
+  } catch {
+    btn.textContent = 'Copy blocked';
+  }
+  setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
+};
 
 // ---- Bug reports ---------------------------------------------------------------------------
 //
@@ -1589,6 +1930,11 @@ function bossProblem(act) {
   return `No Act ${act} map has all of that.`;
 }
 
+/** One boss row for the picker, with its map-node art when the install has it. */
+function bossOption(b) {
+  return { label: b.name, value: b.slug, icon: () => iconFor(b.slug, b.name, 20, 'boss') };
+}
+
 function renderBosses() {
   const box = $('#bosses');
   hideTip();
@@ -1639,10 +1985,10 @@ function renderBosses() {
       for (const map of maps)
         items.push({
           group: map,
-          items: options.filter(x => x.maps.includes(map)).map(b => ({ label: b.name, value: b.slug })),
+          items: options.filter(x => x.maps.includes(map)).map(bossOption),
         });
     } else {
-      items.push(...options.map(b => ({ label: b.name, value: b.slug })));
+      items.push(...options.map(bossOption));
     }
 
     const which = dropdown(items, crit.boss, v => { crit.boss = v; renderBosses(); });
@@ -2019,11 +2365,19 @@ function eventList(act) {
   return d;
 }
 
-function renderHit(hit) {
+/**
+ * One result card. <paramref name="position"/> is the 1-based place in the result list, or null
+ * for an inspected seed, where a "#1" would be noise rather than information.
+ */
+function renderHit(hit, position = null) {
   const card = el('div', 'hit');
 
   const head = el('div', 'hit-head');
-  head.appendChild(el('span', 'seed', hit.seed));
+
+  const ident = el('div', 'hit-id');
+  if (position !== null) ident.appendChild(el('span', 'hit-num', `Seed #${position}`));
+  ident.appendChild(el('span', 'seed', hit.seed));
+  head.appendChild(ident);
   const copy = el('button', 'icon-btn copy', 'Copy');
   copy.type = 'button';
   copy.onclick = async () => {
@@ -2031,7 +2385,15 @@ function renderHit(hit) {
     copy.textContent = 'Copied';
     setTimeout(() => (copy.textContent = 'Copy'), 1200);
   };
+  // Map first, then Copy, matching the order the map view's own header uses.
+  const mapBtn = el('button', 'icon-btn map-btn', 'Map Visual');
+  mapBtn.type = 'button';
+  mapBtn.title = 'Show this seed’s three act maps';
+  mapBtn.onclick = () => openMapView(hit.seed);
+  head.appendChild(mapBtn);
+
   head.appendChild(copy);
+
   card.appendChild(head);
 
   // Act 1 — Neow
@@ -2250,7 +2612,7 @@ function startSearch() {
 
   stream.addEventListener('hit', e => {
     found++;
-    out.appendChild(renderHit(JSON.parse(e.data)));
+    out.appendChild(renderHit(JSON.parse(e.data), found));
     setBusy(true, scanLine());
   });
 
@@ -2704,6 +3066,7 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
 
   // Events, likewise a flat list: an event that both Act 1 maps carry is one illustration.
   for (const slug of catalog.eventArtSlugs ?? []) artIndex.set(key('event', slug), true);
+  for (const slug of catalog.bossArtSlugs ?? []) artIndex.set(key('boss', slug), true);
 
   // Their arrival text, which arrives on the events themselves rather than in a list of its own.
   // An event in two acts is filed twice with the same value, as the card pools are.

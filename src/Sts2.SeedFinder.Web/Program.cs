@@ -4,6 +4,7 @@ using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Map;
 using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Core.Saves;
 using Sts2.SeedFinder.Web;
@@ -259,6 +260,7 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         // Events carry their art the same way: a flat list rather than a flag on each event,
         // since an event appears once per act it can turn up in and the art does not.
         assets.AvailableEventSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
+        assets.AvailableBossSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
         neowCardRelics), json);
 });
 
@@ -443,6 +445,18 @@ app.MapGet("/api/asset/ancient/{slug}", async (string slug, IGameAssetProvider a
     return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
 });
 
+app.MapGet("/api/asset/boss/{slug}", async (string slug, IGameAssetProvider assets, CancellationToken ct) =>
+{
+    var img = await assets.TryGetBossAsync(Path.GetFileNameWithoutExtension(slug), ct);
+    return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
+});
+
+app.MapGet("/api/asset/mapicon/{name}", async (string name, IGameAssetProvider assets, CancellationToken ct) =>
+{
+    var img = await assets.TryGetMapIconAsync(Path.GetFileNameWithoutExtension(name), ct);
+    return img is null ? Results.NotFound() : Results.File(img.Value.Bytes, img.Value.ContentType);
+});
+
 app.MapGet("/api/asset/event/{slug}", async (string slug, IGameAssetProvider assets, CancellationToken ct) =>
 {
     var img = await assets.TryGetEventAsync(Path.GetFileNameWithoutExtension(slug), ct);
@@ -474,6 +488,87 @@ app.MapGet("/api/explain", (HttpContext http, IConfiguration config, string seed
     {
         return Results.BadRequest(new { error = ex.Message });
     }
+});
+
+// ---- The act maps ------------------------------------------------------------------------
+// Each act map comes off its own rng stream ("act_n_map"), so this shares nothing with the
+// prediction chain above and cannot be affected by it. It still needs the lobby, because act
+// SELECTION depends on unlock state and the map is generated for whichever act was selected.
+//
+// All three acts are returned in one response. They are cheap next to a search, and the UI shows
+// them side by side, so paging them would only add a round trip per column.
+
+app.MapGet("/api/map", (HttpContext http, IConfiguration config, IGameAssetProvider assets,
+                        string seed, int players, string? characters) =>
+{
+    var canonical = SeedCodec.Canonicalize(seed);
+    if (!SeedCodec.IsValid(canonical))
+        return Results.BadRequest(new { error = $"'{seed}' is not a valid seed. Allowed characters: {SeedCodec.Alphabet}" });
+
+    try
+    {
+        var chars = Query.Characters(characters);
+        var unlocks = Query.LobbyUnlocks(http.Request.Query, players, config["Saves:Directory"]);
+        int ascension = Query.Ascension(http.Request.Query);
+        bool isMultiplayer = players > 1;
+        var runSeed = SeedCodec.RunSeed(canonical);
+
+        var acts = RunGenerator.SelectActs(runSeed, unlocks.Run, isMultiplayer);
+        var run = RunGenerator.GenerateRun(runSeed, unlocks.Run, isMultiplayer, chars, acts, ascension);
+
+        var result = new List<MapActDto>();
+        for (int i = 0; i < acts.Length; i++)
+        {
+            // Whether this act carries a second boss is a property of the RUN, not of the
+            // ascension alone, so it is read back from generation rather than recomputed.
+            bool hasSecondBoss = run.Acts[i].SecondBoss is not null;
+
+            var map = ActMap.Generate(runSeed, i, acts[i], isMultiplayer, ascension, hasSecondBoss);
+
+            // Slugs are sent only when the install actually has that art, so the page never
+            // fires a request it knows will 404 and never leaves a broken node behind. Three
+            // bosses are Spine-animated and have no still, so this is normally partial.
+            string? BossArt(Encounter? e) =>
+                e is not null && assets.AvailableBossSlugs.Contains(ActCatalog.Slug(e.Name))
+                    ? ActCatalog.Slug(e.Name) : null;
+
+            var ancientSlug = GameHash.SnakeCase(run.Acts[i].Ancient);
+
+            result.Add(new MapActDto(
+                Index: i + 1,
+                Act: acts[i].Name,
+                Boss: ActCatalog.Display(run.Acts[i].Boss.Name),
+                SecondBoss: run.Acts[i].SecondBoss is { } sb ? ActCatalog.Display(sb.Name) : null,
+                Ancient: run.Acts[i].Ancient,
+                AncientArt: assets.AvailableAncientSlugs.Contains(ancientSlug) ? ancientSlug : null,
+                BossArt: BossArt(run.Acts[i].Boss),
+                SecondBossArt: BossArt(run.Acts[i].SecondBoss),
+                Width: map.ColumnCount,
+                Height: map.RowCount,
+                Nodes: map.GetAllMapPoints().Select(ToNode).ToArray(),
+                Start: ToNode(map.StartingMapPoint),
+                BossNode: ToNode(map.BossMapPoint),
+                SecondBossNode: map.SecondBossMapPoint is { } second ? ToNode(second) : null));
+        }
+
+        // Which room-type icons this install can serve, so the page uses real art where it
+        // exists and its own drawn tokens where it does not, without probing for 404s.
+        return Results.Json(new
+        {
+            seed = canonical,
+            acts = result,
+            icons = assets.AvailableMapIcons.ToArray(),
+        }, json);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+
+    static MapNodeDto ToNode(MapPoint p) => new(
+        p.Coord.Col, p.Coord.Row,
+        GameHash.Slugify(p.PointType.ToString()).ToLowerInvariant(),
+        p.Children.Select(c => $"{c.Coord.Col},{c.Coord.Row}").ToArray());
 });
 
 // ---- Search, streamed --------------------------------------------------------------------

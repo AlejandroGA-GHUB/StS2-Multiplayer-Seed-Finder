@@ -63,6 +63,25 @@ public interface IGameAssetProvider
     Task<AssetImage?> TryGetAncientAsync(string slug, CancellationToken ct) =>
         Task.FromResult<AssetImage?>(null);
 
+    /// <summary>
+    /// Boss slugs with map-node art, e.g. <c>the_kin</c>. Deliberately incomplete: three bosses
+    /// are drawn from Spine animations rather than a still, so they have no file to serve and the
+    /// map falls back to a plain node for them.
+    /// </summary>
+    IReadOnlySet<string> AvailableBossSlugs => new HashSet<string>();
+
+    Task<AssetImage?> TryGetBossAsync(string slug, CancellationToken ct) =>
+        Task.FromResult<AssetImage?>(null);
+
+    /// <summary>
+    /// Room-type icon names from the map sprite sheet, e.g. <c>map_monster</c>. Empty for any
+    /// source that is not reading a real install, since these are cut from a packed atlas.
+    /// </summary>
+    IReadOnlySet<string> AvailableMapIcons => new HashSet<string>();
+
+    Task<AssetImage?> TryGetMapIconAsync(string name, CancellationToken ct) =>
+        Task.FromResult<AssetImage?>(null);
+
     /// <summary>Event slugs with illustration art, e.g. <c>zen_weaver</c>.</summary>
     IReadOnlySet<string> AvailableEventSlugs => new HashSet<string>();
 

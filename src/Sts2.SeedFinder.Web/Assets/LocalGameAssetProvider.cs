@@ -36,16 +36,42 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
     [GeneratedRegex(@"^images/packed/character_select/char_select_([a-z0-9_]+)\.png\.import$")]
     private static partial Regex CharacterSource();
 
-    // The Ancients' map-node icons. The full-body portraits (images/ancients/) exist too, but
-    // these are already icon-shaped and icon-sized, which is what the UI wants. "_outline" is a
-    // separate silhouette layer the map draws underneath, so the pattern excludes it.
-    [GeneratedRegex(@"^images/packed/map/ancients/ancient_node_([a-z0-9_]+)\.png\.import$")]
+    // The run-history icon set: one 88px COLOURED icon for every Ancient, every boss, and every
+    // room type, all in one folder. Preferred over images/packed/map/ancients/, which holds the
+    // same Ancients as flat white silhouettes the game tints at runtime — those draw as featureless
+    // blobs outside the game. "_outline" is a separate layer, so the pattern excludes it.
+    [GeneratedRegex(@"^images/ui/run_history/([a-z0-9_]+)\.png\.import$")]
     private static partial Regex AncientSource();
 
     // One illustration per event, in a flat folder named by the same slug we use. A few entries
     // there are alternate states of an event rather than events (trial_started,
     // zen_weaver_phobia_mode, dense_vegetation_foreground), so the caller filters against the
     // act tables instead of trusting the folder.
+    // The map's room-type icons. Unlike everything else here these are not files: they are
+    // regions of a shared sprite sheet, so the .tres names the sheet and the rectangle to cut.
+    //
+    // Scoped to icons/ deliberately. The same atlas also carries map/ancients/ and
+    // map/placeholder/, but neither is worth taking from here: the ancients are the same white
+    // masks their standalone files are, and the boss sprites are inconsistent — Soul Fysh is
+    // full colour while Vantom is a near-black silhouette. Tinting the standalone masks gives
+    // every boss and ancient the same treatment, which reads better than a mix.
+    [GeneratedRegex(@"^images/atlases/ui_atlas\.sprites/map/icons/([a-z0-9_]+)\.tres$")]
+    private static partial Regex MapIconSource();
+
+    /// <summary>The sheet an AtlasTexture points at.</summary>
+    [GeneratedRegex(@"path=""res://(?<sheet>[^""]+\.png)""")]
+    private static partial Regex AtlasSheet();
+
+    /// <summary>Its rectangle. Godot writes these as floats, so the fraction is optional.</summary>
+    [GeneratedRegex(@"region\s*=\s*Rect2\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)")]
+    private static partial Regex AtlasRegion();
+
+    // Every boss, from the same run-history set, and the only source that covers all of them:
+    // images/map/placeholder/ is missing Ceremonial Beast, the False Queen and The Insatiable,
+    // whose map nodes are Spine-animated and ship no still there.
+    [GeneratedRegex(@"^images/ui/run_history/([a-z0-9_]+)_boss\.png\.import$")]
+    private static partial Regex BossSource();
+
     [GeneratedRegex(@"^images/events/([a-z0-9_]+)\.png\.import$")]
     private static partial Regex EventSource();
 
@@ -99,11 +125,23 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
     private readonly Dictionary<string, string> _charTexturePaths;   // character  -> pck path
     private readonly Dictionary<string, string> _ancientTexturePaths; // ancient   -> pck path
     private readonly Dictionary<string, string> _eventTexturePaths;   // event slug -> pck path
+    private readonly Dictionary<string, string> _bossTexturePaths;    // boss slug  -> pck path
+    private readonly Dictionary<string, MapIconSprite> _mapIcons;     // icon name  -> sheet + rect
     private readonly ConcurrentDictionary<string, AssetImage?> _cache = new();
     private readonly ConcurrentDictionary<string, AssetImage?> _cardCache = new();
     private readonly ConcurrentDictionary<string, AssetImage?> _charCache = new();
     private readonly ConcurrentDictionary<string, AssetImage?> _ancientCache = new();
     private readonly ConcurrentDictionary<string, AssetImage?> _eventCache = new();
+    private readonly ConcurrentDictionary<string, AssetImage?> _bossCache = new();
+    private readonly ConcurrentDictionary<string, AssetImage?> _mapIconCache = new();
+
+    /// <summary>
+    /// Decoded sprite sheets, kept whole. A sheet is 2048x2048, so decoding one costs 16 MB of
+    /// pixels — but every icon on the map is a rectangle of the SAME sheet, so decoding once and
+    /// cutting from it is the difference between one decode and a dozen. Filled lazily, so an
+    /// install whose maps are never opened never pays for it.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DecodedSheet?> _sheetCache = new();
     private readonly IReadOnlyDictionary<string, AssetText> _text;
     private readonly IReadOnlyDictionary<string, AssetText> _cardText;
     private readonly IReadOnlyDictionary<string, AssetText> _eventText;
@@ -115,6 +153,8 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
     public IReadOnlySet<string> AvailableCharacterSlugs { get; }
     public IReadOnlySet<string> AvailableAncientSlugs { get; }
     public IReadOnlySet<string> AvailableEventSlugs { get; }
+    public IReadOnlySet<string> AvailableBossSlugs { get; }
+    public IReadOnlySet<string> AvailableMapIcons => _mapIcons.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Every description the install has, for exporting to a bundled directory.</summary>
     public IReadOnlyDictionary<string, AssetText> AllText => _text;
@@ -126,7 +166,9 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
         Dictionary<string, string> charTexturePaths, IReadOnlySet<string> charsAvailable,
         Dictionary<string, string> ancientTexturePaths, IReadOnlySet<string> ancientsAvailable,
         Dictionary<string, string> eventTexturePaths, IReadOnlySet<string> eventsAvailable,
-        IReadOnlyDictionary<string, AssetText> eventText)
+        IReadOnlyDictionary<string, AssetText> eventText,
+        Dictionary<string, string> bossTexturePaths, IReadOnlySet<string> bossesAvailable,
+        Dictionary<string, MapIconSprite> mapIcons)
     {
         _pck = pck;
         _texturePaths = texturePaths;
@@ -143,6 +185,9 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
         _eventTexturePaths = eventTexturePaths;
         AvailableEventSlugs = eventsAvailable;
         _eventText = eventText;
+        _bossTexturePaths = bossTexturePaths;
+        AvailableBossSlugs = bossesAvailable;
+        _mapIcons = mapIcons;
     }
 
     public AssetText? TryGetText(string slug) =>
@@ -224,6 +269,8 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
         var cardText = GameText.ReadCards(pck, vars.Cards);
         var (charPaths, charsServable) = FindCharacterTextures(pck);
         var (ancientPaths, ancientsServable) = FindAncientTextures(pck);
+        var (bossPaths, bossesServable) = FindBossTextures(pck);
+        var mapIcons = FindMapIcons(pck);
         var missingBorrowed = new List<string>();
         var (eventPaths, eventsServable) = FindEventTextures(pck, missingBorrowed);
 
@@ -237,6 +284,8 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
         if (cardsServable.Count > 0) status += $", {cardsServable.Count} card portraits";
         if (charsServable.Count > 0) status += $", {charsServable.Count} characters";
         if (ancientsServable.Count > 0) status += $", {ancientsServable.Count} Ancients";
+        if (bossesServable.Count > 0) status += $", {bossesServable.Count} boss nodes";
+        if (mapIcons.Count > 0) status += $", {mapIcons.Count} map icons";
         if (eventsServable.Count > 0) status += $", {eventsServable.Count} events";
         if (missingBorrowed.Count > 0)
             status += $" [borrowed art missing for {string.Join(", ", missingBorrowed)}"
@@ -246,7 +295,8 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
 
         return new LocalGameAssetProvider(pck, chosen, status, servable, text,
             cardPaths, cardsServable, cardText, charPaths, charsServable,
-            ancientPaths, ancientsServable, eventPaths, eventsServable, eventText);
+            ancientPaths, ancientsServable, eventPaths, eventsServable, eventText,
+            bossPaths, bossesServable, mapIcons);
     }
 
     /// <summary>
@@ -306,6 +356,39 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
         {
             var m = CharacterSource().Match(path);
             if (!m.Success || !playable.Contains(m.Groups[1].Value)) continue;
+
+            var raw = pck.Read(path);
+            if (raw is null) continue;
+
+            var texture = ResolveImportTarget(pck, raw);
+            if (texture is null) continue;
+
+            paths[m.Groups[1].Value] = texture;
+        }
+
+        return (paths, Probe(pck, paths));
+    }
+
+    /// <summary>
+    /// Each boss's map-node still, anchored on the act tables the same way the events are.
+    ///
+    /// Coverage is PARTIAL by design, not by accident: Ceremonial Beast, the False Queen and The
+    /// Insatiable are animated on the map with Spine skeletons and ship no still image, so they
+    /// simply never appear here and the map draws them as an ordinary boss node.
+    /// </summary>
+    private static (Dictionary<string, string> Paths, IReadOnlySet<string> Servable) FindBossTextures(GodotPck pck)
+    {
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        var known = Sts2.SeedFinder.Core.Acts.ActCatalog.ActNumbers
+            .SelectMany(Sts2.SeedFinder.Core.Acts.ActCatalog.Bosses)
+            .Select(b => Sts2.SeedFinder.Core.Acts.ActCatalog.Slug(b.TypeName))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in pck.Entries.Keys)
+        {
+            var m = BossSource().Match(path);
+            if (!m.Success || !known.Contains(m.Groups[1].Value)) continue;
 
             var raw = pck.Read(path);
             if (raw is null) continue;
@@ -438,6 +521,59 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
         return best;
     }
 
+    /// <summary>One icon: which sheet it is on, and the rectangle to cut from it.</summary>
+    public readonly record struct MapIconSprite(string SheetTexture, int X, int Y, int W, int H);
+
+    /// <summary>A decoded sheet, held whole so many icons can be cut from one decode.</summary>
+    private readonly record struct DecodedSheet(byte[] Rgba, int Width, int Height);
+
+    /// <summary>
+    /// The map's room-type icons — monsters, elites, campfires, shops, chests and the `?`.
+    ///
+    /// These are the one asset here that is not a file. The game packs them into a shared 2048px
+    /// sheet and ships a small text resource per icon naming the sheet and a Rect2, so this reads
+    /// the rectangles now and cuts the pixels on demand.
+    ///
+    /// It is worth having rather than drawing our own: these are the shapes players actually
+    /// recognise, and a hand-drawn approximation is guesswork about someone else's art.
+    /// </summary>
+    private static Dictionary<string, MapIconSprite> FindMapIcons(GodotPck pck)
+    {
+        var icons = new Dictionary<string, MapIconSprite>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in pck.Entries.Keys)
+        {
+            var m = MapIconSource().Match(path);
+            if (!m.Success) continue;
+
+            var raw = pck.Read(path);
+            if (raw is null) continue;
+            var text = System.Text.Encoding.UTF8.GetString(raw);
+
+            var sheet = AtlasSheet().Match(text);
+            var region = AtlasRegion().Match(text);
+            if (!sheet.Success || !region.Success) continue;
+
+            // The .tres points at the SOURCE png; the pixels live in whatever the importer
+            // produced from it, so this takes the same .import detour every other asset does.
+            var importRaw = pck.Read(sheet.Groups["sheet"].Value + ".import");
+            if (importRaw is null) continue;
+
+            var texture = ResolveImportTarget(pck, importRaw);
+            if (texture is null) continue;
+
+            static int Coord(Group g) => (int)Math.Round(double.Parse(
+                g.Value, System.Globalization.CultureInfo.InvariantCulture));
+
+            icons[m.Groups[1].Value] = new MapIconSprite(
+                texture,
+                Coord(region.Groups[1]), Coord(region.Groups[2]),
+                Coord(region.Groups[3]), Coord(region.Groups[4]));
+        }
+
+        return icons;
+    }
+
     /// <summary>Which of these actually decode, so the UI never renders a broken image element.</summary>
     private static IReadOnlySet<string> Probe(GodotPck pck, Dictionary<string, string> paths)
     {
@@ -464,6 +600,66 @@ public sealed partial class LocalGameAssetProvider : IGameAssetProvider
 
     public Task<AssetImage?> TryGetAncientAsync(string slug, CancellationToken ct) =>
         Task.FromResult(Decode(slug, _ancientTexturePaths, _ancientCache));
+
+    public Task<AssetImage?> TryGetMapIconAsync(string name, CancellationToken ct) =>
+        Task.FromResult(_mapIconCache.GetOrAdd(name.ToLowerInvariant(), key =>
+        {
+            if (!_mapIcons.TryGetValue(key, out var sprite)) return null;
+
+            var sheet = _sheetCache.GetOrAdd(sprite.SheetTexture, DecodeSheet);
+            if (sheet is null) return null;
+
+            var (rgba, w, h) = Crop(sheet.Value, sprite);
+            return w <= 0 || h <= 0 ? null : new AssetImage(Png.EncodeRgba(rgba, w, h), "image/png");
+        }));
+
+    /// <summary>
+    /// A whole sprite sheet as pixels. Only the block formats are handled: a sheet that arrived
+    /// as webp or png would have to be decoded before it could be cut, and this build ships them
+    /// as BPTC, so that path has never been needed.
+    /// </summary>
+    private DecodedSheet? DecodeSheet(string texturePath)
+    {
+        var raw = _pck.Read(texturePath);
+        if (raw is null) return null;
+
+        var tex = CompressedTexture.Parse(raw);
+        if (tex is null) return null;
+
+        var rgba = tex.Value.Kind switch
+        {
+            "rgba8" => tex.Value.Data,
+            "bc7" => Bc7Decoder.Decode(tex.Value.Data, tex.Value.Width, tex.Value.Height),
+            "dxt1" => S3tcDecoder.DecodeDxt1(tex.Value.Data, tex.Value.Width, tex.Value.Height),
+            "dxt5" => S3tcDecoder.DecodeDxt5(tex.Value.Data, tex.Value.Width, tex.Value.Height),
+            _ => null,
+        };
+
+        return rgba is null ? null : new DecodedSheet(rgba, tex.Value.Width, tex.Value.Height);
+    }
+
+    /// <summary>
+    /// Cuts one rectangle out of a sheet, clamped to it. The clamp is not defensive noise: a
+    /// patch that repacks the atlas without repacking the .tres files would otherwise read off
+    /// the end of the buffer rather than simply producing a wrong-looking icon.
+    /// </summary>
+    private static (byte[] Rgba, int W, int H) Crop(DecodedSheet sheet, MapIconSprite sprite)
+    {
+        int x = Math.Clamp(sprite.X, 0, sheet.Width);
+        int y = Math.Clamp(sprite.Y, 0, sheet.Height);
+        int w = Math.Clamp(sprite.W, 0, sheet.Width - x);
+        int h = Math.Clamp(sprite.H, 0, sheet.Height - y);
+        if (w <= 0 || h <= 0) return (Array.Empty<byte>(), 0, 0);
+
+        var cut = new byte[w * h * 4];
+        for (int row = 0; row < h; row++)
+            Buffer.BlockCopy(sheet.Rgba, ((y + row) * sheet.Width + x) * 4, cut, row * w * 4, w * 4);
+
+        return (cut, w, h);
+    }
+
+    public Task<AssetImage?> TryGetBossAsync(string slug, CancellationToken ct) =>
+        Task.FromResult(Decode(slug, _bossTexturePaths, _bossCache));
 
     /// <summary>Event art is a full-screen illustration, so it is shrunk to a tile on the way out.</summary>
     public Task<AssetImage?> TryGetEventAsync(string slug, CancellationToken ct) =>

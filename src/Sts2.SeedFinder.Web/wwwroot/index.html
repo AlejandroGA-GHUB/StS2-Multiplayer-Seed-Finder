@@ -178,6 +178,21 @@
         Or paste a seed above to look at just that one.
       </div>
     </div>
+
+    <!-- The map view takes over the results area rather than opening in a sheet: three acts side
+         by side need the full width, and there is nothing useful to see behind them. Results are
+         hidden rather than discarded, so coming back costs no re-search. -->
+    <div id="mapView" hidden>
+      <div class="map-head">
+        <span class="seed" id="mapSeed"></span>
+        <div class="map-head-actions">
+          <button type="button" class="icon-btn" id="mapBack">Back to Results</button>
+          <button type="button" class="icon-btn copy" id="mapCopy">Copy</button>
+        </div>
+      </div>
+      <div class="map-legend" id="mapLegend"></div>
+      <div class="map-cols" id="mapCols"></div>
+    </div>
   </main>
 </div>
 

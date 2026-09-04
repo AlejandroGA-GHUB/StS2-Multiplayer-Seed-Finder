@@ -57,6 +57,26 @@ feature would be nicer with them. Each new kind changed the volume — 633 card 
 of 324 relic icons, then 55 event illustrations — but not the boundary: same .pck, same runtime
 read, same in-memory cache, nothing on disk.
 
+**Map node art took three attempts to source correctly, and the wrong turns are worth recording
+because each one looked finished.**
+
+- `images/packed/map/ancients/` and `images/map/placeholder/` hold Ancients and bosses as **white
+  silhouettes** — every visible pixel is `(255,255,255)`, and the game tints them at runtime.
+  Drawn as-is they are blank blobs. Tinting them ourselves is no better: the whole shape is one
+  colour, so every internal edge disappears. The `placeholder/` set is also incomplete, missing
+  Ceremonial Beast, the False Queen and The Insatiable.
+- **`images/ui/run_history/` is the right source**, and the only complete one: 88px COLOUR icons
+  for all 13 bosses, all 8 Ancients and the room types, in one folder. Everything now reads from
+  here, and nothing is tinted, because it is real artwork.
+- **Room-type icons are not files.** They are regions of a shared 2048px sprite sheet. Each
+  `images/atlases/ui_atlas.sprites/map/icons/*.tres` is plain text naming its sheet and a
+  `Rect2`, so the provider parses the rectangle, resolves the sheet through the same `.import`
+  detour every other asset takes, decodes it with the existing BC7 decoder and cuts. Sheets are
+  cached whole: one decode serves every icon across all three acts.
+
+None of that changes the boundary. It is the same runtime read from the player's own install, the
+same in-memory cache, and still nothing on disk.
+
 **What Mega Crit's [Content Policy](https://www.megacrit.com/content-policy/) actually says:**
 it covers video, mods and merchandise. Fan websites and tools are **not addressed**. The only
 asset clause — "not assets taken directly from our game or marketing materials" — is scoped to
@@ -390,6 +410,38 @@ what it gives, with no second visual grammar to learn.
   comma-separated for several. It rides on the relic criterion rather than being its own because
   "somebody is offered Arcane Scroll" and "somebody's scroll gives Corruption" asked separately
   can be satisfied by two different players, which is not what anybody means.
+
+### Act maps
+
+`Map Visual`, beside Copy on a result and immediately left of it, replaces the results with all
+three act maps drawn side by side.
+
+- **It takes over the results area rather than opening in a sheet.** Three acts need the full
+  width, and there is nothing useful to see behind them. The results are hidden rather than
+  discarded, so Back to Results is instant and costs no re-search. The scan bar hides with them,
+  because searching from behind the map would quietly rewrite what you come back to.
+- **The search summary is preserved across the trip.** `setBusy` empties the status bar, and this
+  is a side trip rather than a new search, so the bar's contents are captured and put back. Losing
+  "scanned N seeds on cuda" because you glanced at a map is exactly the kind of small betrayal
+  that makes a tool feel careless.
+- **Boss at the top, Ancient at the bottom**, matching the in-game map, which means rows are
+  inverted on the way to the screen: row 0 is the Ancient and the highest row is the boss.
+- **One height for all three columns**, with each act letterboxing inside it via
+  `preserveAspectRatio`. Act 1 is up to two rows taller than Act 3, and letting each box size to
+  its own content left Act 1 hanging visibly below the others. Sized against the viewport so a
+  whole act reads without scrolling.
+- **Each column names its boss above and its Ancient below**, on the same reasoning: the node art
+  is a small icon, and nobody should have to identify an Ancient by its silhouette.
+- **The second boss appears only at Ascension 10**, because that is the only place it exists.
+  It stacks above the first, since it comes later and the map climbs.
+- **The legend covers room types only.** Ancients and bosses are named in each column's captions
+  and are unmistakable anyway.
+- **Display-only, and deliberately off the search path.** A map comes off its own
+  `act_n_map` RNG stream and is computed once for one seed on demand, so this cannot affect
+  throughput or which seeds a search returns. Turning maps into a search *criterion* is a
+  different feature with its own GPU story.
+- Drawn icons remain in the code as a fallback for an install we cannot read, and the legend
+  follows whichever is in use.
 
 ### Report a problem
 

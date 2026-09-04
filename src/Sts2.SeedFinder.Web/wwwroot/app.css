@@ -266,14 +266,6 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
    So `cover` here is only guarding against a future non-square one. */
 .icon.is-event { object-fit: cover; }
 
-/* Map-node art is a white silhouette with an alpha channel, not coloured artwork — the game
-   tints it at runtime. Drawn as-is it is a flat white blob, so use it as a mask and paint the
-   colour ourselves, per Ancient, off the same hue the monograms use. */
-.icon.is-ancient-mask {
-  mask: var(--art) center / contain no-repeat;
-  -webkit-mask: var(--art) center / contain no-repeat;
-  background: var(--tint); border-radius: 0;
-}
 .icon.mono {
   display: grid; place-items: center; font-size: 11px; font-weight: 600; color: #0007;
   text-transform: uppercase;
@@ -366,6 +358,63 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
   border: 1px solid var(--border); border-radius: var(--radius);
 }
 .epoch-code:focus { outline: none; border-color: var(--accent-dim); }
+
+/* Act maps. The three acts sit side by side and each scrolls on its own, because act 1 is the
+   tallest and letting the page grow to fit it would push acts 2 and 3 off screen together. */
+
+/* The scan bar is a flex row, and a display rule beats the [hidden] attribute, so hiding it from
+   script needs this. It hides with the results because searching or inspecting from behind the
+   map would quietly rewrite what Back to Results returns you to. */
+.top-bar[hidden] { display: none !important; }
+/* Seed, then the same two actions a result row carries, in the same order, so moving between
+   the two views does not move the buttons. */
+.map-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 11px 13px; margin-bottom: 11px;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.map-head-actions { display: flex; align-items: center; gap: 8px; }
+.map-head .seed { font-size: 15px; letter-spacing: 1.5px; }
+
+.map-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 15px; margin-bottom: 12px; padding: 0 3px;
+  font-size: 11.5px; color: var(--text-2);
+}
+.map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.map-legend svg { flex: none; overflow: visible; }
+
+/* Stretch, not flex-start: the three acts have different row counts, and letting each box
+   shrink to its own content left act 1 hanging below the other two. */
+.map-cols { display: flex; gap: 12px; align-items: stretch; }
+.map-col {
+  flex: 1 1 0; min-width: 0;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 11px 9px 13px;
+}
+.map-col h3 {
+  margin: 0 0 2px; font-size: 13px; font-weight: 600; text-align: center; color: var(--text-0);
+}
+.map-col .map-boss {
+  margin: 0 0 9px; font-size: 11.5px; text-align: center; color: var(--text-2);
+}
+.map-col .map-ancient {
+  margin: 7px 0 0; font-size: 11.5px; text-align: center; color: var(--text-2);
+}
+/* One height for all three, with the svg letterboxing inside it. Sized against the viewport so
+   a whole act is readable without scrolling, and capped so it does not stretch absurdly on a
+   very tall window. */
+.map-col svg { display: block; width: 100%; height: min(82vh, 940px); }
+
+.map-edge { stroke: var(--border-strong, #4a4a55); stroke-width: 1.5; stroke-dasharray: 3 3; fill: none; }
+.map-node circle { stroke: var(--bg-0); stroke-width: 2; }
+.map-node text {
+  text-anchor: middle; dominant-baseline: central;
+  font-size: 13px; font-weight: 600; paint-order: stroke; pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .map-cols { flex-direction: column; }
+}
 
 /* Bug report sheet. The preview is the point of the panel, so it gets the room. */
 .report-desc {
@@ -489,8 +538,24 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
 .hit-head {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border);
 }
+/* The seed and its place in the result list, stacked so a long list stays countable without
+   the number competing with the seed itself. */
+.hit-id {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  padding: 3px 9px 4px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-0);
+}
+.hit-num {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--text-2); line-height: 1.2;
+}
 .seed { font-family: ui-monospace, Consolas, monospace; font-size: 16px; letter-spacing: 1.5px; color: var(--accent); }
 .copy { margin-left: auto; }
+/* Map Visual and Copy travel together on the right, Map Visual immediately left of Copy. The
+   auto margin has to move to the FIRST of the pair, or it splits them and strands Map Visual
+   back beside the seed. */
+.hit-head .map-btn { margin-left: auto; }
+.hit-head .map-btn + .copy { margin-left: 0; }
 
 .act { padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .act:last-child { border-bottom: none; }

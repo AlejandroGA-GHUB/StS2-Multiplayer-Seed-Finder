@@ -81,6 +81,7 @@ public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 public sealed record NeowCardRelicDto(
     string Slug, string Name, int PayloadCards, int Draws, int DefectDraws);
 
+/// <param name="BossArtSlugs">Boss slugs the install can serve node art for.</param>
 /// <param name="AncientArtSlugs">
 /// Ancient slugs the install can serve node art for. Separate from <see cref="AncientDto"/>
 /// because it covers Neow as well, which opens Act 1 but has no searchable offer and so is not
@@ -106,7 +107,8 @@ public sealed record CatalogDto(
     RelicDto[] NeowCurses, RelicDto[] NeowPositives, RelicDto[] NeowCoinFlip,
     AncientDto[] Ancients, CharacterDto[] Characters, string[] Act1Maps, ActContentDto[] ActContent,
     CardPoolDto[] CardPools, ShopRelicDto[] ShopRelics, ChestRelicDto[] ChestRelics,
-    string[] AncientArtSlugs, string[] EventArtSlugs, NeowCardRelicDto[] NeowCardRelics);
+    string[] AncientArtSlugs, string[] EventArtSlugs, string[] BossArtSlugs,
+    NeowCardRelicDto[] NeowCardRelics);
 
 /// <summary>
 /// What the local game install knows about this player, for the "sync from my save" button.
@@ -159,6 +161,32 @@ public static class PlatformInfo
         return $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription} / {framework}";
     }
 }
+
+/// <summary>
+/// One act's map, flattened for drawing.
+///
+/// Sent as a node list plus edges rather than as a grid, because the grid is mostly empty: a
+/// 7-wide act map holds roughly 60 nodes across 16 rows of 7 cells. Coordinates are the ones the
+/// game itself would save, post-layout, so what is drawn here is positioned the way the in-game
+/// map is.
+/// </summary>
+/// <param name="Act">Display name, e.g. "Overgrowth".</param>
+/// <param name="Boss">The boss this act ends with, so the map can be read without the results.</param>
+/// <param name="SecondBoss">Only at A10, and only on the final act.</param>
+/// <param name="AncientArt">
+/// Slug for <c>/api/asset/ancient/</c>, or null when this install has no art for it. Sent as a
+/// presence check rather than a URL so the page never requests art that is not there.
+/// </param>
+/// <param name="BossArt">Same, for <c>/api/asset/boss/</c>. Null for the Spine-animated bosses.</param>
+public sealed record MapActDto(
+    int Index, string Act, string Boss, string? SecondBoss, string Ancient,
+    string? AncientArt, string? BossArt, string? SecondBossArt,
+    int Width, int Height,
+    MapNodeDto[] Nodes, MapNodeDto Start, MapNodeDto BossNode, MapNodeDto? SecondBossNode);
+
+/// <param name="Type">Lowercase point type: monster, elite, shop, rest_site, treasure, unknown, boss, ancient.</param>
+/// <param name="Children">Coordinates this node leads to, as "col,row" strings.</param>
+public sealed record MapNodeDto(int Col, int Row, string Type, string[] Children);
 
 /// <summary>
 /// The machine half of a bug report: everything about this install that a reader would need and

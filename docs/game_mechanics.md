@@ -598,6 +598,98 @@ Every deviation is accounted for by a recorded relic acquisition. With `extraPic
 model instead predicts Lasting Candy and Ripple Basin for "act 1" — which is precisely what that
 floor-6 `?` chest handed out, so the shift is confirmed from both directions.
 
+### Act maps — IMPLEMENTED and verified node-for-node against a run save
+`Core/Map/`. Added 2026-09-04. Ported from `StandardActMap`, `MapPathPruning`, `MapPostProcessing`,
+`MapPointTypeCounts` and each act model's `GetMapPointTypes`.
+
+**The map has its own rng and costs zero UpFront draws.** `StandardActMap.CreateFor` builds
+`new Rng(runState.Rng.Seed, $"act_{index + 1}_map")` — a throwaway generator that is not a member of
+`RunRngSet` and is never serialized. Two consequences, both good: a map depends on nothing but the
+seed, the act, the player count and the ascension, and nothing in the map can move a boss, relic or
+card reward. `--verify` reporting UpFront 414/414 with maps generated is the proof, not an argument.
+
+The flip side is that there is **no counter to compare against**. Everything else in this file can be
+debugged by asking how many draws we are out; a map port can only be right or wrong.
+
+**Maps are built on ENTERING an act.** A run save carries `saved_map` only for acts the party has
+reached, so a fresh run verifies act 1 alone. Nothing is wrong when acts 2 and 3 are silent.
+
+**`SerializableActMap` at `acts[i].saved_map` is a complete oracle** — its own summary is that it
+captures the full topology so it can be restored without regeneration. Every point carries `coord`,
+`type` and `children`, plus `width`, `height`, `start` and `boss`. Unvisited nodes are all present.
+
+> **`can_modify` absent means FALSE.** The property initialiser sets `true` but the attribute is
+> `JsonIgnoreCondition.WhenWritingDefault`, and `bool`'s default is `false`. Reading it the natural
+> way inverts every locked row, which is the one parsing trap in the file.
+
+#### Shape
+Grid is **7 wide**; height is `GetNumberOfRooms(isMultiplayer) + 1`, so co-op maps are one row
+shorter. The ancient sits at `(3, 0)` and the boss at `(3, height)`, both OUTSIDE the grid — which is
+why `GetAllMapPoints` never returns them. A second boss, at A10 on the final act only, hangs off the
+boss at `(3, height + 1)`.
+
+**Three rows are forced and locked before anything is rolled**, and two of them the rest of this tool
+already depends on:
+
+| Row | Type | Why it matters here |
+|---|---|---|
+| `1` | Monster | Why fight 1 is predictable with no assumption |
+| `height - 7` | Treasure | The act's guaranteed chest, floors 9 / 24 / 38 in co-op |
+| `height - 1` | RestSite | A campfire before every boss |
+
+#### Draw order
+1. **`GetMapPointTypes`**, before a single node exists — rest count, then unknowns. Per act:
+
+   | Act | Rests | Unknowns |
+   |---|---|---|
+   | Overgrowth, Underdocks | `NextGaussianInt(7,1,6,7)` | `NextGaussianInt(12,1,10,14)` |
+   | Hive | `NextGaussianInt(6,1,6,7)` | same, minus 1 |
+   | Glory | `NextInt(5,7)` | same, minus 1 |
+
+   Shops are **always 3**. Elites are **5, or 8 once Swarming Elites is on** — and that is
+   `AscensionLevel` 1, so every run above A0 gets 8. `HasAscension` is a `>=` test and the enum is
+   ordered, which independently confirms `Scarcity = 7` and `DoubleBoss = 10`.
+
+2. **`GenerateMap`** — seven paths, each starting at `NextInt(0, 7)` on row 1 and walked to the top.
+   Only path index **1** is re-rolled until it starts somewhere new; every later path may reuse a
+   start, which is what collapses seven walks into fewer visible routes. Each step shuffles
+   `[-1, 0, 1]` and takes the first direction that would not cross an existing edge.
+
+3. **`AssignPointTypes`** — forced rows, then the queued types dealt onto unassigned points in **three
+   passes**. A type that fits nowhere rotates to the back of the queue rather than being dropped, and
+   a point that can take nothing is left for the next pass. Leftovers become Monsters.
+
+4. **`PruneAndRepair`**, up to three rounds of: delete duplicate route segments, then top any type
+   that fell below its target back up by converting unlocked monsters. Only the repair draws.
+
+#### Three things that would silently break a reimplementation
+- **`NextGaussianInt` is Box-Muller with rejection**, so its cost is *two draws per attempt*, not two
+  draws. It uses `Math.Sin`; `NextGaussianDouble`, defined immediately below it, uses `Math.Cos`.
+- **`StableShuffle` sorts before shuffling**, and `MapPoint` sorts by `(col, row)` — the same order
+  `GetAllMapPoints` yields, so the two agree by construction. `UnstableShuffle` does not sort, and
+  path pruning uses that one, where input order therefore matters.
+- **`HashSet` iteration order is load-bearing.** `Children` feeds path enumeration, whose output
+  order reaches an `UnstableShuffle`. Modelling those sets as insertion-ordered lists is faithful
+  *because of the generator, not because of HashSet*: every edge is added during `GenerateMap` and
+  pruning only ever removes, so no freed slot is ever recycled. Anything that added an edge after
+  pruning began would break that.
+
+`EnsureRowsContainsPointType`, `GetRows` and `AssignPointTypesToRandomRows` are **dead code** —
+defined, referenced only by each other, never called. They draw nothing.
+
+`MapPostProcessing` (`CenterGrid`, `SpreadAdjacentMapPoints`, `StraightenPaths`) consumes **no rng**,
+so a mistake there cannot desynchronise anything. It must still be exact, because the game saves the
+map *after* running it, so those are the coordinates any comparison is against.
+
+**Verified** on seed `1LVDJXPJ5HXE` (v0.111.0, singleplayer, A10, Overgrowth): all **64 nodes**
+matched on coordinate, type and edges, plus width, height and boss row. Singleplayer is near-total
+coverage here, unusually — `isMultiplayer` reaches exactly one line, `_mapLength`, and that method is
+already oracle-verified and confirmed against a real co-op run.
+
+**What this unblocks.** The map graph is the route input that elite relics and shop relic slots 1 and
+2 were both deferred on, and `UnknownMapPointOdds` is what `--extra-chests` currently asks the user
+to count by hand. None of that is built; the dependency is simply no longer missing.
+
 ### Run saves are the Act 2/3 oracle
 `%APPDATA%\SlayTheSpire2\steam\<steamId>\profile<N>\saves\` — plain `System.Text.Json`,
 readable, no encryption:

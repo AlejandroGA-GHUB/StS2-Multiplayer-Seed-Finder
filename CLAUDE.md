@@ -4,9 +4,11 @@ A seed finder for **Slay the Spire 2 co-op runs**. Shipped. **Nothing is in prog
 nothing without the user's go-ahead.
 
 **Elite relics and shop relic slots 1 and 2 are PENDING, not rejected.** Both were investigated
-and found feasible; both are deferred on the same dependency, a route input that the map graph
-would have to supply. The analysis is done, so re-deriving it wastes a session: read
-`Core/Acts/` and the shop section of `docs/game_mechanics.md` first, and ask before building.
+and found feasible; both were deferred on the same dependency, a route input that the map graph
+would have to supply. **The map graph now exists** (`Core/Map/`, 2026-09-04), so what is missing is
+no longer the graph but a chosen ROUTE through it, which is a UI question. The analysis is done, so
+re-deriving it wastes a session: read `Core/Acts/`, `Core/Map/` and the shop section of
+`docs/game_mechanics.md` first, and ask before building.
 
 **Capsule and Neow's Bones payloads are PENDING too** (requested 2026-08-08). What Small
 Capsule, Large Capsule and Neow's Bones actually hand you is not modelled anywhere — only how
@@ -73,6 +75,18 @@ relic slot** (per player, per shop visit), and each act's **treasure chest** (pe
 **Ascension 10** adds the final act's second boss, which two boss criteria can pin as a pair —
 and from fight 2 ascension also affects card rarity, via Scarcity at A7+.
 
+**Act maps are drawn, not searched** (2026-09-04). `Map Visual`, beside Copy on any result, swaps
+the results for all three act maps side by side. It is display-only and sits off the search path
+entirely: its own rng stream, computed once for one seed. See the map section of
+`docs/game_mechanics.md` before touching `Core/Map/`.
+
+**Map node art comes from `images/ui/run_history/`, and only from there.** It is the one COMPLETE,
+full-colour icon set: all 13 bosses, all 8 Ancients, and the room types. `images/map/placeholder/`
+and `images/packed/map/ancients/` are white silhouettes the game tints at runtime, and the first
+is missing three bosses outright. Room-type icons are not files at all but regions of a sprite
+sheet. All of it was got wrong at least once, so read `docs/web_app_specs.md` §4 before changing
+where art is read from.
+
 Bosses, events and chests are run-level, not per-player, so unlike Neow, the Ancients, card
 rewards and shop relics they take no slot rule. A chest is run-level for a specific reason: it is
 a SHARED pick, so the seed fixes what is on the table and the party votes on who takes it. All of
@@ -95,6 +109,7 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --neow-pick p1:massive_scroll --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 0BUJY7ZRE8TP --players 2
+# act maps are web-only (Map Visual on a result); the CLI checks them via --verify
 dotnet run -c Release --project src\Sts2.SeedFinder.Oracle              # differential test vs sts2.dll
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --gpu-verify # GPU kernels vs Core (no GPU needed)
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --gpu-bench  # ... and measure this machine
@@ -105,8 +120,10 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --verify-history --ve
 **Run the Oracle after any change to Core, and after every game patch.** It loads the real
 `sts2.dll` and asserts our port still matches. As of v0.110.1 all 14 checks pass.
 
-**Run `--verify` after any change to `Core/Acts/`.** It checks the act/boss/Ancient chain
-against a save the game itself wrote — see "Run saves are the Act 2/3 oracle" below.
+**Run `--verify` after any change to `Core/Acts/` or `Core/Map/`.** It checks the act/boss/Ancient
+chain against a save the game itself wrote, and diffs each act map node-for-node against the
+topology the game serialized — see "Run saves are the Act 2/3 oracle" below. Maps are built on
+ENTERING an act, so a fresh run only carries act 1's and the other two are skipped silently.
 
 **Run `--verify-history` too.** It needs no live run and it is the only check that covers the
 co-op path, since a solo multiplayer lobby cannot be started. Expect some older runs to be
@@ -135,11 +152,12 @@ working from memory. Each of these records something that was got wrong at least
 | `Core/Acts/RunGenerator.cs`, `ActData.cs` | *Acts 2/3*, *Run saves are the Act 2/3 oracle*, *Ascension 10*, *Boss discovery order*, *MP-specific differences* |
 | `Core/Acts/` shop relics | *Shops: the third relic slot IS predictable* |
 | `Core/Acts/ChestRelics.cs` | *Treasure chests* |
+| `Core/Map/` | *Act maps* — the own-rng property, the three forced rows, and the three traps |
 | `Core/Cards/` | *Card rewards, fights 1 and 2* (the mechanics; the cap is now `MaxPredictableFight` = 3) |
 | `Core/Cards/NeowCardPayload.cs` | *The Neow chain*, payload section: why a payload is one draw per card, and why none of them unlocks a fight-1 rare |
 | `Core/Ancients/` | *Ancients' offers* |
 | Search criteria, the web pickers | *Bosses and events as search criteria* |
-| `Web/Assets/` | *Localization strings*, *Card art* |
+| `Web/Assets/` | *Localization strings*, *Card art*, and `web_app_specs.md` §4 for map node art |
 | Interpreting a `--verify` result | *What a singleplayer `--verify` run does and does not prove* |
 | Regenerating data tables | *Decompiling* (though `sts2seed --refresh` does this without decompiling) |
 
@@ -191,7 +209,9 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
 **Oracle** proving the port matches the real game and catching patch drift.
 
 - `src/Sts2.SeedFinder.Core` — `MegaRandom` (xoshiro256**), `Rng`, `GameHash` (XXH64 via
-  `System.IO.Hashing`), `SeedCodec`, `SeedSearcher`, `Neow/`, `Acts/`, `Ancients/`, `Cards/`.
+  `System.IO.Hashing`), `SeedCodec`, `SeedSearcher`, `Neow/`, `Acts/`, `Ancients/`, `Cards/`,
+  `Map/`. `Map/` is the odd one out: it draws from its own per-act stream, feeds no criterion, and
+  nothing else in `Core` depends on it.
 - `src/Sts2.SeedFinder.Cli` — `sts2seed` executable. Two jobs in one binary: the scriptable
   front end onto the same `Core` the web UI drives, and the host of `--verify`.
 - `src/Sts2.SeedFinder.Web` — local web UI (`seed-finder.bat`, or
