@@ -5,6 +5,7 @@ using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
 using Sts2.SeedFinder.Core.Map;
+using Sts2.SeedFinder.Core.Modifiers;
 using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Core.Saves;
 using Sts2.SeedFinder.Web;
@@ -233,6 +234,18 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         .Where(r => r.PayloadCards > 0 || r.Draws != 0)
         .ToArray();
 
+    // Every modifier, not only the one whose payload can be named: ticking ANY of them is
+    // what tells the finder that Neow has no offer to predict, which is a fact about the run
+    // rather than a criterion, so the list has to be complete to be usable.
+    var modifiers = RunModifiers.All.Select(m => new ModifierDto(
+        RunModifiers.Slug(m),
+        RunModifiers.Display(m),
+        Good: m < RunModifier.DeadlyEvents,
+        Predictable: RunModifiers.IsPredictable(m),
+        BlocksSpecialized: RunModifiers.HasNeowOption(m) && RunModifiers.NeowRewardDraws(m) is null,
+        NeowDraws: RunModifiers.NeowRewardDraws(m)))
+        .ToArray();
+
     return Results.Json(new CatalogDto(
         GameVersion,
         AppVersion.Load().Version,
@@ -261,7 +274,8 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         // since an event appears once per act it can turn up in and the art does not.
         assets.AvailableEventSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
         assets.AvailableBossSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
-        neowCardRelics), json);
+        neowCardRelics,
+        modifiers), json);
 });
 
 // ---- The player's own profile --------------------------------------------------------------
@@ -482,7 +496,8 @@ app.MapGet("/api/explain", (HttpContext http, IConfiguration config, string seed
             unlocks.Run,
             Query.Int(http.Request.Query, "extraChests") ?? 0,
             Query.RewardPriorDraws(http.Request.Query, players, Query.Characters(characters)),
-            unlocks.PerPlayer), json);
+            unlocks.PerPlayer,
+            Query.Modifiers(http.Request.Query)), json);
     }
     catch (ArgumentException ex)
     {
@@ -666,7 +681,8 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
             found++;
             await Send("hit", Predictions.Describe(
                 hit.Seed, players, chars, hit, criteria.Ascension, criteria.Unlocks,
-                criteria.ExtraChestPicks, criteria.RewardPriorDraws(), criteria.PlayerUnlocks));
+                criteria.ExtraChestPicks, criteria.RewardPriorDraws(), criteria.PlayerUnlocks,
+                criteria.Modifiers));
         }
     }
     catch (OperationCanceledException) { /* client navigated away or hit cancel */ }

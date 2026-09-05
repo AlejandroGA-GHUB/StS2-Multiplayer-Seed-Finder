@@ -1,8 +1,40 @@
 v1.5.0
 
-Release Date: x/x/2026
+Release Date: 9/5/2026
 
 v0.111.0 beta steam release 
 
 # CHANGELOG
+
+1. Import Friend Epoch. A partner's unlock state can now be brought into the lobby, either by
+dropping their progress.save or by pasting an unlock code. This is now supported because the
+relic bags are shuffled one per player off a single shared stream, so a partner missing epochs
+moves the bosses, events and Ancients for the whole party rather than just their own rewards.
+
+2. Issue reporting. A "Report a problem" button gathers everything this build knows about itself
+and hands it back as either a prefilled GitHub issue or a block you can paste anywhere. Nothing is
+sent by the app, and your save path is deliberately left out because it contains your Steam id.
+
+3. The "Took at Neow" flow was reworked, and Inspect now accounts for the draws a card-granting
+Neow option spends. Inspecting a seed could previously report card rewards read from the wrong
+point in the stream.
+
+4. Map visuals for all three acts. "Map Visual", beside Copy on any result, swaps the results for
+the Act 1, 2 and 3 maps drawn side by side, with boss, Ancient and room art read from your own game
+install. It is display only: maps are computed for one seed on demand and never touch a search.
+
+5. Section explanations moved behind info buttons. Every criteria panel except Lobby now carries a
+small "?" on its header that opens the full text, so the column reads as controls rather than
+paragraphs. Warnings and the "pick a character" gates stay in the open, since those describe your
+current criteria rather than the game.
+
+6. Custom run modifier support, starting with Specialized. It gives every player five copies of one
+card, that card is decided by the seed, and it is now searchable per player. Every rarity is equally
+likely here, so a Rare costs no more to find than a Common. Turning it on switches the Neow panel
+off, because a Custom run replaces Neow's three options with one forced option per modifier and has
+no relic offer at all. Verified against a real custom run.
+
+7. Documentation cleanup. The README is considerably smaller, with the game mechanics explanations
+moved into docs/game_mechanics.md. game_mechanics.md and web_app_specs.md now both open with a linked index of every
+section, so a specific topic can be found without reading through.
 

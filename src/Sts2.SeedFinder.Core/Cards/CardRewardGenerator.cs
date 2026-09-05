@@ -359,30 +359,39 @@ public static class CardRewardGenerator
     /// </summary>
     private sealed record PoolCache(UnlockState? Unlocks, CardEntry[] Pool);
 
+    /// <summary>
+    /// Two pools per character, indexed by <c>(character * 2) + (multiplayer ? 1 : 0)</c>. The
+    /// second slot exists only for the verifiers: a search is always multiplayer, but a run save
+    /// written by a solo game has five fewer cards per character in its pool, and comparing
+    /// against one means building the pool the way that run did.
+    /// </summary>
     [ThreadStatic] private static PoolCache?[]? _pools;
 
     /// <summary>
     /// The character's pool as a reward sees it. Callers must treat the result as read-only:
     /// it is shared with every other caller on this thread.
     /// </summary>
-    public static CardEntry[] PoolFor(Character character, UnlockState? unlocks = null)
+    public static CardEntry[] PoolFor(
+        Character character, UnlockState? unlocks = null, bool isMultiplayer = true)
     {
-        var cache = _pools ??= new PoolCache?[Enum.GetValues<Character>().Length];
-        int slot = (int)character;
+        var cache = _pools ??= new PoolCache?[Enum.GetValues<Character>().Length * 2];
+        int slot = ((int)character * 2) + (isMultiplayer ? 1 : 0);
 
         if (cache[slot] is { } hit && ReferenceEquals(hit.Unlocks, unlocks)) return hit.Pool;
 
-        var built = BuildPool(character, unlocks);
+        var built = BuildPool(character, unlocks, isMultiplayer);
         cache[slot] = new PoolCache(unlocks, built);
         return built;
     }
 
     /// <summary>
     /// The character's pool as a reward sees it: epoch-gated cards removed, then filtered for
-    /// run mode. Multiplayer drops singleplayer-only cards; the game currently ships none, but
-    /// the filter is what the code does and a patch could add some.
+    /// run mode. Multiplayer drops singleplayer-only cards, of which the game currently ships
+    /// none; singleplayer drops multiplayer-only ones, of which it ships five per character.
+    /// Both directions are what <c>CardFactory.FilterForPlayerCount</c> does.
     /// </summary>
-    private static CardEntry[] BuildPool(Character character, UnlockState? unlocks)
+    private static CardEntry[] BuildPool(
+        Character character, UnlockState? unlocks, bool isMultiplayer)
     {
         var pool = CardPoolData.For(character).AsEnumerable();
 
@@ -397,7 +406,8 @@ public static class CardRewardGenerator
             if (locked.Count > 0) pool = pool.Where(c => !locked.Contains(c.TypeName));
         }
 
-        return pool.Where(c => c.Mode != CardMode.SingleplayerOnly).ToArray();
+        return pool.Where(c => c.Mode != (isMultiplayer ? CardMode.SingleplayerOnly
+                                                         : CardMode.MultiplayerOnly)).ToArray();
     }
 }
 

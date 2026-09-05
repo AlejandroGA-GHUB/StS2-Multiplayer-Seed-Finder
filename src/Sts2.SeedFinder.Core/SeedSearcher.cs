@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Modifiers;
 using Sts2.SeedFinder.Core.Neow;
 
 namespace Sts2.SeedFinder.Core;
@@ -185,6 +186,23 @@ public sealed record CardCriterion(int Slot, string Card, int Fight = 1)
 }
 
 /// <summary>
+/// A card a player must start five copies of, via the Specialized run modifier.
+///
+/// Per player, like a card reward and for the same reason: the draw is off that player's own
+/// Rewards stream and reads their character's pool, so P1 and P2 get different cards from one
+/// seed. A slot of -1 means any player.
+///
+/// This is the only modifier payload the finder can name. See
+/// <see cref="Modifiers.SpecializedPayload"/> for why it reduces to a single draw, and
+/// <see cref="Modifiers.RunModifiers"/> for the two modifiers that can make it unpredictable.
+/// </summary>
+public sealed record SpecializedCriterion(int Slot, string Card)
+{
+    public override string ToString() =>
+        $"{(Slot < 0 ? "Any player" : $"P{Slot + 1}")} starts with 5x {CardCatalog.Display(Card)}";
+}
+
+/// <summary>
 /// A Neow option a player is ASSUMED to take, which is a different claim from any criterion
 /// here: nothing about the seed decides it, the player does.
 ///
@@ -319,6 +337,36 @@ public sealed record SearchCriteria
     public IReadOnlyList<NeowPick> NeowPicks { get; init; } = Array.Empty<NeowPick>();
 
     /// <summary>
+    /// Run modifiers the lobby has ticked on, i.e. a Custom run. An input rather than a
+    /// criterion: no seed decides them, the host does.
+    ///
+    /// Any modifier at all changes what Neow is. <c>Neow.GenerateInitialOptions</c> opens with
+    /// <c>if (RunState.Modifiers.Count &lt;= 0)</c> and only then builds the curse branch, the
+    /// positive pool and the coin flips; otherwise the player gets one forced option per
+    /// modifier and no relic offer at all. So this and any Neow criterion are mutually
+    /// exclusive, and <see cref="Validate"/> says so rather than quietly predicting an offer
+    /// that will not happen.
+    /// </summary>
+    public IReadOnlyList<RunModifier> Modifiers { get; init; } = Array.Empty<RunModifier>();
+
+    /// <summary>Cards a player must start five copies of. Needs Specialized in <see cref="Modifiers"/>.</summary>
+    public IReadOnlyList<SpecializedCriterion> Specialized { get; init; } = Array.Empty<SpecializedCriterion>();
+
+    /// <summary>
+    /// Rewards draws already spent when Specialized takes its option, or null when that cannot
+    /// be known. Null only happens with Draft or SealedDeck, the two Neow-option modifiers that
+    /// sit ahead of Specialized in the game's list and have no fixed draw count.
+    /// </summary>
+    public int? SpecializedPriorDraws() =>
+        RunModifiers.PriorRewardDraws(RunModifier.Specialized, Modifiers);
+
+    /// <summary>
+    /// What this run's modifiers cost every player's Rewards stream before their first fight,
+    /// or null when a modifier with no fixed cost is on. Zero for an ordinary run.
+    /// </summary>
+    public int? ModifierRewardDraws() => RunModifiers.TotalNeowRewardDraws(Modifiers);
+
+    /// <summary>
     /// Draws each player's Neow pick takes off their <c>Rewards</c> stream before the first
     /// fight rolls, indexed by slot. Zero for the great majority of picks.
     ///
@@ -353,6 +401,16 @@ public sealed record SearchCriteria
             if (want.Cards.Count == 0 || want.Requirement == SlotRequirement.Any) continue;
             foreach (var slot in want.ResolveSlots(PlayerCount)) Set(slot, want.Relic.Slug);
         }
+
+        // A Custom run's forced options draw off this same stream, and before any fight. Added
+        // rather than assigned only for symmetry: a modifier and a Neow pick cannot coexist, so
+        // everything above is zero whenever this is not.
+        //
+        // Null means a modifier with no fixed cost is on, and there is no honest number to use.
+        // Validate rejects that combination alongside any card criterion, so reaching here with
+        // one means no card is being predicted and the value is never read.
+        if (RunModifiers.TotalNeowRewardDraws(Modifiers) is { } fromModifiers)
+            for (int slot = 0; slot < draws.Length; slot++) draws[slot] += fromModifiers;
 
         return draws;
     }
@@ -394,7 +452,8 @@ public sealed record SearchCriteria
     /// character pool, but they still need the party SIZE, which the context carries.
     /// </summary>
     public bool NeedsCharacters => NeedsRun || Cards.Count > 0 || ShopRelicsWanted.Count > 0
-                                   || NeedsNeowPayloads || NeowPicks.Count > 0;
+                                   || NeedsNeowPayloads || NeowPicks.Count > 0
+                                   || Specialized.Count > 0;
 
     /// <summary>
     /// Whether any Neow criterion asks about the cards its relic hands out. Those come off the
@@ -481,8 +540,22 @@ public sealed class SearchProgress
     public void Advance(long seeds) => Interlocked.Add(ref _scanned, seeds);
 }
 
-/// <summary><paramref name="Run"/> is present only when the search had Ancient criteria.</summary>
-public sealed record SeedHit(string Seed, NeowOffer[] OffersBySlot, GeneratedRun? Run = null)
+/// <summary>
+/// <paramref name="Run"/> is present only when the search had Ancient criteria.
+///
+/// <paramref name="OffersBySlot"/> is EMPTY for a Custom run rather than absent, because such a
+/// run has no Neow offer at all: any modifier replaces the three options with one forced option
+/// per modifier. Reporting the offer a normal run would have made is the one way this tool could
+/// print something confidently false, so it prints nothing instead.
+///
+/// <paramref name="SpecializedCards"/> is the card each player starts five copies of, by slot,
+/// and is null unless the Specialized modifier is on.
+/// </summary>
+public sealed record SeedHit(
+    string Seed,
+    NeowOffer[] OffersBySlot,
+    GeneratedRun? Run = null,
+    string?[]? SpecializedCards = null)
 {
     public IEnumerable<int> MatchingSlots(NeowRelic relic, OfferSlot where) =>
         OffersBySlot.Index()
@@ -605,6 +678,48 @@ public static class SeedSearcher
                 if (!ok) return false;
             }
             return true;
+        }
+
+        // One draw per player, so this is the cheapest criterion in the tool and sits ahead of
+        // everything except act selection. Resolved once per search: the prior-draw count
+        // depends on which modifiers are ticked, not on the seed.
+        int specializedPrior = criteria.Specialized.Count > 0
+            ? criteria.SpecializedPriorDraws() ?? 0
+            : 0;
+
+        bool SpecializedMatches(ulong runSeed)
+        {
+            if (criteria.Specialized.Count == 0) return true;
+
+            bool Starts(int slot, SpecializedCriterion want) =>
+                SpecializedPayload.Predict(
+                    runSeed, slot, criteria.Characters[slot], criteria.UnlocksFor(slot),
+                    isMultiplayer: true, specializedPrior)?.TypeName == want.Card;
+
+            foreach (var want in criteria.Specialized)
+            {
+                bool ok = want.Slot >= 0
+                    ? Starts(want.Slot, want)
+                    : Enumerable.Range(0, playerCount).Any(s => Starts(s, want));
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        // What each player actually starts with, for the result card. Only computed for a hit,
+        // so this costs one draw per player on the seeds that survived everything else.
+        string?[]? SpecializedFor(ulong runSeed)
+        {
+            if (!criteria.Modifiers.Contains(RunModifier.Specialized)) return null;
+            if (criteria.Characters.Count < playerCount) return null;
+            if (criteria.SpecializedPriorDraws() is not { } prior) return null;
+
+            var cards = new string?[playerCount];
+            for (int slot = 0; slot < playerCount; slot++)
+                cards[slot] = SpecializedPayload.Predict(
+                    runSeed, slot, criteria.Characters[slot], criteria.UnlocksFor(slot),
+                    isMultiplayer: true, prior)?.TypeName;
+            return cards;
         }
 
         // Which map each act drew is known from act selection alone, three draws, so a boss or
@@ -757,13 +872,22 @@ public static class SeedSearcher
                         if (!MapsCouldSatisfy(acts)) return;
                     }
 
+                    if (!SpecializedMatches(runSeed)) return;
                     if (!NeowMatches(runSeed)) return;
                     if (!CardsMatch(runSeed)) return;
 
                     var run = RunIfActsMatch(runSeed, acts);
                     if (criteria.NeedsRun && run is null) return;
 
-                    results.Add(new SeedHit(seed, NeowGenerator.PredictAllOffers(runSeed, ctx), run), cts.Token);
+                    results.Add(new SeedHit(
+                        seed,
+                        // A Custom run reaches none of Neow's own options, so there is no offer
+                        // to report. See SeedHit.
+                        criteria.Modifiers.Count > 0
+                            ? Array.Empty<NeowOffer>()
+                            : NeowGenerator.PredictAllOffers(runSeed, ctx),
+                        run,
+                        SpecializedFor(runSeed)), cts.Token);
                     if (Interlocked.Increment(ref found) >= maxResults) cts.Cancel();
                 }
 
@@ -849,11 +973,12 @@ public static class SeedSearcher
         // anything of the seed, so a search carrying only picks would otherwise be accepted and
         // then match everything.
         if (c.NeowCriteria.Count == 0 && c.Act1 is null
-            && !c.NeedsRun && c.Cards.Count == 0 && c.ShopRelicsWanted.Count == 0)
+            && !c.NeedsRun && c.Cards.Count == 0 && c.ShopRelicsWanted.Count == 0
+            && c.Specialized.Count == 0)
             throw new ArgumentException(
                 "Nothing to search for. Set at least one criterion: a Neow relic, the Act 1 map, "
-                + "an Ancient's offer, a boss, an event, a card reward, a shop relic or a "
-                + "treasure chest.");
+                + "an Ancient's offer, a boss, an event, a card reward, a shop relic, a "
+                + "treasure chest or a Specialized starting card.");
 
         if (c.Act1 is not null && !ActData.ByIndex[0].Any(a => a.Name.Equals(c.Act1, StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException(
@@ -870,6 +995,7 @@ public static class SeedSearcher
                 "entries (one per player, in lobby order), because generation depends on the " +
                 "party and card rewards come out of each character's own pool.");
 
+        ValidateModifierCriteria(c);
         ValidateActCriteria(c);
         ValidateCardCriteria(c);
         ValidateShopCriteria(c);
@@ -920,6 +1046,78 @@ public static class SeedSearcher
     /// something the user can be told precisely, rather than left to discover as a search that
     /// finds nothing.
     /// </summary>
+    /// <summary>
+    /// The three ways a Specialized search can be incoherent, each said as the thing the user
+    /// has to change rather than as a rule number.
+    /// </summary>
+    private static void ValidateModifierCriteria(SearchCriteria c)
+    {
+        if (c.Modifiers.Count > 0 && c.NeowCriteria.Count > 0)
+            throw new ArgumentException(
+                "A Custom run has no Neow offer to search for. Any modifier at all replaces "
+                + "Neow's three options with one forced option per modifier, so a Neow relic and "
+                + "a run modifier can never both be satisfied. Drop one of them.");
+
+        // A pick names one of Neow's own options, which a Custom run never reaches.
+        if (c.Modifiers.Count > 0 && c.NeowPicks.Count > 0)
+            throw new ArgumentException(
+                "A Custom run has no Neow options to take, so there is no pick to assume. "
+                + "Remove the assumed pick, or the modifier.");
+
+        // Every modifier's forced option draws off the same stream the fight rewards come from,
+        // so a cost we cannot count is a card reward we cannot predict either.
+        if (c.Cards.Count > 0 && c.ModifierRewardDraws() is null)
+            throw new ArgumentException(
+                "Card rewards cannot be predicted alongside Draft or Sealed Deck. Both hand out "
+                + "cards off the same stream the fight rewards come from, and neither draws a "
+                + "fixed number of them, so every later card in the run moves by an amount the "
+                + "seed does not decide.");
+
+        if (c.Specialized.Count == 0) return;
+
+        if (!c.Modifiers.Contains(RunModifier.Specialized))
+            throw new ArgumentException(
+                "A starting card only exists with the Specialized modifier ticked on. Enable it, "
+                + "or drop the starting card.");
+
+        if (c.SpecializedPriorDraws() is null)
+            throw new ArgumentException(
+                "Specialized cannot be predicted alongside Draft or Sealed Deck. Both take their "
+                + "Neow option first and neither has a fixed number of draws, so where "
+                + "Specialized lands in the stream is not knowable before the run is played.");
+
+        foreach (var want in c.Specialized)
+        {
+            if (want.Slot >= c.PlayerCount)
+                throw new ArgumentException(
+                    $"P{want.Slot + 1} is not in a {c.PlayerCount}-player lobby.");
+
+            var slots = want.Slot >= 0
+                ? new[] { want.Slot }
+                : Enumerable.Range(0, c.PlayerCount).ToArray();
+
+            foreach (int slot in slots)
+            {
+                if (slot >= c.Characters.Count) continue;
+                var pool = SpecializedPayload.Pool(c.Characters[slot], c.UnlocksFor(slot));
+                if (pool.Any(e => e.TypeName == want.Card)) continue;
+
+                // "Any player" is only impossible when NOBODY could be given it, so keep
+                // looking before rejecting.
+                if (want.Slot < 0 && slots.Any(o => o != slot && o < c.Characters.Count
+                        && SpecializedPayload.Pool(c.Characters[o], c.UnlocksFor(o))
+                            .Any(e => e.TypeName == want.Card)))
+                    break;
+
+                throw new ArgumentException(
+                    $"Specialized can never hand {CardCatalog.Display(want.Card)} to "
+                    + (want.Slot < 0 ? "anyone in this lobby" : $"P{want.Slot + 1}")
+                    + ". It draws from that player's own pool, and only Common, Uncommon and "
+                    + "Rare cards are reachable.");
+            }
+        }
+    }
+
     private static void ValidateNeowPayloads(SearchCriteria c)
     {
         foreach (var want in c.NeowCriteria)

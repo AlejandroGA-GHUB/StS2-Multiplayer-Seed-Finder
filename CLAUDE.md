@@ -71,9 +71,25 @@ the Neow criterion itself so relic and cards stay one question about one player)
 (per act, and negatable), **event** (per act, "within the first n"), **Ancient** (optionally
 offering a given relic), **card rewards for fights 1 to 3** (per player, in pick order or in any
 permutation), the **shop's third
-relic slot** (per player, per shop visit), and each act's **treasure chest** (per act).
+relic slot** (per player, per shop visit), and each act's **treasure chest** (per act), plus the card the **Specialized** run modifier
+hands each player (per player, Custom runs only).
 **Ascension 10** adds the final act's second boss, which two boss criteria can pin as a pair —
 and from fight 2 ascension also affects card rarity, via Scarcity at A7+.
+
+**Custom run modifiers: Specialized is SEARCHABLE, the other fifteen are not** (2026-09-05).
+`Core/Modifiers/`. Specialized gives every player five copies of one card, and that card is a
+single `NextInt` off the player's own `Rewards` stream, so it is searchable per player and every
+rarity is equally likely. Verified against a real custom run (`QHU3PZ4H3CF7`, Ironclad, A0) and
+covered by `--verify`, which uses the saved deck as its oracle.
+
+Two consequences that are easy to get wrong, both enforced in `SeedSearcher.Validate`:
+**any modifier at all deletes Neow's offer** (`Neow.GenerateInitialOptions` only builds it when
+`Modifiers.Count <= 0`), so a Neow criterion and a modifier can never both be satisfied; and the
+forced option **draws off the same stream the fight card rewards use**, so it shifts fights 1 to 3.
+That second one is why `SearchCriteria.RewardPriorDraws` is the ONLY place prior draws are counted:
+an earlier version had the CLI deriving its own and the two disagreed, so the search matched on one
+number and printed rewards read from another. Read the modifier section of `docs/game_mechanics.md`
+before touching `Core/Modifiers/`.
 
 **Act maps are drawn, not searched** (2026-09-04). `Map Visual`, beside Copy on any result, swaps
 the results for all three act maps side by side. It is display-only and sits off the search path
@@ -108,6 +124,7 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --che
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --neow-pick p1:massive_scroll --characters ironclad,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --specialized p1:claw --characters defect,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 0BUJY7ZRE8TP --players 2
 # act maps are web-only (Map Visual on a result); the CLI checks them via --verify
 dotnet run -c Release --project src\Sts2.SeedFinder.Oracle              # differential test vs sts2.dll
@@ -153,6 +170,7 @@ working from memory. Each of these records something that was got wrong at least
 | `Core/Acts/` shop relics | *Shops: the third relic slot IS predictable* |
 | `Core/Acts/ChestRelics.cs` | *Treasure chests* |
 | `Core/Map/` | *Act maps* — the own-rng property, the three forced rows, and the three traps |
+| `Core/Modifiers/` | *Custom run modifiers* — why the enum order is load-bearing, and what a modifier does to Neow and to the Rewards stream |
 | `Core/Cards/` | *Card rewards, fights 1 and 2* (the mechanics; the cap is now `MaxPredictableFight` = 3) |
 | `Core/Cards/NeowCardPayload.cs` | *The Neow chain*, payload section: why a payload is one draw per card, and why none of them unlocks a fight-1 rare |
 | `Core/Ancients/` | *Ancients' offers* |
@@ -210,8 +228,10 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
 
 - `src/Sts2.SeedFinder.Core` — `MegaRandom` (xoshiro256**), `Rng`, `GameHash` (XXH64 via
   `System.IO.Hashing`), `SeedCodec`, `SeedSearcher`, `Neow/`, `Acts/`, `Ancients/`, `Cards/`,
-  `Map/`. `Map/` is the odd one out: it draws from its own per-act stream, feeds no criterion, and
-  nothing else in `Core` depends on it.
+  `Map/`, `Modifiers/`. `Map/` is the odd one out: it draws from its own per-act stream, feeds no
+  criterion, and nothing else in `Core` depends on it. `Modifiers/` is the opposite: it feeds a
+  criterion AND changes how `Cards/` must be read, since a modifier's forced Neow option spends
+  part of the same `Rewards` stream.
 - `src/Sts2.SeedFinder.Cli` — `sts2seed` executable. Two jobs in one binary: the scriptable
   front end onto the same `Core` the web UI drives, and the host of `--verify`.
 - `src/Sts2.SeedFinder.Web` — local web UI (`seed-finder.bat`, or

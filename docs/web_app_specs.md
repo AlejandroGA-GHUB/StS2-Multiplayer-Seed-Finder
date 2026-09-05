@@ -7,6 +7,48 @@ Status: **phases 1–4 built.** `src/Sts2.SeedFinder.Web`, run with
 `dotnet run -c Release --project src\Sts2.SeedFinder.Web`. Mobile layout (phase 5) is
 deliberately deferred.
 
+## Sections
+
+The numbered parts are the shape of the app; the entries under section 7 are one panel or
+behaviour each, so jump straight to the one you are changing.
+
+- [1. Goals](#1-goals)
+- [2. Non-goals](#2-non-goals)
+- [3. Distribution](#3-distribution)
+- [4. Game art and descriptions — the constraint](#4-game-art-and-descriptions-the-constraint)
+  - [Decoupling a deployment from the game install (built, not the shipping path)](#decoupling-a-deployment-from-the-game-install-built-not-the-shipping-path)
+  - [Asset providers](#asset-providers)
+- [5. Visual design](#5-visual-design)
+- [6. Layout](#6-layout)
+- [7. Interaction detail](#7-interaction-detail)
+  - [Lobby](#lobby)
+  - [Dropdowns are ours, not the browser's](#dropdowns-are-ours-not-the-browsers)
+  - [Relic picker](#relic-picker)
+  - [Neow relic](#neow-relic)
+  - [Act maps](#act-maps)
+  - [Report a problem](#report-a-problem)
+  - [Import Friend Epoch](#import-friend-epoch)
+  - [Ancient requirements](#ancient-requirements)
+  - [Card rewards](#card-rewards)
+  - [Shop relic (third slot)](#shop-relic-third-slot)
+  - [Syncing from the player's save](#syncing-from-the-players-save)
+  - [Treasure chest](#treasure-chest)
+  - [Bosses](#bosses)
+  - [Act 1's map narrows both pools](#act-1s-map-narrows-both-pools)
+  - [Ascension](#ascension)
+  - [Events](#events)
+  - [Modifiers](#modifiers)
+  - [Per-section info buttons](#per-section-info-buttons)
+  - [Uncertainty](#uncertainty)
+  - [Search](#search)
+  - [Inspect a seed](#inspect-a-seed)
+- [8. HTTP API](#8-http-api)
+- [9. Phases](#9-phases)
+  - [What phase 3 actually required](#what-phase-3-actually-required)
+- [10. Notes and remaining gaps](#10-notes-and-remaining-gaps)
+
+---
+
 ## 1. Goals
 
 - **Intuitive enough for a new player.** Someone who just wants "a seed where my friend and
@@ -688,6 +730,48 @@ A repeatable block: `[Act ▾]` with a remove button, the act's event list below
   with anything asked for highlighted. It uses the neutral text colour rather than the
   deck-branch warning colour — this is folded-away context, not a caveat.
 
+### Modifiers
+Last in the criteria column, and deliberately so: a modifier is not another filter to stack on the
+ones above it, it changes what kind of run this is.
+
+Only **Specialized** is offered, out of the game's sixteen. It is the one whose payload is a single
+draw off a stream already modelled, and the one confirmed not to disturb anything else. Several of
+the others do move predictions (Big Game Hunter rewrites the generated map, Deadly Events changes
+the room odds), so listing them as tickable would invite a search whose other answers were quietly
+wrong. The panel says more are being looked at rather than implying they cannot be done.
+
+Turning it on **disables the Neow panel** and greys it, with a line saying why. That is a hard game
+rule and not a tool limitation: `Neow.GenerateInitialOptions` skips its whole offer when any
+modifier is on. Results drop the Neow row too rather than printing an offer that will never happen.
+This is the only panel that switches another one off, which is why it is worth stating twice.
+
+Per player, like a card reward, since the draw reads that player's own pool. Every rarity is equally
+likely here, unlike everywhere else in the app, so the picker greys nothing out: a Rare costs no
+more to find than a Common.
+
+The note under the panel is **the same text whether or not anything is ticked**. It describes what a
+Custom run is, which does not change with the toggle, so switching the wording on it would only make
+the panel argue with itself. The support status goes last in that note because it is the part that
+will date.
+
+### Per-section info buttons
+Every criteria panel except Lobby carries a small `?` at the right of its header, opening one shared
+sheet styled like the "why did my seed produce unexpected results?" one.
+
+This replaced a paragraph of explanation under each panel's controls. That text was worth having and
+none of it was cut, but it is read once and scrolled past for the rest of the session, and in the
+card panel it outweighed the controls three to one.
+
+What did NOT move behind a click is anything that answers back about the criteria you currently
+have: the warnings that a search can never match, and the "pick a character" gates. Those are about
+the state of the form rather than about the game, and are no use hidden. Lobby keeps its text in the
+open for a different reason: it is short, and it is the one panel you need to have read before any
+of the others mean anything.
+
+Sheet bodies are built by a function rather than stored as strings, because several of them name
+values that only exist at runtime, such as how many fights are predictable and how many players are
+in the lobby. A frozen copy would drift from the tool.
+
 ### Uncertainty
 Whenever an outcome is branch-dependent, the result shows the branches collapsed under a
 "depends on your deck" disclosure, each labelled with its condition and how many deck states
@@ -733,6 +817,16 @@ an endpoint plus one line in the boot indexer, which is the property that design
 
 `characters` in the catalog is `{name, slug, hasArt}` rather than a bare string: `name` is the
 enum name every other endpoint speaks, `slug` is what the art route takes.
+
+`modifier` is `?modifier=<slug>`, repeatable, and it is sent even when no card is named: it is what
+tells the server this is a Custom run and therefore that there is **no Neow offer to report**. The
+server sorts them into the game's own list order rather than the order they arrive, because that
+order decides how much of the Rewards stream is spent before each forced option runs.
+
+`specialized` is `?specialized=<slot>:<slug>`, slot 1-based like `card`, naming what a player must
+start five copies of. Both `/api/search` and `/api/explain` take `modifier`, so an inspected seed
+and a searched one answer the same question the same way. Inspect that omits it would report card
+rewards read from the wrong point in the stream.
 
 `shop` is `?shop=<slot>:<slug>[:<visit>]`, both numbers 1-based on the wire. Shop relics reuse
 the relic art and text routes and needed no new asset endpoint: they are the same relics,

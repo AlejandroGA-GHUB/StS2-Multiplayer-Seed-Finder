@@ -61,6 +61,10 @@ function defaultState() {
     // has to be read at the same drain count. See ChestSatisfies.
     chestTolerance: {},
     extraChests: 0,
+    // Custom run modifiers. `specializedOn` makes this a Custom run at all, which is what takes
+    // Neow away; `specialized` is one { card } per player, the card they start five copies of.
+    specializedOn: false,
+    specialized: [],
   };
 }
 
@@ -810,6 +814,35 @@ const INFO = {
     ],
   },
 
+  modifiers: {
+    title: 'Modifiers',
+    body: () => [
+      { lead: 'Slay the Spire 2 Custom runs can be started with modifiers ticked on. Specialized '
+            + 'is the one this finder can predict: it gives every player five copies of a single '
+            + 'card, and which card is decided by the seed.' },
+      { h: 'Why it is only one draw' },
+      'Specialized picks one card flat across the player\u2019s own pool and then clones it five '
+        + 'times. There is no rarity roll and no upgrade roll, so a Rare is exactly as likely as '
+        + 'a Common and exactly as easy to search for. That is unusual: everywhere else in this '
+        + 'tool a Rare is the expensive ask.',
+      'The draw comes off the same per-player stream the fight card rewards use, and it is the '
+        + 'first thing on it, so each player gets their own card from one seed.',
+      { h: 'What it does to Neow' },
+      'A Custom run has no Neow offer at all. The game replaces the three options with one forced '
+        + 'option per modifier, so the Neow panel switches off while this is on, and results show '
+        + 'no offer rather than one that will never happen.',
+      'Everything else still holds. The acts, bosses, Ancients, encounters, events and the map '
+        + 'are all unaffected, and a run with Specialized on has been checked against the game '
+        + 'to confirm it.',
+      { h: 'The other fifteen' },
+      'More are being looked at. Each one has to be read out of the game before it can be '
+        + 'offered, because several move things this tool already predicts: Big Game Hunter '
+        + 'rewrites the generated map, and Deadly Events changes the room odds. Listing one '
+        + 'before it is modelled would let a search return answers that look right and are not, '
+        + 'so they arrive one at a time as each is checked.',
+    ],
+  },
+
   events: {
     title: 'Events',
     body: () => [
@@ -857,6 +890,152 @@ function setHint(sel, text) {
   const n = $(sel);
   n.textContent = text || '';
   n.hidden = !text;
+}
+
+// ---- Run modifiers ---------------------------------------------------------------------------
+//
+// A Custom run, which is a different kind of run rather than another filter on this one. The
+// game's own gate is blunt: Neow.GenerateInitialOptions opens with
+// `if (RunState.Modifiers.Count <= 0)` and only then builds the curse branch, the positive pool
+// and the coin flips. With any modifier ticked the player instead gets one forced option per
+// modifier and no relic offer at all. So this panel does not narrow the Neow panel, it disables
+// it, and the results stop showing a Neow row.
+//
+// Only Specialized is offered here, out of the game's sixteen. It is the one whose payload
+// reduces to a single draw off a stream this tool already models, and, just as importantly, the
+// one that provably leaves everything else alone: a --verify run with it on still matches the
+// game's acts, bosses, Ancients, encounters, events and map. Several of the others do move
+// predictions (BigGameHunter rewrites the generated map, DeadlyEvents changes room odds), so
+// listing them as tickable would invite a search whose other answers were quietly wrong.
+
+/** Whether this lobby is a Custom run at all. One modifier today, but the question is general. */
+function anyModifier() {
+  return state.specializedOn === true;
+}
+
+/** The catalog rows for the modifiers this lobby has ticked on, in the game's list order. */
+function enabledModifiers() {
+  return state.specializedOn
+    ? (catalog.modifiers ?? []).filter(m => m.slug === 'specialized')
+    : [];
+}
+
+/**
+ * What those modifiers cost every player's card-reward stream before their first fight.
+ *
+ * Null would mean one of them has no countable cost, which the panel cannot currently produce
+ * since only Specialized is offered; it is handled anyway so this does not become a silent zero
+ * the day another one is.
+ */
+function modifierDraws() {
+  const rows = enabledModifiers();
+  return rows.some(m => m.neowDraws == null)
+    ? null
+    : rows.reduce((n, m) => n + m.neowDraws, 0);
+}
+
+/** Cards Specialized could hand this slot: their whole pool, since it ignores rarity. */
+function specializedPoolFor(slot) {
+  return cardPoolFor(slot);
+}
+
+function renderModifiers() {
+  const box = $('#specialized');
+  hideTip();
+  box.replaceChildren();
+
+  mount('#specializedOn', [
+    { label: 'Off', value: 'off' },
+    { label: 'On', value: 'on' },
+  ], state.specializedOn ? 'on' : 'off', v => {
+    state.specializedOn = v === 'on';
+    if (!state.specializedOn) state.specialized = [];
+    renderModifiers();
+    // Turning it on takes Neow away, and turning it off gives it back.
+    renderNeow();
+    syncNeowAvailability();
+    // The card panel's "took at Neow" row becomes a statement rather than a choice, and the
+    // rewards under it move by however many draws the modifier spends.
+    renderCards();
+  });
+
+  state.specialized.length = state.players;
+
+  if (state.specializedOn) {
+    for (let i = 0; i < state.players; i++) {
+      const pool = specializedPoolFor(i);
+      const want = state.specialized[i] || (state.specialized[i] = { card: '' });
+      // A character swap strands a card that belonged to the previous one.
+      if (want.card && !pool.some(c => c.slug === want.card)) want.card = '';
+
+      const row = el('div', 'row');
+      row.appendChild(el('label', null, `P${i + 1} starts with 5x`));
+
+      const field = el('button', 'relic-field card-field');
+      field.type = 'button';
+      field.disabled = pool.length === 0;
+
+      const chosen = pool.find(c => c.slug === want.card);
+      if (!chosen) {
+        field.appendChild(anyIcon(28));
+        field.appendChild(el('span', 'name', pool.length ? 'Any card' : 'Pick a character first'));
+      } else {
+        const chip = el('span', 'pick');
+        chip.appendChild(iconFor(chosen.slug, chosen.name, 22, 'card'));
+        chip.appendChild(el('span', null, chosen.name));
+        field.appendChild(withTip(chip, chosen.slug, chosen.name, 'card'));
+        const clear = el('span', 'clear', '×');
+        clear.dataset.clear = '1';
+        clear.title = 'Clear';
+        field.appendChild(clear);
+      }
+
+      field.onclick = async e => {
+        if (e.target.dataset.clear) { want.card = ''; renderModifiers(); return; }
+        const picked = await openPicker(
+          `P${i + 1}'s ${state.characters[i]} starts with five of…`,
+          // Every rarity is equally likely here, unlike a card reward: Specialized takes the
+          // Uniform branch, which skips the rarity roll and picks flat across the pool. So a
+          // Rare is exactly as findable as a Common, and none of them is greyed out.
+          ['Common', 'Uncommon', 'Rare'].map(r => ({
+            title: r,
+            items: pool.filter(c => c.rarity === r),
+          })),
+          'card');
+        if (picked) { want.card = picked.slug; renderModifiers(); }
+      };
+
+      row.appendChild(field);
+      box.appendChild(row);
+    }
+  }
+
+  // One text either way. It describes what a Custom run IS, which does not change with what
+  // happens to be ticked, so switching the wording on the toggle would only make the panel
+  // argue with itself. The support status goes last because it is the part that will date.
+  setHint('#modifierHint',
+    'Slay the Spire 2 Custom runs can be started with modifiers ticked on. Any modifier at all '
+    + 'replaces Neow’s three options with one forced option per modifier, so a Custom run '
+    + 'has no Neow offer and that panel switches off. Only Specialized is supported for now, '
+    + 'with more potentially coming.');
+}
+
+/**
+ * Neow and a Custom run are mutually exclusive, so this greys the whole panel rather than
+ * letting a search be built that no seed could ever answer.
+ */
+function syncNeowAvailability() {
+  const custom = anyModifier();
+  const panel = $('#neow').closest('fieldset');
+
+  panel.classList.toggle('disabled', custom);
+  $('#addNeow').disabled = custom;
+  for (const c of $('#neow').querySelectorAll('button, input')) c.disabled = custom;
+
+  setHint('#neowHint', custom
+    ? 'A Custom run has no Neow offer. The game replaces its three options with one forced '
+      + 'option per modifier, so there is nothing here to search for.'
+    : '');
 }
 
 // ---- Act maps ------------------------------------------------------------------------------
@@ -1635,7 +1814,10 @@ function renderCharacters() {
   // Not for the characters — a chest draws from the shared bag, so who is playing changes
   // nothing — but for the player count, which sets how many relics one chest can be asked for.
   renderChests();
+  // Specialized draws from the character's own pool, so a swap can strand the chosen card.
+  renderModifiers();
   syncActAvailability();
+  syncNeowAvailability();
 }
 
 function charactersReady() {
@@ -1754,15 +1936,26 @@ function renderCards() {
     const pickRow = el('div', 'row');
     pickRow.appendChild(el('label', null, `P${i + 1} took at Neow`));
 
-    const options = [
-      { label: 'Nothing that draws cards', value: '' },
-      ...(catalog.neowCardRelics ?? [])
-        .filter(r => r.draws > 0)
-        .map(r => ({
-          label: `${r.name} (${pickDraws(i, r.slug)} draw${pickDraws(i, r.slug) === 1 ? '' : 's'})`,
-          value: r.slug,
-        })),
-    ];
+    // A Custom run leaves nothing to have taken: the modifier's option is forced on every player
+    // and there is no relic offer to choose from instead. It still costs this stream draws, which
+    // is exactly what this row exists to say, so it states the modifier rather than going blank.
+    // state.neowPicks stays empty so no contradictory ?pick= reaches the server, which refuses
+    // a pick and a modifier together.
+    const forcedByModifier = anyModifier() ? enabledModifiers() : null;
+    if (forcedByModifier) state.neowPicks[i] = '';
+
+    const options = forcedByModifier
+      ? [{ label: `${forcedByModifier.map(m => m.name).join(' + ')} (${modifierDraws()} `
+                + `draw${modifierDraws() === 1 ? '' : 's'})`, value: '' }]
+      : [
+          { label: 'Nothing that draws cards', value: '' },
+          ...(catalog.neowCardRelics ?? [])
+            .filter(r => r.draws > 0)
+            .map(r => ({
+              label: `${r.name} (${pickDraws(i, r.slug)} draw${pickDraws(i, r.slug) === 1 ? '' : 's'})`,
+              value: r.slug,
+            })),
+        ];
     if (!options.some(o => o.value === (state.neowPicks[i] || ''))) state.neowPicks[i] = '';
 
     const picker = dropdown(options, state.neowPicks[i] || '', v => {
@@ -1773,7 +1966,12 @@ function renderCards() {
     });
     // Settled by a criterion above, so it is shown rather than offered: changing it here would
     // let the search look for one thing and the results be read as another.
-    if (pinned) {
+    if (forcedByModifier) {
+      picker.disabled = true;
+      picker.title = 'Forced by the Modifiers panel. A Custom run replaces Neow’s options '
+                   + 'with one per modifier, so there is nothing to choose. The rewards below '
+                   + 'are already read from after it.';
+    } else if (pinned) {
       // Genuinely settled: you cannot be handed the cards a relic gives without taking it, so
       // there is no state where this and the requirement above could honestly disagree.
       picker.disabled = true;
@@ -2551,6 +2749,9 @@ function renderHit(hit, position = null) {
   // Act 1 — Neow
   const act1 = el('div', 'act');
   const act1Head = el('div', 'act-head');
+  // Still Neow, even on a Custom run: the event happens, it is only the relic OFFER that the
+  // game replaces with one forced option per modifier. So the header keeps its name and it is
+  // the offer rows below that are absent.
   act1Head.appendChild(actHead(1, hit.acts[0], 'Neow'));
   act1.appendChild(act1Head);
   for (const o of hit.neow) {
@@ -2568,6 +2769,22 @@ function renderHit(hit, position = null) {
     for (const pay of (hit.neowPayloads ?? []).filter(x => x.slot === o.slot))
       act1.appendChild(payloadRow(pay));
   }
+  for (const sp of hit.specialized ?? []) {
+    const row = el('div', 'slot');
+    // "P1 starts" rather than bare "P1", because on a Custom run there is no offer row above
+    // this to say what the number refers to.
+    row.appendChild(el('div', 'slot-label', `P${sp.slot + 1} starts`));
+    const offer = el('div', 'offer');
+    const wanted = state.specialized[sp.slot]?.card === sp.card;
+    const p = el('span', 'pill is-card' + (wanted ? ' is-match' : ''));
+    p.appendChild(el('span', 'fight-badge', '5x'));
+    p.appendChild(iconFor(sp.card, sp.name, 20, 'card'));
+    p.appendChild(el('span', null, sp.name));
+    offer.appendChild(withTip(p, sp.card, sp.name, 'card'));
+    row.appendChild(offer);
+    act1.appendChild(row);
+  }
+
   // The first fight sits in Act 1 because that is where it happens, and after Neow because the
   // Neow pick is what can shift it.
   const first = firstFightBlock(hit.firstFight);
@@ -2703,6 +2920,15 @@ function buildQuery() {
   for (const c of state.chests)
     if (c.relic) q.append('chest', `${c.act}:${c.relic}:${state.chestTolerance[c.act] || 0}`);
   if (state.extraChests > 0) q.set('extraChests', state.extraChests);
+
+  // The modifier goes on the wire even with no card named, because it is what tells the server
+  // this is a Custom run and so that there is no Neow offer to report.
+  if (state.specializedOn) {
+    q.append('modifier', 'specialized');
+    state.specialized.forEach((want, i) => {
+      if (want?.card) q.append('specialized', `${i + 1}:${want.card}`);
+    });
+  }
 
   // Only A10 changes anything, but send whatever is set so the answer matches the lobby.
   if (state.ascension > 0) q.set('ascension', state.ascension);
@@ -3167,6 +3393,7 @@ async function inspect() {
   // Neow requirement settled.
   state.neowPicks.forEach((slug, i) => { if (slug) q.append('pick', `${i + 1}:${slug}`); });
   if (state.extraChests > 0) q.set('extraChests', state.extraChests);
+  if (state.specializedOn) q.append('modifier', 'specialized');
 
   const out = $('#out');
   out.replaceChildren();

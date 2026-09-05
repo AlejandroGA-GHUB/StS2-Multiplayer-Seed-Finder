@@ -206,6 +206,9 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress --require all \
     --ancient-relic vakuu:fiddle --characters ironclad,silent
 
+# Custom run with the Specialized modifier: P1 starts with five Claws
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --specialized p1:claw     --characters defect,silent
+
 # What does this seed give us?
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 1EMQY13NZN03 \
     --players 2 --characters ironclad,silent
@@ -266,6 +269,8 @@ Two things that surprise people:
 | Relics from elite fights | Not supported yet |
 | Arcane Scroll's rare and Hefty Tablet's three | Verified against the game's own RNG |
 | What's inside Small Capsule, Large Capsule or Neow's Bones | Not supported yet |
+| The card the **Specialized** custom modifier gives you 5 of | Verified against a real custom run |
+| What the other fifteen custom modifiers hand out | Not supported yet |
 
 Five independent checks back this up:
 
@@ -285,155 +290,16 @@ side, with the room icons from your own install. It is display-only: maps are co
 seed on demand and never touch a search.
 
 
-### What you can search on
+### What the tool knows, and what it assumes
 
-Neow's relic, the Act 1 map, each act's **boss**, each act's **events**, which **Ancient** opens
-Acts 2 and 3 (optionally offering a particular relic), the **card reward from fights 1 to 3**,
-the **third relic in a shop**, and each act's **treasure chest**. Combine as many as you like in
-one search.
+The table above is what this predicts. **How** each of those is drawn, which assumptions an answer
+rests on, and what you have to tell the tool before it can answer at all, are written up once in
+**[docs/game_mechanics.md](docs/game_mechanics.md)**.
 
-Two of Neow's options hand you cards rather than only a relic, and you can search on those too:
-**Arcane Scroll's rare** and **Hefty Tablet's three**. Choose the relic, then name the card, and
-the seed has to give that player both. Naming a card also says that player takes the relic, so
-their fight rewards are read from one draw (or three) further along the stream.
-
-Neow, the Ancients, card rewards and shop relics are rolled per player, so those are per-slot.
-The boss, the event order and the chest are the same for everybody in the lobby. The chest
-because it is a shared pick: the seed decides what is on the table, and the party decides who
-takes it.
-
-Boss requirements can be inverted: **does not end with** finds every seed that keeps a boss
-you would rather skip out of the run.
-
-A shop means the **third relic slot** and nothing else. That one is fixed before the run starts;
-the other two are rolled from run state when you open the door, so no seed pins them. It is
-counted by shops you actually walk into rather than by floor, so skipping one moves the rest up.
-
-### Card rewards, fights 1 to 3
-
-The first room of a run is always a normal fight with row 1 of the map forced to it and can't be
-anything else, and every player rolls their own reward for it off their own stream. So each
-player can ask for a specific card, and "P1 opens with Anger while P2 opens with Deflect" is one
-search.
-
-Fights 2 and 3 work the same way, and 3 is as far as this goes. In the picker you click up to
-three cards and each one is badged with the fight it stands for: first click is fight 1, second
-is fight 2, third is fight 3. On the command line, add `:2` or `:3`.
-
-**Exact order or any order.** Pick more than one card for a player and a dropdown appears. On
-*Exact order* each card has to come from the fight its badge names. On *Any order* you still get
-all of them, one per fight, but which fight produces which is free. That costs nothing to ask for
-and it is dramatically more likely: about **5.6x per player**, so a three-player search for a
-Common and two Uncommons each goes from roughly 1 in 1.8 trillion to about 1 in 10 billion,
-which is seconds of searching rather than hours. Use Exact order only when the order genuinely
-matters to you. On the command line it is `--any-order`.
-
-Things to know:
-
-- **Fight 1 needs no assumption. Fights 2 and 3 do.** They assume you walk straight into the
-  next monster room each time, with no shop, elite, event or rest in between, so all three have
-  to be consecutive. Take a detour and the prediction is for a fight you never had, and the
-  further along it is the easier that is to do by accident.
-- **A Rare never appears in fight 1**, but can after it. The rare odds start with a penalty
-  that only wears off across rewards, so rares are held out of the first fight entirely and the
-  picker refuses them there.
-- **Ascension matters from fight 2 on.** At A7 and up, Scarcity roughly halves the rare odds, so
-  set your ascension if you're searching for one.
-- **Nothing is upgraded in Act 1.** Upgrade odds scale with the act.
-- **Five Neow options change the answer.** Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll
-  Boxes and Neow's Bones all draw cards from the same stream first, which shifts what the fights
-  hand you. Every other Neow pick, Silken Tress included, leaves it alone. Say who took what in
-  the **took at Neow** row and the rewards are read from the right place in the stream; leave it
-  alone and they read as though nobody took a card. Neow's Bones is the one that cannot be
-  named, because the length of the shuffle it runs is not modelled.
-- **What was taken does NOT unlock rares in fight 1.** The rare penalty is a counter, and none
-  of those five relics moves it: two of them roll no rarity at all, and the rest roll it in a
-  mode that leaves the counter alone. Taking a card at Neow changes which commons and uncommons
-  you see, nothing more.
-
-Past fight 3 it stops, because each further room makes the unbroken-hallway assumption less
-likely than it is worth. See [What the seed cannot decide](#what-the-seed-cannot-decide).
-
-### Treasure chests
-
-Every act has exactly one treasure chest, at co-op floors 9, 24 and 38, and no route skips it.
-That makes it the one mid-run reward the seed pins down: it puts **one relic per player** on the
-table, the party votes on who takes it, and none of that depends on how you got there.
-
-So a chest requirement is run-level. It asks what's *in* the chest, not who ends up with it, and
-naming two relics for one act asks for both of them to be there, up to your player count.
-
-Two things to know:
-
-- **The rarity is exact, the relic can drift.** What fills a slot is the front of the shared
-  relic bag, and every relic anyone picks up earlier in the run removes an entry from it. If the
-  relic you asked for got taken already, you get the next one of that rarity instead, so the
-  picker lets you accept the next few the same way event ordering does.
-- **A `?` room that turns into a treasure room shifts everything.** It drains a full round of
-  picks, which moves every later chest along by one. If that happened, pass `--extra-chests 1`
-  (or set it in the UI) and the predictions line back up.
-
-### Ascension
-
-Two ascension levels change what a seed gives you, and nothing in between them does.
-
-**A7 (Scarcity)** roughly halves the odds of a Rare card reward. Fight 1 can't offer a Rare
-anyway, so this only shows up from fight 2 on, and only if you're searching for a Rare.
-
-**A10 (Double Boss)** gives the **final act a second boss**, drawn from that act's other two.
-It's the last decision generation makes, so everything else about the run is identical whether
-it's on or off. With it set, the final act takes two boss requirements instead of one:
-
-- Two "ends with" rows pin the exact pair.
-- One "does not end with" row keeps a boss out of both slots.
-
-Set your real ascension and you don't have to think about either of these.
-
-### Bosses and events
-
-Two things worth knowing before you search on them:
-
-- Act 1's two maps have **completely separate bosses**, so choosing an Act 1 boss also decides
-  the map. Asking for a boss from one map and an event from the other has no answers, and the
-  tool says so rather than scanning.
-- An act shuffles its **whole** event pool once and hands them out from the front, so what the
-  seed fixes is the order, not what you will actually see. A room takes the next event you
-  currently qualify for and have not already met, and half the events gate themselves on HP,
-  gold, deck or act. So "within the first 3" means near the front of the queue, not a promise.
-
----
-
-## Inputs that change the answer
-
-Get one of these wrong and the prediction is for a different run. The tool cannot infer them.
-
-- **Lobby order.** P1 is whoever joins first. Swap join order and the offers swap with it.
-- **Player count.** Changes act generation, so it changes bosses and Ancients.
-  Party *composition* does not, all five characters have identically sized relic pools.
-- **Ascension**, at two levels only: A10 for the final act's second boss, and A7 for the odds of
-  a Rare card reward. Nothing else in a run changes with ascension.
-- **No run modifiers.** Predictions assume an ordinary run. Ticking anything on the Custom Run
-  screen changes how the game generates a run, so none of this holds for one. Typing a seed in
-  doesn't make a run custom, only the modifiers do.
-- **Mods that add content.** Anything adding relics, cards, events or encounters changes pool
-  sizes and invalidates Act 2/3 predictions.
-
-  **Cosmetic mods are completely fine.** Art replacements and reskins touch nothing a seed
-  decides, and I've verified that myself by playing full runs with the Chaos Zero Nightmare
-  mods (which you should go check out by the way, they're very good). Everything still matched.
-
-  The tool warns whenever a mods folder is present at all, because it can't tell the two kinds
-  apart from the outside. Read that banner as "check what you have installed", not as a verdict.
-
-## What the seed cannot decide
-
-Only **Vakuu**'s offer is fully determined by the seed. Every other Ancient gates part of its
-pool on your deck at the moment you meet it like Tanx on Instinct-enchantable cards, Nonupeipe on
-Swift, Tezcatara on whether a basic Strike survives, Pael on three separate conditions.
-
-The tool shows **every branch with the condition that produces it**, rather than picking one
-and presenting it as fact.
-
+Worth reading if you're interesting in the in-depth breakdown of how the apps features function: 
+the lobby order and player count have to match the run you will actually play, everyone's unlock state 
+feeds the same draws, and a mod that adds content invalidates act predictions while a purely cosmetic 
+one changes nothing.
 
 ---
 
@@ -579,21 +445,8 @@ separates the two Steam branches today. See below.
 
 **To fix it, double-click `repair.bat`.** It checks by layer, offers to regenerate what can be
 regenerated, rebuilds, verifies against runs you have already played, and records the result.
-About two minutes, no terminal.
-
-```
-  Your game       v0.121.0
-  Verified against v0.109.1
-
-  primitives (RNG, hashing)      OK
-  data tables (pools, acts)      FAIL     stale: RelicPoolData, ActData
-  draw order (hand-written)      OK       23 mirrored methods unchanged
-
-  Still correct regardless: Neow's offer and the Act 1 map.
-
-  Fixable by command:  yes
-  Needs a code edit:   no
-```
+About two minutes, no terminal, and it prints which layer was stale and whether a code edit is
+still needed.
 
 Most patches are fixed by that one double-click, and the few that aren't will tell you which
 file needs an edit. **[docs/PATCH_RECOVERY.md](docs/PATCH_RECOVERY.md)** is the full runbook,
@@ -613,17 +466,9 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Oracle    the exhaustive por
 
 `--verify` reads a run in progress, so start one and quit to the menu first. `--verify-history`
 needs no live run: it reads runs you have already finished, which is the only way to test the
-co-op path, since the game will not start a multiplayer lobby with one player in it.
-
-Expect `--verify-history` to skip runs from older game builds, and to report some co-op runs
-under "Lobby". A finished run does not record which epochs each player had revealed at the time,
-and that changes generation, so the tool fits a state rather than pretending to know one.
-
-It also skips a run played with a **modded character**, and says so by name. That is not
-squeamishness: a mod that adds a character adds its cards and relics to the game's model
-database, which resizes the pools every shuffle draws from, so such a run is generated against
-content this tool does not have. The same is true of any mod that adds content, whoever in the
-lobby was playing it.
+co-op path, since the game will not start a multiplayer lobby with one player in it. It skips any
+run it cannot judge fairly, an older build or a modded character among them, and names the reason
+for each. The runbook explains how to read those.
 
 ---
 

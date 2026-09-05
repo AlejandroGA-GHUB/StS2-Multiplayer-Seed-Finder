@@ -3,6 +3,7 @@ using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Modifiers;
 using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Core.Saves;
 using Sts2.SeedFinder.Web.Assets;
@@ -108,7 +109,7 @@ public sealed record CatalogDto(
     AncientDto[] Ancients, CharacterDto[] Characters, string[] Act1Maps, ActContentDto[] ActContent,
     CardPoolDto[] CardPools, ShopRelicDto[] ShopRelics, ChestRelicDto[] ChestRelics,
     string[] AncientArtSlugs, string[] EventArtSlugs, string[] BossArtSlugs,
-    NeowCardRelicDto[] NeowCardRelics);
+    NeowCardRelicDto[] NeowCardRelics, ModifierDto[] Modifiers);
 
 /// <summary>
 /// What the local game install knows about this player, for the "sync from my save" button.
@@ -295,7 +296,33 @@ public sealed record NeowPayloadDto(int Slot, string Relic, string[] Cards);
 public sealed record SeedResultDto(
     string Seed, NeowOfferDto[] Neow, ActDto[] Acts, AncientOfferDto[] AncientOffers,
     FirstFightDto[] FirstFight, ShopSequenceDto[] Shops, ChestDto[] Chests,
-    NeowPayloadDto[] NeowPayloads);
+    NeowPayloadDto[] NeowPayloads, SpecializedDto[] Specialized);
+
+/// <summary>
+/// What one player starts five copies of, under the Specialized modifier. Empty unless the
+/// lobby has it ticked on.
+/// </summary>
+public sealed record SpecializedDto(int Slot, string Card, string Name, bool HasArt);
+
+/// <summary>
+/// One run modifier, for the Modifiers picker.
+/// </summary>
+/// <param name="Predictable">
+/// Whether this tool can name what the modifier hands out. True only for Specialized. The others
+/// are still worth listing, because ticking any of them is what tells the finder that Neow has
+/// no offer to predict.
+/// </param>
+/// <param name="Good">Which of the game's two lists it comes from, purely for grouping.</param>
+/// <param name="BlocksSpecialized">
+/// Whether having this on makes Specialized unpredictable. True for Draft and Sealed Deck, the
+/// two that take a Neow option ahead of Specialized without a fixed number of draws.
+/// </param>
+/// <param name="NeowDraws">
+/// What this modifier's forced Neow option costs a player's Rewards stream, or null when that is
+/// not countable. The UI needs it to say how far the card rewards below have been pushed along.
+/// </param>
+public sealed record ModifierDto(
+    string Slug, string Name, bool Good, bool Predictable, bool BlocksSpecialized, int? NeowDraws);
 
 // ---- Query parsing ------------------------------------------------------------------------
 
@@ -506,6 +533,8 @@ public static class Query
             Bosses = ParseBosses(q),
             Events = ParseEvents(q),
             Cards = ParseCards(q, chars, players),
+            Modifiers = ParseModifiers(q),
+            Specialized = ParseSpecialized(q, chars, players),
             ShopRelicsWanted = ParseShopRelics(q, players),
             ChestRelicsWanted = ParseChestRelics(q),
             ExtraChestPicks = ExtraChestPicks(q),
@@ -634,6 +663,12 @@ public static class Query
             draws[pick.Slot] = Math.Max(
                 CardRewardGenerator.NeowRewardDrawCost(pick.RelicSlug, chars[pick.Slot]), 0);
 
+        // A Custom run's forced Neow options draw off the same stream, before the first fight.
+        // Inspect has to account for it exactly as a search does, or the same seed would report
+        // different card rewards depending on which of the two you asked.
+        if (RunModifiers.TotalNeowRewardDraws(Modifiers(q)) is { } fromModifiers)
+            for (int slot = 0; slot < draws.Length; slot++) draws[slot] += fromModifiers;
+
         return draws;
     }
 
@@ -739,6 +774,70 @@ public static class Query
     }
 
     /// <summary>
+    /// Repeated ?modifier=&lt;slug&gt; — the run modifiers this Custom lobby has ticked on.
+    ///
+    /// Sorted into the game's own list order rather than the order they arrive, because that
+    /// order decides how much of the Rewards stream is spent before Specialized takes its turn.
+    /// </summary>
+    /// <summary>The modifiers on this request, for callers outside the search path.</summary>
+    public static IReadOnlyList<RunModifier> Modifiers(IQueryCollection q) => ParseModifiers(q);
+
+    private static IReadOnlyList<RunModifier> ParseModifiers(IQueryCollection q)
+    {
+        var enabled = new List<RunModifier>();
+        foreach (var raw in (StringValues)q["modifier"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            enabled.Add(RunModifiers.TryParse(raw)
+                ?? throw new ArgumentException($"'{raw}' is not a run modifier"));
+        }
+        return enabled.Distinct().OrderBy(m => m).ToList();
+    }
+
+    /// <summary>
+    /// Repeated ?specialized=&lt;player&gt;:&lt;card&gt; — which player starts with five copies
+    /// of which card. Same slot syntax as ?card, and the same reason a character is needed.
+    /// </summary>
+    private static IReadOnlyList<SpecializedCriterion> ParseSpecialized(
+        IQueryCollection q, IReadOnlyList<Character> chars, int players)
+    {
+        var wanted = new List<SpecializedCriterion>();
+        foreach (var raw in (StringValues)q["specialized"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2 || parts[1].Length == 0)
+                throw new ArgumentException($"specialized wants <player>:<card>, got '{raw}'");
+
+            int slot = -1;
+            if (parts[0] is not ("any" or ""))
+            {
+                var t = parts[0].StartsWith('p') || parts[0].StartsWith('P') ? parts[0][1..] : parts[0];
+                if (!int.TryParse(t, out var n) || n < 1 || n > players)
+                    throw new ArgumentException($"'{parts[0]}' is not a player in a {players}-player lobby");
+                slot = n - 1;
+            }
+
+            if (chars.Count != players)
+                throw new ArgumentException(
+                    "a starting card needs a character for every player, because Specialized "
+                    + "draws from that player's own pool.");
+
+            var lookIn = slot < 0 ? Enumerable.Range(0, players) : [slot];
+            var found = lookIn
+                .Select(s => CardCatalog.Find(chars[s], parts[1]))
+                .FirstOrDefault(x => x is not null);
+
+            wanted.Add(new SpecializedCriterion(slot, found
+                ?? throw new ArgumentException(
+                    $"no card called '{parts[1]}' in "
+                    + (slot < 0 ? "any of the party's pools" : $"the {chars[slot]}'s pool"))));
+        }
+        return wanted;
+    }
+
+    /// <summary>
     /// Repeated ?boss=&lt;act&gt;:[!]&lt;slug&gt; — e.g. boss=2:kaiser_crab, or boss=3:!queen to
     /// rule one out.
     /// </summary>
@@ -837,7 +936,8 @@ public static class Predictions
     public static SeedResultDto Describe(
         string seed, int players, IReadOnlyList<Character> characters, SeedHit? hit = null,
         int ascension = 0, UnlockState? unlocks = null, int extraChestPicks = 0,
-        int[]? priorDraws = null, IReadOnlyList<UnlockState>? playerUnlocks = null)
+        int[]? priorDraws = null, IReadOnlyList<UnlockState>? playerUnlocks = null,
+        IReadOnlyList<RunModifier>? modifiers = null)
     {
         unlocks ??= new UnlockState();
 
@@ -846,7 +946,12 @@ public static class Predictions
         ulong runSeed = SeedCodec.RunSeed(seed);
         var ctx = new NeowContext { PlayerCount = players };
 
-        var offers = hit?.OffersBySlot ?? NeowGenerator.PredictAllOffers(runSeed, ctx);
+        // A Custom run never reaches Neow's own options, so there is nothing to report. See
+        // SeedHit: a search hit already carries an empty array, but Inspect builds this from a
+        // bare seed and has to make the same decision for itself.
+        var offers = modifiers is { Count: > 0 }
+            ? Array.Empty<NeowOffer>()
+            : hit?.OffersBySlot ?? NeowGenerator.PredictAllOffers(runSeed, ctx);
         var neow = offers.Select((o, i) => new NeowOfferDto(
             i, new[] { o.Positive1.Name, o.Positive2.Name }, o.Curse.Name)).ToArray();
 
@@ -865,7 +970,8 @@ public static class Predictions
                 Array.Empty<ChestDto>(),
                 // A payload is drawn from the character's own rare pool, so with nobody picked
                 // there is nothing to say — unlike the offer itself, which is party-independent.
-                Array.Empty<NeowPayloadDto>());
+                Array.Empty<NeowPayloadDto>(),
+                Array.Empty<SpecializedDto>());
 
         if (characters.Count != players)
             throw new ArgumentException(
@@ -916,8 +1022,11 @@ public static class Predictions
         // What Arcane Scroll or Hefty Tablet would hand each player, reported against the OFFER
         // rather than against a pick: it is what that player is deciding about, and it costs one
         // draw per card off a stream nothing else has touched yet.
+        //
+        // Guarded on `offers` rather than on `players`, because a Custom run has no offer at all
+        // and so nothing here to draw from. The two used to be the same length by construction.
         var payloads = new List<NeowPayloadDto>();
-        for (int slot = 0; slot < players; slot++)
+        for (int slot = 0; slot < players && slot < offers.Length; slot++)
         {
             var offer = offers[slot];
             foreach (var relic in new[] { offer.Positive1, offer.Positive2, offer.Curse })
@@ -959,8 +1068,29 @@ public static class Predictions
                 s.Candidates.Skip(1).Take(ChestAlternatesShown).Select(r => r.Slug).ToArray())).ToArray()
         )).ToArray();
 
+        // The starting card, when this lobby is a Custom run with Specialized on. One draw per
+        // player, so it is computed here rather than carried, except that a search hit already
+        // has it and can hand it straight over.
+        var specialized = new List<SpecializedDto>();
+        if (modifiers is { Count: > 0 } mods && mods.Contains(RunModifier.Specialized)
+            && RunModifiers.PriorRewardDraws(RunModifier.Specialized, mods) is { } specPrior)
+        {
+            for (int slot = 0; slot < players; slot++)
+            {
+                var card = hit?.SpecializedCards is { } known && slot < known.Length && known[slot] is { } t
+                    ? t
+                    : SpecializedPayload.Predict(
+                        runSeed, slot, characters[slot], Own(slot), true, specPrior)?.TypeName;
+
+                if (card is null) continue;
+                specialized.Add(new SpecializedDto(
+                    slot, CardCatalog.Slug(card), CardCatalog.Display(card), true));
+            }
+        }
+
         return new SeedResultDto(
-            seed, neow, acts, ancientOffers.ToArray(), firstFight, shops, chests, payloads.ToArray());
+            seed, neow, acts, ancientOffers.ToArray(), firstFight, shops, chests,
+            payloads.ToArray(), specialized.ToArray());
     }
 }
 

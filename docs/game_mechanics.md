@@ -14,6 +14,36 @@ before relying on it.
 
 ---
 
+## Sections
+
+Every section, in file order. Each is self-contained, so jump straight to the one you
+need rather than reading through.
+
+- [Decompiling](#decompiling)
+- [Localization strings (relic and card descriptions)](#localization-strings-relic-and-card-descriptions)
+- [Card art — `.import` files, and a `beta/` folder that is not dead weight](#card-art-import-files-and-a-beta-folder-that-is-not-dead-weight)
+- [Slugs — `Slugify` / `SnakeCase` split harder than they look](#slugs-slugify-snakecase-split-harder-than-they-look)
+- [Seeds](#seeds)
+- [RNG](#rng)
+- [The multiplayer key](#the-multiplayer-key)
+- [The Neow chain (v1's core — all verified against the game)](#the-neow-chain-v1s-core-all-verified-against-the-game)
+- [Card rewards, fights 1 and 2 — IMPLEMENTED, oracle-verified AND confirmed in play](#card-rewards-fights-1-and-2-implemented-oracle-verified-and-confirmed-in-play)
+- [Acts 2/3 — engine written, verified via save files, wired to the search](#acts-23-engine-written-verified-via-save-files-wired-to-the-search)
+- [Bosses and events as search criteria](#bosses-and-events-as-search-criteria)
+- [Ascension 10 — Double Boss, the one ascension effect on RUN generation](#ascension-10-double-boss-the-one-ascension-effect-on-run-generation)
+- [Boss discovery order — an unmodelled gap on partially-unlocked accounts](#boss-discovery-order-an-unmodelled-gap-on-partially-unlocked-accounts)
+- [Shops: the third relic slot IS predictable, the rest is not](#shops-the-third-relic-slot-is-predictable-the-rest-is-not)
+- [Treasure chests — IMPLEMENTED and confirmed against a real co-op run](#treasure-chests-implemented-and-confirmed-against-a-real-co-op-run)
+- [Act maps — IMPLEMENTED and verified node-for-node against a run save](#act-maps-implemented-and-verified-node-for-node-against-a-run-save)
+- [Custom run modifiers: Specialized IMPLEMENTED, the rest are read but not modelled](#custom-run-modifiers-specialized-implemented-the-rest-are-read-but-not-modelled)
+- [Run saves are the Act 2/3 oracle](#run-saves-are-the-act-23-oracle)
+- [Ancients' offers — IMPLEMENTED and oracle-verified](#ancients-offers-implemented-and-oracle-verified)
+- [Confounders: what must be set, and what genuinely does not matter](#confounders-what-must-be-set-and-what-genuinely-does-not-matter)
+- [MP-specific differences](#mp-specific-differences)
+- [What a singleplayer `--verify` run does and does not prove](#what-a-singleplayer---verify-run-does-and-does-not-prove)
+
+---
+
 ### Decompiling
 `ilspycmd` is installed globally (`~/.dotnet/tools`, may need adding to PATH):
 ```
@@ -690,6 +720,105 @@ already oracle-verified and confirmed against a real co-op run.
 2 were both deferred on, and `UnknownMapPointOdds` is what `--extra-chests` currently asks the user
 to count by hand. None of that is built; the dependency is simply no longer missing.
 
+### Custom run modifiers: Specialized IMPLEMENTED, the rest are read but not modelled
+
+A Custom run can tick on any of **sixteen** modifiers (`Core/Models/Modifiers/`, plus a
+`DeprecatedModifier` placeholder that is in neither list). They are lobby state, not seed state:
+`NCustomRunScreen` takes a seed AND a modifier list, and `StartNewMultiplayerRun` carries both, so a
+Custom run is inside this tool's multiplayer scope rather than a singleplayer feature.
+
+**The one thing to read before anything else here: any modifier at all deletes Neow's offer.**
+`Neow.GenerateInitialOptions` opens with `if (RunState.Modifiers.Count <= 0)` and only inside that
+branch builds the curse option, the positive pool and the coin flips. Otherwise the player is given
+one **forced** option per modifier, in sequence, with no skip
+(`OnModifierOptionSelected` chains to `index + 1`). So a Custom run has no Neow relic, and a Neow
+criterion and a modifier can never both be satisfied. `SeedSearcher.Validate` refuses the pair
+rather than searching for something no seed can produce.
+
+**Order is load-bearing.** `NCustomRunModifiersList` builds its tickboxes from
+`GoodModifiers.Concat(BadModifiers)` and `GetModifiersTickedOn` returns them in that same order,
+which becomes `RunState.Modifiers` and therefore the order Neow walks. `Core/Modifiers/RunModifier.cs`
+mirrors it exactly, and reordering that enum would silently move every prediction below.
+
+```
+Good: Draft, SealedDeck, Hoarder, Specialized, Insanity, AllStar, Flight, Vintage, CharacterCards
+Bad:  DeadlyEvents, CursedRun, BigGameHunter, Midas, Murderous, NightTerrors, Terminal
+```
+
+#### Specialized is one draw
+
+`Specialized.ObtainCards` draws a single card and clones it five times. Three separate things
+collapse the draw to one `NextInt`:
+
+- `CardCreationOptions.ForNonCombatWithUniformOdds` sets `CardRarityOddsType.Uniform`, and the
+  Uniform branch of `CardFactory.CreateForReward` **skips `RollForRarity` entirely** and filters the
+  pool to everything that is not `Basic` and not `Ancient`.
+- That same factory method sets `NoUpgradeRoll`. `WithFlags` is `Flags |= flag`, not an assignment,
+  so Specialized's own `NoRarityModification` does not clear it.
+- The `rng` parameter `ObtainCards` receives is **never used**. The draw comes off
+  `options.RngOverride ?? player.PlayerRng.Rewards`, and nothing sets an override.
+
+So it is `pool[rng.NextInt(0, pool.Length)]` on the player's own `Rewards` stream, where the pool is
+the character's, epoch-filtered, player-count-filtered, minus Basic and Ancient. That is exactly
+`CardCatalog.Offerable`. Every rarity is equally likely, which makes a Rare no harder to search for
+than a Common, the opposite of every other card criterion in this tool.
+
+**Immune to the two pool-modifying modifiers**, which is worth knowing because it looks like it
+should not be. `CreateForReward` runs `Hook.ModifyCardRewardCreationOptions` first, and both
+implementations decline this call: `BigGameHunter` requires `Source == Encounter` (this is `Other`)
+and `CharacterCards` requires the `IsCardReward` flag (this does not set it).
+
+**Verified**: seed `QHU3PZ4H3CF7`, Ironclad, A0, singleplayer, index 47 of an 80-card pool gives Not
+Yet, and the save's deck holds five copies of Not Yet. `--verify` checks this on any run save whose
+`modifiers` list contains it, using the deck as the oracle rather than an RNG counter.
+
+#### It shares the stream with the fight card rewards
+
+`PlayerRng.Rewards` is the same generator the hallway rewards come off, and the forced Neow options
+run first. **So every modifier that takes a Neow option shifts that player's fight 1 to 3
+predictions**, exactly as Arcane Scroll and Hefty Tablet do. On one measured seed the difference was
+all nine cards across the three fights, not a near miss.
+
+`SearchCriteria.RewardPriorDraws` is the single place that accounts for this, and the GPU card
+kernel and both display paths read it rather than deriving their own. That centralisation is not
+tidiness: an earlier version had the CLI computing its own prior from the Neow pick alone, and the
+two disagreed the moment modifiers started drawing off the stream, so the search matched on one
+number and printed rewards read from the other.
+
+| Modifier | Rewards draws at Neow | Countable? |
+|---|---|---|
+| Specialized | 1 | yes, one uniform pick |
+| AllStar | 5 | yes, five uniform picks off the colourless pool |
+| Insanity | 30 | yes, thirty uniform picks |
+| SealedDeck | 30 plus rarity rolls, with a running blacklist | **no** |
+| Draft | 10 rewards of 3, with rarity rolls and player choice | **no** |
+| the other eleven | 0 | they add no Neow option |
+
+`SealedDeck` and `Draft` are mutually exclusive with `Insanity` in `ModelDb.MutuallyExclusiveModifiers`
+but **not** with Specialized, so both combinations are reachable and both are refused: with either on,
+where Specialized lands in the stream depends on how the run was played rather than on the seed.
+
+#### What is not modelled, and why it is not "impossible"
+
+Only Specialized's payload is predicted. The blocker on the rest is per-modifier work, not a
+structural one:
+
+- **AllStar** and **Insanity** have exact draw counts, so their *cost* is already handled. Their
+  contents are five and thirty cards deep, and AllStar reads the colourless pool, which nothing here
+  models yet.
+- **BigGameHunter** overrides `ModifyGeneratedMap` and **DeadlyEvents** overrides `AfterRunCreated`
+  and the room-odds hook, so both move things this tool already predicts. Either would need
+  modelling before it could be offered, or a search would return other answers that look right and
+  are not.
+- `Hoarder`, `Flight`, `Vintage`, `Midas`, `Murderous`, `NightTerrors`, `Terminal` and `CursedRun`
+  touch combat, rest sites or merchants rather than generation, so they are the likeliest to be
+  safe to allow next. None has been checked line by line, which is the only reason they are not
+  offered.
+
+A run with Specialized alone was checked end to end: `--verify` matched the acts, bosses, Ancients,
+encounter order, event order and the Act 1 map node-for-node, which is the evidence that this
+modifier does not disturb the UpFront stream.
+
 ### Run saves are the Act 2/3 oracle
 `%APPDATA%\SlayTheSpire2\steam\<steamId>\profile<N>\saves\` — plain `System.Text.Json`,
 readable, no encryption:
@@ -782,6 +911,30 @@ count, different value. Only Orobas reads it.
    Still needed: port `GrabBag.GrabIndex` + `AddWithoutRepeatingTags` (retries on
    `SharesTagsWith(last)`, so draw counts vary), and encode per-act event/encounter
    lists **with encounter tags**, plus `NumberOfWeakEncounters` / `GetNumberOfRooms`.
+
+### Confounders: what must be set, and what genuinely does not matter
+
+Get one of these wrong and the prediction is for a different run. None can be inferred from the
+seed, so all of them are explicit inputs.
+
+- **Lobby order.** P1 is whoever joins first. Neow, the Ancients, card rewards and shop relics are
+  per slot, so swapping join order swaps everything that belongs to those players.
+- **Player count**, which feeds act generation. Party *composition* does not: all five characters
+  have identically sized relic pools. See "MP-specific differences" below.
+- **Ascension**, at exactly two levels. See "Ascension 10" and the Scarcity note under card rewards.
+- **Everyone's unlock state**, not just yours. The bags are shuffled one per player off one stream,
+  so a partner missing epochs moves the draws for the whole party.
+- **Run modifiers.** Only Specialized is modelled; see "Custom run modifiers" above.
+
+**Mods that ADD CONTENT invalidate act generation.** Relics, cards, events, encounters or a
+character all resize the pools a shuffle draws from, and every draw after that lands somewhere
+else. This is true whoever in the lobby is running the mod.
+
+**Cosmetic mods are fine, and this was confirmed in play rather than assumed.** Art replacements
+and reskins touch nothing a seed decides; full runs played with the Chaos Zero Nightmare mods
+matched the predictions throughout. The tool cannot tell the two kinds apart from the outside, so
+it warns whenever a `mods/` folder exists at all. That banner means "check what you have
+installed", not "this run is wrong".
 
 ### MP-specific differences
 - `ActModel.GetRandomList(rng, unlockState, isMultiplayer)` (`StartRunLobby.cs:464`). Act selection RNG is

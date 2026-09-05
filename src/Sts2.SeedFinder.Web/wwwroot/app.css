@@ -140,6 +140,12 @@ legend {
 /* float:left on a legend leaves the following content beside it without this. */
 legend + * { clear: both; }
 
+/* A whole panel that cannot apply. Used by Neow when a run modifier is on: a Custom run has no
+   Neow offer at all, so the panel is dimmed rather than left looking available. The hint inside
+   keeps full contrast, because the explanation is the one part still worth reading. */
+fieldset.disabled { opacity: .5; }
+fieldset.disabled .hint { opacity: 1; }
+
 label { display: block; margin-bottom: 4px; color: var(--text-1); font-size: 12px; }
 .row { margin-bottom: 10px; }
 .row:last-child { margin-bottom: 0; }
@@ -630,6 +636,10 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
 .pill.is-potion { color: var(--text-2); border-style: dashed; padding-left: 9px; }
 
 details.branches { margin-top: 2px; }
+/* The shop block hangs off the card rather than off an act, so it misses the 14px that .act
+   gives every other row and its P1/P2 column sat a full indent left of the P1/P2 above it.
+   Padding it here lines the labels up down the whole card. */
+.hit > details.branches { padding: 2px 14px 10px; }
 details.branches > summary { cursor: pointer; color: var(--warn); font-size: 12px; list-style: none; }
 /* The deck-dependent branches use the warning colour because they are a caveat. The event
    order is not one, it is just folded away, so it stays quiet. */

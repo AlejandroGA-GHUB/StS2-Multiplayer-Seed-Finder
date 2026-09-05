@@ -75,6 +75,7 @@
               title="How Neow's offers work" aria-label="How Neow's offers work">?</button></legend>
       <div id="neow"></div>
       <button type="button" class="icon-btn" id="addNeow" style="width:100%">+ Add a requirement</button>
+      <p class="hint" id="neowHint" hidden></p>
     </fieldset>
 
     <!-- Directly under Neow: the Ancients are the same kind of thing one act later, and each
@@ -132,6 +133,21 @@
       <div id="events"></div>
       <button type="button" class="icon-btn" id="addEvent" style="width:100%">+ Add an event</button>
       <p class="hint" id="eventHint">Pick a character for every player to enable these.</p>
+    </fieldset>
+
+    <!-- Last, and deliberately so: a modifier is not another filter to stack on the ones above,
+         it changes what kind of run this is. Ticking one takes Neow away entirely. -->
+    <fieldset>
+      <legend>Modifiers<button type="button" class="info-btn" data-info="modifiers"
+              title="How Custom run modifiers work" aria-label="How Custom run modifiers work">?</button></legend>
+      <div class="row">
+        <label>Specialized</label>
+        <div id="specializedOn"></div>
+      </div>
+      <div id="specialized"></div>
+      <!-- Always visible, like the Lobby note, because it is a rule of the run rather than a
+           consequence of a criterion. -->
+      <p class="hint" id="modifierHint"></p>
     </fieldset>
 
   </form>

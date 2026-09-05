@@ -4,6 +4,7 @@ using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
 using Sts2.SeedFinder.Core.Install;
+using Sts2.SeedFinder.Core.Modifiers;
 using Sts2.SeedFinder.Core.Neow;
 
 namespace Sts2.SeedFinder.Cli;
@@ -179,8 +180,16 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine("  Card rewards, by lobby slot:");
+        var priorDraws = new SearchCriteria
+        {
+            Context = ContextOf(opts),
+            Characters = opts.Characters,
+            NeowPicks = opts.NeowPicks,
+            Modifiers = opts.Modifiers,
+        }.RewardPriorDraws();
+
         for (int slot = 0; slot < opts.PlayerCount; slot++)
-            foreach (var line in FightLines(seed, slot, opts))
+            foreach (var line in FightLines(seed, slot, opts, priorDraws))
                 Console.WriteLine("    " + line);
 
         Console.WriteLine();
@@ -212,15 +221,19 @@ internal static class Program
     /// Both fights come off ONE walk of the player's stream rather than two calls, because
     /// fight 2 continues where fight 1 stopped and carries both of its pity counters.
     /// </summary>
-    private static IEnumerable<string> FightLines(string seed, int slot, Options opts)
+    /// <summary>
+    /// <paramref name="priorDraws"/> is what is already spent on each player's Rewards stream
+    /// before their first fight, and it is passed in rather than worked out here.
+    ///
+    /// This function used to derive it from the assumed Neow pick alone, which was a second copy
+    /// of a rule that lives in <see cref="SearchCriteria.RewardPriorDraws"/>. The copies diverged
+    /// the moment run modifiers started drawing off that same stream: the search matched on one
+    /// number and the lines printed under each hit used the other.
+    /// </summary>
+    private static IEnumerable<string> FightLines(
+        string seed, int slot, Options opts, int[] priorDraws)
     {
-        // What that player's assumed Neow pick already spent, if one was named. Zero otherwise,
-        // which is right for every option but the five that hand out cards.
-        int prior = opts.NeowPicks
-            .Where(x => x.Slot == slot)
-            .Select(x => Math.Max(
-                CardRewardGenerator.NeowRewardDrawCost(x.RelicSlug, opts.Characters[slot]), 0))
-            .FirstOrDefault();
+        int prior = slot < priorDraws.Length ? priorDraws[slot] : 0;
 
         var hallway = CardRewardGenerator.Hallway(
             SeedCodec.RunSeed(seed), slot, opts.Characters[slot],
@@ -435,9 +448,13 @@ internal static class Program
     {
         // Keep the original default: a bare invocation still hunts Silken Tress. But once any
         // act criterion is given, no Neow requirement is implied.
+        //
+        // A modifier counts here for a stronger reason than the others: a Custom run reaches
+        // none of Neow's own options, so an implied Silken Tress would not merely be unwanted,
+        // it would be a requirement no seed could ever satisfy.
         bool actCriteria = opts.Ancients.Count > 0 || opts.Bosses.Count > 0 || opts.Events.Count > 0
                            || opts.Cards.Count > 0 || opts.ShopRelicsWanted.Count > 0
-                           || opts.ChestRelicsWanted.Count > 0;
+                           || opts.ChestRelicsWanted.Count > 0 || opts.Modifiers.Count > 0;
         var relicArgs = opts.Relics.Count > 0
             ? opts.Relics
             : actCriteria ? Array.Empty<string>() : new[] { "silken_tress" };
@@ -475,6 +492,8 @@ internal static class Program
             Bosses = opts.Bosses,
             Events = opts.Events,
             Cards = opts.Cards,
+            Modifiers = opts.Modifiers,
+            Specialized = opts.Specialized,
             ShopRelicsWanted = opts.ShopRelicsWanted,
             ChestRelicsWanted = opts.ChestRelicsWanted,
             ExtraChestPicks = opts.ExtraChestPicks,
@@ -504,6 +523,11 @@ internal static class Program
             Console.WriteLine($"  Shop relic    : {sr}");
         foreach (var cr in opts.ChestRelicsWanted)
             Console.WriteLine($"  Chest relic   : {cr}");
+        if (opts.Modifiers.Count > 0)
+            Console.WriteLine($"  Modifiers     : {string.Join(", ", opts.Modifiers.Select(RunModifiers.Display))}"
+                              + "  (Custom run — Neow offers nothing)");
+        foreach (var sp in opts.Specialized)
+            Console.WriteLine($"  Specialized   : {sp}");
         foreach (var pick in opts.NeowPicks)
             Console.WriteLine($"  Assumed pick  : {pick}");
         if (opts.ExtraChestPicks > 0)
@@ -535,6 +559,9 @@ internal static class Program
 
         var sw = Stopwatch.StartNew();
         int n = 0;
+        // The same numbers the search matched on, so a printed reward can never be read from a
+        // different point in the stream than the one that accepted the seed.
+        var hitPriorDraws = criteria.RewardPriorDraws();
         foreach (var hit in SeedSearcher.Search(criteria, opts.Start, opts.Count, opts.MaxResults,
                      CancellationToken.None, candidates))
         {
@@ -551,6 +578,11 @@ internal static class Program
             for (int i = 0; i < hit.OffersBySlot.Length; i++)
                 Console.WriteLine($"      P{i + 1} Neow: {hit.OffersBySlot[i]}");
 
+            if (hit.SpecializedCards is { } starting)
+                for (int i = 0; i < starting.Length; i++)
+                    Console.WriteLine($"      P{i + 1} starts: 5x "
+                        + (starting[i] is { } t ? CardCatalog.Display(t) : "nothing"));
+
             // Only when asked for. It costs a per-player generation pass, and on a boss or
             // relic search it would be noise.
             // Only as deep as the search actually asked about, so a fight-1 search does not
@@ -559,7 +591,7 @@ internal static class Program
             {
                 int deepest = opts.Cards.Max(c => c.Fight);
                 for (int i = 0; i < opts.PlayerCount; i++)
-                    foreach (var line in FightLines(hit.Seed, i, opts).Take(deepest))
+                    foreach (var line in FightLines(hit.Seed, i, opts, hitPriorDraws).Take(deepest))
                         Console.WriteLine("      " + line);
             }
             if (hit.Run is not null)
@@ -869,6 +901,18 @@ internal static class Program
 
         public IReadOnlyList<CardCriterion> Cards { get; init; } = Array.Empty<CardCriterion>();
 
+        /// <summary>Run modifiers from --modifier, i.e. this is a Custom run.</summary>
+        public IReadOnlyList<RunModifier> Modifiers { get; init; } = Array.Empty<RunModifier>();
+
+        /// <summary>
+        /// Specialized starting cards from --specialized. Deferred like the card args, for the
+        /// same reason: the card only resolves against a character's pool.
+        /// </summary>
+        public IReadOnlyList<string> SpecializedArgs { get; init; } = Array.Empty<string>();
+
+        public IReadOnlyList<SpecializedCriterion> Specialized { get; init; } =
+            Array.Empty<SpecializedCriterion>();
+
         /// <summary>--any-order: card picks may land in any fight order, one per fight.</summary>
         public bool AnyOrder { get; init; }
 
@@ -1011,6 +1055,12 @@ internal static class Program
                     case "--event":
                         o = o with { Events = o.Events.Append(ParseEvent(Next("--event"))).ToList() };
                         break;
+                    case "--modifier":
+                        o = o with { Modifiers = o.Modifiers.Append(ParseModifier(Next("--modifier"))).ToList() };
+                        break;
+                    case "--specialized":
+                        o = o with { SpecializedArgs = o.SpecializedArgs.Append(Next("--specialized")).ToList() };
+                        break;
                     case "--card":
                         o = o with { CardArgs = o.CardArgs.Append(Next("--card")).ToList() };
                         break;
@@ -1078,6 +1128,22 @@ internal static class Program
             // Now that --characters is known whatever order it was given in.
             if (o.CardArgs.Count > 0)
                 o = o with { Cards = o.CardArgs.Select(s => ParseCard(s, o)).ToList() };
+
+            if (o.SpecializedArgs.Count > 0)
+            {
+                // Naming a starting card is itself the statement that Specialized is on, so
+                // ticking it as well would be a second way to say the same thing and a second
+                // way to forget.
+                if (!o.Modifiers.Contains(RunModifier.Specialized))
+                    o = o with { Modifiers = o.Modifiers.Append(RunModifier.Specialized).ToList() };
+
+                o = o with { Specialized = o.SpecializedArgs.Select(s => ParseSpecialized(s, o)).ToList() };
+            }
+
+            // The game applies them in its own list order regardless of the order they are
+            // typed, and the prior-draw count reads that order.
+            if (o.Modifiers.Count > 0)
+                o = o with { Modifiers = o.Modifiers.Distinct().OrderBy(m => m).ToList() };
 
             if (o.ShopArgs.Count > 0)
                 o = o with { ShopRelicsWanted = o.ShopArgs.Select(s => ParseShop(s, o)).ToList() };
@@ -1189,6 +1255,46 @@ internal static class Program
             var who2 = slot < 0 ? "anyone in the party" : $"the {o.Characters[slot]}";
             throw new ArgumentException(
                 $"'{parts[1]}' is not a card {who2} can be offered. Use --list to see the pools.");
+        }
+
+        /// <summary>"specialized", "sealed_deck", or the save's own "MODIFIER.SPECIALIZED".</summary>
+        private static RunModifier ParseModifier(string s) =>
+            RunModifiers.TryParse(s)
+            ?? throw new ArgumentException(
+                $"'{s}' is not a run modifier. Choose one of: "
+                + string.Join(", ", RunModifiers.All.Select(RunModifiers.Slug)));
+
+        /// <summary>
+        /// "p1:claw" — which player starts with five copies of which card. Same player syntax as
+        /// --card, and the same reason the card cannot resolve until --characters is known.
+        /// </summary>
+        private static SpecializedCriterion ParseSpecialized(string s, Options o)
+        {
+            var parts = s.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+                throw new ArgumentException(
+                    $"--specialized wants <player>:<card>, e.g. p1:claw, got '{s}'");
+
+            int slot = ParseSlot(parts[0], o, "--specialized");
+
+            if (o.Characters.Count != o.PlayerCount)
+                throw new ArgumentException(
+                    "--specialized needs --characters, because Specialized draws from that "
+                    + "player's own card pool.");
+
+            var pools = slot < 0 ? Enumerable.Range(0, o.PlayerCount) : [slot];
+            foreach (var i in pools)
+            {
+                var pool = SpecializedPayload.Pool(o.Characters[i]);
+                if (CardCatalog.Find(o.Characters[i], parts[1]) is { } found
+                    && pool.Any(e => e.TypeName == found))
+                    return new SpecializedCriterion(slot, found);
+            }
+
+            var who = slot < 0 ? "anyone in the party" : $"the {o.Characters[slot]}";
+            throw new ArgumentException(
+                $"'{parts[1]}' is not a card Specialized can hand {who}. It draws from that "
+                + "player's own pool, and only Common, Uncommon and Rare cards are reachable.");
         }
 
         /// <summary>

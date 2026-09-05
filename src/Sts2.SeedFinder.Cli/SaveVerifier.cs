@@ -1,7 +1,9 @@
 using System.Text.Json;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Cards;
 using Sts2.SeedFinder.Core.Map;
+using Sts2.SeedFinder.Core.Modifiers;
 using Sts2.SeedFinder.Core.Saves;
 
 namespace Sts2.SeedFinder.Cli;
@@ -166,10 +168,107 @@ public static class SaveVerifier
             failures += MapVerifier.Verify(savedActElements[i], map, $"Act {i + 1}: {savedActs[i].Act}");
         }
 
+        // --- Check 6: the Specialized modifier's starting card -----------------------------
+        failures += VerifySpecialized(root, runSeed, characters, unlocks, isMultiplayer);
+
         Console.WriteLine(failures == 0
             ? "ALL CHECKS PASSED — generation matches the game for this run."
             : $"{failures} check(s) FAILED.");
         return failures == 0 ? 0 : 2;
+    }
+
+    /// <summary>
+    /// Only runs for a Custom run with Specialized ticked on, and prints nothing otherwise.
+    ///
+    /// The oracle here is not an RNG counter but the deck itself: Specialized puts five copies of
+    /// one card into a player's starting deck, so a deck holding exactly one card five times over
+    /// is the answer, and the starting Strikes and Defends are what the count has to see past. A
+    /// character starts with four or five Strikes, so five alone would not identify it — this
+    /// looks for the non-basic card instead, which is unambiguous.
+    /// </summary>
+    private static int VerifySpecialized(
+        JsonElement root, ulong runSeed, List<Character> characters,
+        UnlockState unlocks, bool isMultiplayer)
+    {
+        var enabled = new List<RunModifier>();
+        if (root.TryGetProperty("modifiers", out var mods) && mods.ValueKind == JsonValueKind.Array)
+            foreach (var m in mods.EnumerateArray())
+                if (m.TryGetProperty("id", out var id)
+                    && RunModifiers.TryParse(id.GetString() ?? "") is { } parsed)
+                    enabled.Add(parsed);
+
+        if (!enabled.Contains(RunModifier.Specialized)) return 0;
+
+        Console.WriteLine();
+        Console.WriteLine($"-- Specialized  (modifiers: {string.Join(", ", enabled.Select(RunModifiers.Display))})");
+
+        if (RunModifiers.PriorRewardDraws(RunModifier.Specialized, enabled) is not { } prior)
+        {
+            Console.WriteLine("[SKIP] Draft or Sealed Deck is also on, so where Specialized lands "
+                              + "in the Rewards stream is not knowable.");
+            return 0;
+        }
+
+        var players = root.GetProperty("players").EnumerateArray().ToList();
+        int failures = 0;
+
+        for (int slot = 0; slot < players.Count && slot < characters.Count; slot++)
+        {
+            var predicted = SpecializedPayload.Predict(
+                runSeed, slot, characters[slot], unlocks, isMultiplayer, prior);
+
+            var actual = FiveOfAKind(players[slot]);
+            if (actual is null)
+            {
+                // Before the player clicks through Neow the cards are simply not there yet.
+                Console.WriteLine($"[SKIP] P{slot + 1}: no card appears five times in the deck yet "
+                                  + "(the Neow option has not been taken).");
+                continue;
+            }
+
+            bool ok = predicted is not null
+                      && string.Equals(CardCatalog.Slug(predicted.TypeName), actual, StringComparison.OrdinalIgnoreCase);
+
+            Console.WriteLine(ok
+                ? $"[PASS] P{slot + 1} ({characters[slot]}): 5x {CardCatalog.Display(predicted!.TypeName)}"
+                : $"[FAIL] P{slot + 1} ({characters[slot]}): game {actual}, "
+                  + $"ours {(predicted is null ? "nothing" : CardCatalog.Slug(predicted.TypeName))}");
+
+            if (!ok) failures++;
+        }
+
+        return failures;
+    }
+
+    /// <summary>
+    /// The slug of the one non-basic card this player holds five copies of, or null if there
+    /// isn't one. Basics are excluded because a starting deck already carries five Strikes.
+    /// </summary>
+    private static string? FiveOfAKind(JsonElement player)
+    {
+        if (!player.TryGetProperty("deck", out var deck) || deck.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var card in deck.EnumerateArray())
+        {
+            var id = card.ValueKind == JsonValueKind.Object
+                ? (card.TryGetProperty("id", out var v) ? v.GetString() : null)
+                : card.GetString();
+            if (id is null) continue;
+
+            var slug = Entry(id).ToLowerInvariant();
+            counts[slug] = counts.GetValueOrDefault(slug) + 1;
+        }
+
+        foreach (var (slug, n) in counts)
+        {
+            if (n < 5) continue;
+            if (slug.StartsWith("strike", StringComparison.Ordinal)
+                || slug.StartsWith("defend", StringComparison.Ordinal)) continue;
+            return slug;
+        }
+        return null;
     }
 
     private static List<string> One(string? v) => v is null ? new List<string>() : new List<string> { v };
