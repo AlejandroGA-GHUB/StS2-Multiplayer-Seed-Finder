@@ -681,6 +681,184 @@ $('#whyBtn').onclick = () => $('#whySheet').showModal();
 $('#whyClose').onclick = () => $('#whySheet').close();
 $('#whySheet').addEventListener('click', e => { if (e.target === $('#whySheet')) $('#whySheet').close(); });
 
+// ---- Per-section info ------------------------------------------------------------------------
+//
+// Every criteria panel used to carry its explanation as a paragraph under its own controls. That
+// text is worth having and none of it has been cut, but it is read once and then scrolled past for
+// the rest of the session, and in the card panel it outweighed the controls three to one.
+//
+// So it moved behind the ? on each section header, into one dialog reused by all of them. Bodies
+// are functions rather than strings because several name values that only exist at runtime: how
+// many fights are predictable, and how many players are in the lobby.
+//
+// What did NOT move is anything that answers back about the criteria you currently have. A search
+// that can never match, and a panel that is disabled until characters are set, are both about the
+// state of the form rather than about the game, and neither is any use behind a click.
+
+const INFO = {
+  act1map: {
+    title: 'Act 1 map',
+    body: () => [
+      { lead: 'Act 1 is one of two maps and the seed decides which. Choosing here narrows the '
+            + 'search to seeds that give you that one.' },
+      'It is drawn on its own RNG, separate from everything else, so narrowing to one map costs '
+        + 'almost nothing as it is the first thing each seed is tested against.',
+      'The two maps have separate bosses, so naming an Act 1 boss under Bosses pins the map as '
+        + 'well. Setting this on its own is what you want when the map matters and the boss does '
+        + 'not.',
+    ],
+  },
+
+  neow: {
+    title: 'Neow (Act 1)',
+    body: () => [
+      { lead: 'Neow is the Ancient at the start of Act 1, and every player is offered their own '
+            + 'roll. P1 and P2 do not see the same thing, which is why each row here carries its '
+            + 'own player rule.' },
+      { h: 'Where an offer comes from' },
+      'Three groups feed one player’s options. The curse branch trades a curse for the relic. The '
+        + 'positive pool is what is offered with nothing attached. The coin-flip pairs are settled '
+        + 'first, with one relic of each pair joining the pool and the other dropping out, so a '
+        + 'relic from a pair is only there some of the time.',
+      { h: 'Stacking rows' },
+      'Rows are separate requirements, each with its own player rule, so "Silken Tress for '
+        + 'everyone, and Golden Pearl for P2" is one search rather than two.',
+      { h: 'The options that hand over cards' },
+      'Arcane Scroll and Hefty Tablet give cards as well as a relic. Name either one and the row '
+        + 'grows a field for the rare cards it produces, drawn from that player’s own pool.',
+      'Every Neow option that hands out cards, which is Arcane Scroll, Hefty Tablet, Massive '
+        + 'Scroll, Scroll Boxes and Neow’s Bones, draws off the same stream that player’s fight '
+        + 'rewards come from. Taking one shifts their fight predictions along, so say what they '
+        + 'took and the card panel reads from the right place. It affects only the player who took '
+        + 'it, and every other Neow choice is free.',
+    ],
+  },
+
+  ancients: {
+    title: 'Ancients (Acts 2 and 3)',
+    body: () => [
+      { lead: 'Acts 2 and 3 each open with an Ancient, the same way Act 1 opens with Neow.' },
+      'Which Ancient appears depends on player count. What it offers is rolled per player, like '
+        + 'Neow.',
+      'The Ancient itself is run level, so everybody in the lobby meets the same one. Only the '
+        + 'relics it hands over belong to a slot, which is why these rows take a player rule and '
+        + 'the Bosses rows do not.',
+    ],
+  },
+
+  cards: {
+    title: 'Fight card rewards',
+    body: () => [
+      { lead: 'The first room of a run is always a fight, and each player rolls their own reward '
+            + 'for it, so fight 1 needs no assumptions.' },
+      { h: 'What the rows mean' },
+      `Pick up to ${MAX_FIGHT} cards per player: the first is fight 1, the next fight 2, then `
+        + 'fight 3.',
+      'Exact order pins each pick to the fight beside it. Any order still wants one card per '
+        + 'fight, it just stops caring which, so it is the looser ask and the faster search.',
+      { h: 'What has to be true when you play' },
+      'Every fight after the first assumes you walk straight into the next monster room, with no '
+        + `shop, elite, event or rest between, so all ${MAX_FIGHT} have to be consecutive.`,
+      'Fight 1 can never offer a Rare. Later ones can, and that does not change with what was '
+        + 'taken at Neow: the rare penalty is a counter those relics never touch.',
+      'Say what a player took at Neow above and their rewards are read from the right place in the '
+        + 'stream, since those five options draw off it first.',
+    ],
+  },
+
+  shops: {
+    title: 'Shop relic (third slot)',
+    body: () => [
+      { lead: 'A merchant stocks three relics and only the third is knowable from the seed. Its '
+            + 'rarity is fixed rather than rolled, and filling it draws no randomness at all, so '
+            + 'it is simply the next relic off that player’s bag.' },
+      'Each shop takes one relic off the back of your bag, so this is a fixed order rather than a '
+        + 'floor. Counting is by shops actually entered, and walking past one moves everything '
+        + 'after it up.',
+      'The other two relic slots roll against a counter your own run has already moved, so no seed '
+        + 'decides them.',
+    ],
+  },
+
+  chests: {
+    title: 'Treasure chest',
+    body: () => [
+      { lead: 'One chest per act, at co-op floors 9, 24 and 38, and no route skips it. It puts one '
+            + 'relic per player on the table and the whole party votes, so this asks what is in '
+            + 'the chest, not who gets it.' },
+      'The rarity is exact. The relic itself assumes nobody has pulled one out of the shared bag '
+        + 'yet, since an elite reward, a merchant’s stock or a relic event each remove one.',
+      { h: 'Allow taken earlier' },
+      'Raise it to accept the next relics of that rarity instead. The setting belongs to the chest '
+        + 'rather than to one relic: it says how much of the bag was already gone by that floor, '
+        + 'so naming two relics for one chest asks for both of them to be there after the same '
+        + 'amount of drain.',
+    ],
+  },
+
+  bosses: {
+    title: 'Bosses',
+    body: () => [
+      { lead: 'Bosses are the same for everybody in the lobby, so unlike Neow and the Ancients '
+            + 'these rows take no player rule.' },
+      'Act 1’s two maps have separate bosses, so choosing one also pins the map.',
+      'At Ascension 10 the final act has two bosses, so two rows on that act pin the pair.',
+      { h: 'Ruling one out' },
+      'A row can exclude a boss instead of asking for it, which matches every seed that does not '
+        + 'give you that one. Excluding is blocked where it would leave an act with fewer bosses '
+        + 'than it has to draw, since no seed could answer that.',
+    ],
+  },
+
+  events: {
+    title: 'Events',
+    body: () => [
+      { lead: 'Each act shuffles its whole event pool once and hands them out from the front, so '
+            + 'the order is fixed by the seed.' },
+      'How far down that order you get is not fixed. A room gives you the next event you currently '
+        + 'qualify for and have not already seen, and health, gold, deck contents and the act you '
+        + 'are in all gate entries.',
+      'That is what the "within the first" number is for: it says how far down the order you are '
+        + 'willing to look, and a smaller one is the stronger ask. Read a match as near the front '
+        + 'of the queue rather than as a promise.',
+    ],
+  },
+};
+
+function openInfo(key) {
+  const info = INFO[key];
+  if (!info) return;
+
+  $('#infoTitle').textContent = info.title;
+
+  const body = $('#infoBody');
+  body.replaceChildren();
+  for (const part of info.body()) {
+    if (typeof part === 'string') body.appendChild(el('p', null, part));
+    else if (part.h) body.appendChild(el('h3', null, part.h));
+    else if (part.lead) body.appendChild(el('p', 'lead', part.lead));
+  }
+  // The dialog is reused, so a sheet read to the bottom would leave the next one scrolled.
+  body.scrollTop = 0;
+
+  $('#infoSheet').showModal();
+}
+
+for (const infoBtn of document.querySelectorAll('.info-btn'))
+  infoBtn.onclick = () => openInfo(infoBtn.dataset.info);
+
+$('#infoClose').onclick = () => $('#infoSheet').close();
+$('#infoSheet').addEventListener('click', e => {
+  if (e.target === $('#infoSheet')) $('#infoSheet').close();
+});
+
+/** Sets a panel hint, taking the element out of the flow entirely when there is nothing to say. */
+function setHint(sel, text) {
+  const n = $(sel);
+  n.textContent = text || '';
+  n.hidden = !text;
+}
+
 // ---- Act maps ------------------------------------------------------------------------------
 //
 // Drawn from the same generator the CLI verifies against a real run save, so what is on screen is
@@ -1481,15 +1659,11 @@ function syncActAvailability() {
     // every control in the panel, including them, with no special case.
     for (const s of $(box).querySelectorAll('button, input')) s.disabled = !ok;
 
-  $('#ancientHint').textContent = ok
-    ? 'Which Ancient appears depends on player count. What it offers is rolled per player, like Neow.'
-    : NEED_CHARACTERS;
-  $('#bossHint').textContent = ok
-    ? 'Bosses are the same for everybody in the lobby. Act 1\'s two maps have separate bosses, so choosing one also pins the map. At Ascension 10 the final act has two, so two rows on it pin the pair.'
-    : NEED_CHARACTERS;
-  $('#eventHint').textContent = ok
-    ? 'Each act shuffles its whole event pool once and hands them out from the front, so the order is fixed by the seed. How far down it you get is not: a room takes the next event you currently qualify for and have not already seen. Read this as "near the front of the queue", not as a promise.'
-    : NEED_CHARACTERS;
+  // How each of these works is behind the ? on its header now. The gate is not: "you cannot use
+  // this yet" is about the state of the form, and hiding it would leave three dead panels with no
+  // explanation for why they are dead.
+  for (const sel of ['#ancientHint', '#bossHint', '#eventHint'])
+    setHint(sel, ok ? '' : NEED_CHARACTERS);
 }
 
 // ---- First fight card reward -----------------------------------------------------------------
@@ -1682,16 +1856,8 @@ function renderCards() {
     { label: 'Any order', value: 'any' },
   ], state.cardOrder ?? 'exact', v => { state.cardOrder = v; renderCards(); });
 
-  $('#cardHint').textContent = state.characters.some(Boolean)
-    ? 'The first room of a run is always a fight, and each player rolls their own reward for it, '
-      + `so fight 1 needs no assumptions. Pick up to ${MAX_FIGHT} cards per player: the first is `
-      + 'fight 1, the next fight 2, then fight 3. Every fight after the first assumes you walk '
-      + 'straight into the next monster room, with no shop, elite, event or rest between, so all '
-      + `${MAX_FIGHT} have to be consecutive. Fight 1 can never offer a Rare; later ones can, and `
-      + 'that does not change with what was taken at Neow: the rare penalty is a counter those '
-      + 'relics never touch. Say what a player took above and their rewards are read from the '
-      + 'right place in the stream, since those five options draw off it first.'
-    : 'Pick a character to choose from their card pool.';
+  setHint('#cardHint', state.characters.some(Boolean)
+    ? '' : 'Pick a character to choose from their card pool.');
 }
 
 // ---- Shop relics ---------------------------------------------------------------------------
@@ -1758,12 +1924,6 @@ function renderShops() {
 
     box.appendChild(row);
   }
-
-  $('#shopHint').textContent =
-    'Each shop takes one relic off the back of your bag, so this is a fixed order rather than a '
-    + 'floor. Counting is by shops actually entered, and walking past one moves everything after '
-    + 'it up. The other two relic slots roll against a counter your own run has already moved, '
-    + 'so no seed decides them.';
 }
 
 // ---- Treasure chests -------------------------------------------------------------------------
@@ -1843,21 +2003,13 @@ function renderChests() {
   const hint = $('#chestHint');
   if (over.length) {
     hint.classList.add('warn');
-    hint.textContent =
+    setHint('#chestHint',
       `Act ${over.join(' and ')}'s chest holds one relic per player, so a ${state.players}-player `
-      + 'lobby cannot have that many named in it. Remove one, or add a player.';
+      + 'lobby cannot have that many named in it. Remove one, or add a player.');
     return;
   }
   hint.classList.remove('warn');
-  hint.textContent =
-    'One chest per act, at co-op floors 9, 24 and 38, and no route skips it. It puts one relic '
-    + 'per player on the table and the whole party votes, so this asks what is in the chest, not '
-    + 'who gets it. The rarity is exact; the relic itself assumes nobody has pulled one out of '
-    + 'the shared bag yet, since an elite reward, a merchant’s stock or a relic event each '
-    + 'remove one. Raise "allow taken earlier" to accept the next relics of that rarity instead. '
-    + 'That setting belongs to the chest rather than to one relic: it says how much of the bag '
-    + 'was already gone by that floor, so naming two relics for one chest asks for both of them '
-    + 'to be there after the same amount of drain.';
+  setHint('#chestHint', '');
 }
 
 $('#addChest').onclick = () => {

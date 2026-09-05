@@ -59,20 +59,20 @@
     </fieldset>
 
     <fieldset>
-      <legend>Act 1 map</legend>
+      <legend>Act 1 map<button type="button" class="info-btn" data-info="act1map"
+              title="How the Act 1 map works" aria-label="How the Act 1 map works">?</button></legend>
       <div class="row">
         <label>Which map</label>
         <div id="act1"></div>
       </div>
-      <p class="hint">Rolled on its own RNG, separate from everything else, so narrowing to one
-        map costs almost nothing as it is the first thing each seed is tested against.</p>
     </fieldset>
 
     <!-- Rows rather than one relic with one shared rule, matching the Ancients panel below.
          Every player rolls their own offer, so "Silken Tress for everyone, and Golden Pearl
          for P2" is the ordinary co-op ask and a single rule cannot express it. -->
     <fieldset>
-      <legend>Neow (Act 1)</legend>
+      <legend>Neow (Act 1)<button type="button" class="info-btn" data-info="neow"
+              title="How Neow's offers work" aria-label="How Neow's offers work">?</button></legend>
       <div id="neow"></div>
       <button type="button" class="icon-btn" id="addNeow" style="width:100%">+ Add a requirement</button>
     </fieldset>
@@ -80,14 +80,16 @@
     <!-- Directly under Neow: the Ancients are the same kind of thing one act later, and each
          act's relic offer reads in order down the column. -->
     <fieldset>
-      <legend>Ancients (Acts 2 &amp; 3)</legend>
+      <legend>Ancients (Acts 2 &amp; 3)<button type="button" class="info-btn" data-info="ancients"
+              title="How the Ancients work" aria-label="How the Ancients work">?</button></legend>
       <div id="ancients"></div>
       <button type="button" class="icon-btn" id="addAncient" style="width:100%">+ Add a requirement</button>
       <p class="hint" id="ancientHint">Pick a character for every player to enable these.</p>
     </fieldset>
 
     <fieldset>
-      <legend>Fight card rewards</legend>
+      <legend>Fight card rewards<button type="button" class="info-btn" data-info="cards"
+              title="How fight card rewards work" aria-label="How fight card rewards work">?</button></legend>
       <div id="cards"></div>
       <!-- Pinning each pick to its own fight is one assignment out of the k! that all mean
            "I want to be offered these", so it costs roughly a factor of k! in seeds scanned.
@@ -100,22 +102,24 @@
     </fieldset>
 
     <fieldset>
-      <legend>Shop relic (third slot)</legend>
+      <legend>Shop relic (third slot)<button type="button" class="info-btn" data-info="shops"
+              title="How the shop relic slot works" aria-label="How the shop relic slot works">?</button></legend>
       <div id="shops"></div>
-      <p class="hint" id="shopHint"></p>
     </fieldset>
 
     <!-- Run-level, so no player column: the chest is a shared pick and the party decides who
          takes what. One chest per act, at a map row no route can avoid. -->
     <fieldset>
-      <legend>Treasure chest</legend>
+      <legend>Treasure chest<button type="button" class="info-btn" data-info="chests"
+              title="How treasure chests work" aria-label="How treasure chests work">?</button></legend>
       <div id="chests"></div>
       <button type="button" class="icon-btn" id="addChest" style="width:100%">+ Add a relic</button>
       <p class="hint" id="chestHint"></p>
     </fieldset>
 
     <fieldset>
-      <legend>Bosses</legend>
+      <legend>Bosses<button type="button" class="info-btn" data-info="bosses"
+              title="How bosses work" aria-label="How bosses work">?</button></legend>
       <div id="bosses"></div>
       <button type="button" class="icon-btn" id="addBoss" style="width:100%">+ Add a boss</button>
       <p class="hint warn" id="bossWarn" hidden></p>
@@ -123,7 +127,8 @@
     </fieldset>
 
     <fieldset>
-      <legend>Events</legend>
+      <legend>Events<button type="button" class="info-btn" data-info="events"
+              title="How events work" aria-label="How events work">?</button></legend>
       <div id="events"></div>
       <button type="button" class="icon-btn" id="addEvent" style="width:100%">+ Add an event</button>
       <p class="hint" id="eventHint">Pick a character for every player to enable these.</p>
@@ -406,6 +411,18 @@
     <p class="sheet-foot">Nothing on this list is a mistake in the seed. In every case the seed
       generated exactly what it says, and the run asked a different question of it.</p>
   </div>
+</dialog>
+
+<!-- One shell for every section's explanation, filled in by the ? on that section's header.
+     Unlike the sheets above, the prose lives in app.js rather than here, because several of these
+     name values that only exist at runtime: how many fights are predictable, and how many players
+     are in the lobby. -->
+<dialog class="sheet" id="infoSheet">
+  <div class="sheet-head">
+    <h2 id="infoTitle"></h2>
+    <button type="button" class="picker-close" id="infoClose" aria-label="Close" title="Close">&times;</button>
+  </div>
+  <div class="sheet-body" id="infoBody"></div>
 </dialog>
 
 <!-- One shared tooltip, moved next to whatever is hovered. It has to live inside the dialog

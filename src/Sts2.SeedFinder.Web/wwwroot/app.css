@@ -115,7 +115,28 @@ legend {
   text-transform: uppercase; letter-spacing: .8px;
   border-bottom: 1px solid var(--border);
   padding-block: 9px 8px;
+  /* Flex only so the ? can sit at the far end of the same line. The title itself becomes an
+     anonymous flex item and is laid out exactly as it was. */
+  display: flex; align-items: center;
 }
+
+/* The section's explanation, moved off the panel and onto its header. Every panel used to carry
+   a paragraph of prose under its controls, which read once and was then scrolled past forever,
+   and in the card panel outweighed the controls three to one. Deliberately small and quiet: it
+   is an offer to explain, not a thing to set.
+
+   Lobby has none. Its text is short and it is the one panel you need to have read before any of
+   the others mean anything, so it keeps its hints in the open. */
+.info-btn {
+  flex: none; margin-left: auto;
+  width: 18px; height: 18px; padding: 0; border: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-3); color: var(--text-0);
+  /* The legend is uppercased and letter-spaced, which would shove a lone glyph off centre. */
+  font: 600 11px/1 inherit; letter-spacing: 0; text-transform: none;
+  cursor: pointer;
+}
+.info-btn:hover { background: var(--accent); color: #201a0c; }
 /* float:left on a legend leaves the following content beside it without this. */
 legend + * { clear: both; }
 
