@@ -22,7 +22,7 @@ sts2.dll
 
 # Game art — NEVER commit this either. The web UI's "bundled" asset provider reads from
 # assets/, which the operator populates locally. Extracted icons are cached to a temp dir
-# outside the repo. See docs/web_app_specs.md section 4.
+# outside the repo. See docs/WEB_APP_SPECS.md section 4.
 #
 # LEADING SLASH IS LOAD-BEARING. Written unanchored, this rule matches a folder called assets at
 # ANY depth, and Git on Windows defaults to core.ignorecase=true, so it also matched
@@ -41,7 +41,7 @@ sts2.dll
 # path, so they are personal data as well as game data.
 *.save
 
-# Personal dev notes. The queue and its reasoning are mine; docs/web_app_specs.md is NOT here,
+# Personal dev notes. The queue and its reasoning are mine; docs/WEB_APP_SPECS.md is NOT here,
 # because the source comments point at its section 4 for the asset-provenance boundary and a
 # clone needs to be able to read it.
 docs/plan.md

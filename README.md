@@ -294,7 +294,7 @@ seed on demand and never touch a search.
 
 The table above is what this predicts. **How** each of those is drawn, which assumptions an answer
 rests on, and what you have to tell the tool before it can answer at all, are written up once in
-**[docs/game_mechanics.md](docs/game_mechanics.md)**.
+**[docs/GAME_MECHANICS.md](docs/GAME_MECHANICS.md)**.
 
 Worth reading if you're interesting in the in-depth breakdown of how the apps features function: 
 the lobby order and player count have to match the run you will actually play, everyone's unlock state 
@@ -474,7 +474,7 @@ for each. The runbook explains how to read those.
 
 # AI File References For Development
 
-If using AI to work on a fork, CLAUDE.md, game_mechanics.md, web_app_specs.md, are the 3 main files to use for context on the app.
+If using AI to work on a fork, CLAUDE.md, GAME_MECHANICS.md, WEB_APP_SPECS.md, are the 3 main files to use for context on the app.
 
 If you're using any LLM other than Anthropics models (Haiku/Sonnet/Opus/Fable), you will need to rename the CLAUDE.md file to AGENTS.md or whichever file name
 the LLM is meant to utilize.

@@ -35,7 +35,7 @@ public readonly record struct RelicVar(decimal Value, string? Text);
 /// from an id. That closes every relic description, including Pael's Claw and Pael's Growth. What
 /// it cannot recover is a number the game computes mid-run, which is most of what still reads X.
 ///
-/// Same provenance boundary as the art and the strings (docs/web_app_specs.md section 4): read at
+/// Same provenance boundary as the art and the strings (docs/WEB_APP_SPECS.md section 4): read at
 /// runtime from a copy of the game the user already owns, held in memory, never committed here
 /// and never served from a machine that does not own the game. Loaded into its own
 /// <see cref="AssemblyLoadContext"/> so the game's assemblies stay out of ours.

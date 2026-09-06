@@ -523,7 +523,7 @@ then wanted out of the way.
 - It exists because **unlock state is per player and only the local profile is readable**. The
   sheet leads with the part that surprises people, which is that a partner's epochs move the
   bosses for the whole party rather than only that partner's own rewards. See the unlock section
-  of `game_mechanics.md` for why.
+  of `GAME_MECHANICS.md` for why.
 - One block per lobby slot, each a drop zone that doubles as its own status line: before an
   import it says what to do, after one it names how many epochs are revealed and lists what is
   missing. A row with nothing imported reads "Assumed to match your own account", because the

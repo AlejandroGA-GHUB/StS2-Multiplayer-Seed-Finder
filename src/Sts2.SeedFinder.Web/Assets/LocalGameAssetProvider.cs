@@ -10,7 +10,7 @@ namespace Sts2.SeedFinder.Web.Assets;
 /// Nothing is redistributed: the bytes never leave the machine that already owns them, and
 /// nothing is written into the repo. Decoded images are cached in memory only. This is the
 /// same posture as a mod reading game files, and it is what makes art possible at all without
-/// shipping Mega Crit's assets. See docs/web_app_specs.md section 4.
+/// shipping Mega Crit's assets. See docs/WEB_APP_SPECS.md section 4.
 ///
 /// The game names its relic textures by the same slug we do (silken_tress.png, fiddle.png),
 /// so the mapping is direct.

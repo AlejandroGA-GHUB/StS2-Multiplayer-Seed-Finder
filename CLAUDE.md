@@ -8,7 +8,7 @@ and found feasible; both were deferred on the same dependency, a route input tha
 would have to supply. **The map graph now exists** (`Core/Map/`, 2026-09-04), so what is missing is
 no longer the graph but a chosen ROUTE through it, which is a UI question. The analysis is done, so
 re-deriving it wastes a session: read `Core/Acts/`, `Core/Map/` and the shop section of
-`docs/game_mechanics.md` first, and ask before building.
+`docs/GAME_MECHANICS.md` first, and ask before building.
 
 **Capsule and Neow's Bones payloads are PENDING too** (requested 2026-08-08). What Small
 Capsule, Large Capsule and Neow's Bones actually hand you is not modelled anywhere — only how
@@ -25,7 +25,7 @@ pattern to copy.
 **Arcane Scroll's and Hefty Tablet's card payloads ARE done** (2026-08-31), in
 `Core/Cards/NeowCardPayload.cs`, searchable, GPU-ported and Oracle-verified. Massive Scroll and
 Scroll Boxes are the two left whose shapes are now known: read the payload section of
-`docs/game_mechanics.md` before starting either, and do not re-derive it.
+`docs/GAME_MECHANICS.md` before starting either, and do not re-derive it.
 
 `docs/plan.md` holds the open queue, what was built, and the reasoning behind each decision.
 **It is gitignored and exists only in the author's checkout** — it is personal working notes, so
@@ -88,19 +88,19 @@ Two consequences that are easy to get wrong, both enforced in `SeedSearcher.Vali
 forced option **draws off the same stream the fight card rewards use**, so it shifts fights 1 to 3.
 That second one is why `SearchCriteria.RewardPriorDraws` is the ONLY place prior draws are counted:
 an earlier version had the CLI deriving its own and the two disagreed, so the search matched on one
-number and printed rewards read from another. Read the modifier section of `docs/game_mechanics.md`
+number and printed rewards read from another. Read the modifier section of `docs/GAME_MECHANICS.md`
 before touching `Core/Modifiers/`.
 
 **Act maps are drawn, not searched** (2026-09-04). `Map Visual`, beside Copy on any result, swaps
 the results for all three act maps side by side. It is display-only and sits off the search path
 entirely: its own rng stream, computed once for one seed. See the map section of
-`docs/game_mechanics.md` before touching `Core/Map/`.
+`docs/GAME_MECHANICS.md` before touching `Core/Map/`.
 
 **Map node art comes from `images/ui/run_history/`, and only from there.** It is the one COMPLETE,
 full-colour icon set: all 13 bosses, all 8 Ancients, and the room types. `images/map/placeholder/`
 and `images/packed/map/ancients/` are white silhouettes the game tints at runtime, and the first
 is missing three bosses outright. Room-type icons are not files at all but regions of a sprite
-sheet. All of it was got wrong at least once, so read `docs/web_app_specs.md` §4 before changing
+sheet. All of it was got wrong at least once, so read `docs/WEB_APP_SPECS.md` §4 before changing
 where art is read from.
 
 Bosses, events and chests are run-level, not per-player, so unlike Neow, the Ancients, card
@@ -158,7 +158,7 @@ Silken Tress is also reachable via `EventRelicPool` (random events) — not yet 
 
 ## Where the detail lives
 
-`docs/game_mechanics.md` holds what was learned by decompiling the game. It is not loaded
+`docs/GAME_MECHANICS.md` holds what was learned by decompiling the game. It is not loaded
 automatically, so **read the relevant section before you touch the matching code** rather than
 working from memory. Each of these records something that was got wrong at least once:
 
@@ -175,12 +175,12 @@ working from memory. Each of these records something that was got wrong at least
 | `Core/Cards/NeowCardPayload.cs` | *The Neow chain*, payload section: why a payload is one draw per card, and why none of them unlocks a fight-1 rare |
 | `Core/Ancients/` | *Ancients' offers* |
 | Search criteria, the web pickers | *Bosses and events as search criteria* |
-| `Web/Assets/` | *Localization strings*, *Card art*, and `web_app_specs.md` §4 for map node art |
+| `Web/Assets/` | *Localization strings*, *Card art*, and `WEB_APP_SPECS.md` §4 for map node art |
 | Interpreting a `--verify` result | *What a singleplayer `--verify` run does and does not prove* |
 | Regenerating data tables | *Decompiling* (though `sts2seed --refresh` does this without decompiling) |
 
 Other documents: `docs/plan.md` (open queue, what shipped, and the reasoning behind each feature),
-`docs/web_app_specs.md` (the web UI), `docs/PATCH_RECOVERY.md` (what a user does after a patch).
+`docs/WEB_APP_SPECS.md` (the web UI), `docs/PATCH_RECOVERY.md` (what a user does after a patch).
 
 ## Game facts (derived by decompiling v0.109.1; port re-confirmed against v0.110.1 by the Oracle)
 
@@ -218,7 +218,7 @@ the union, and the bags are shuffled one per player off one stream, so a partner
 moves the bosses for the WHOLE party rather than just their own rewards. `Import Friend Epoch`
 in the Lobby panel takes their dropped `progress.save` or a `UnlockCode` string;
 `SearchCriteria.PlayerUnlocks` carries it and `UnlocksFor(slot)` resolves per-slot card pools.
-Read the unlock section of `docs/game_mechanics.md` before touching any of it, including the
+Read the unlock section of `docs/GAME_MECHANICS.md` before touching any of it, including the
 measured example of what moves and what does not.
 
 ## Architecture
@@ -237,7 +237,7 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
 - `src/Sts2.SeedFinder.Web` — local web UI (`seed-finder.bat`, or
   `dotnet run -c Release --project src\Sts2.SeedFinder.Web`, then http://localhost:5173).
   Minimal API + static HTML/CSS/JS, no npm. Relic and card art **and descriptions** are read
-  from the player's own game install at runtime and never committed — see `docs/web_app_specs.md` §4
+  from the player's own game install at runtime and never committed — see `docs/WEB_APP_SPECS.md` §4
   for the provenance boundary and `Assets/` for the Godot PCK / BC7 / S3TC readers.
 
   Two things about hosting the static UI that cost real debugging time, both now fixed in code:

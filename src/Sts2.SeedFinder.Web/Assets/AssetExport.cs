@@ -9,7 +9,7 @@ namespace Sts2.SeedFinder.Web.Assets;
 ///
 /// It does not change anything about who owns the art. Serving that folder from a public host
 /// is redistribution of Mega Crit's assets, which their Content Policy does not grant — see
-/// docs/web_app_specs.md section 4. Exporting for your own use is a different thing from publishing.
+/// docs/WEB_APP_SPECS.md section 4. Exporting for your own use is a different thing from publishing.
 /// </summary>
 public static class AssetExport
 {
@@ -61,7 +61,7 @@ public static class AssetExport
         Console.WriteLine($"  Assets__Directory={Path.GetFullPath(targetDirectory)}");
         Console.WriteLine();
         Console.WriteLine("These are Mega Crit's assets. Exporting them for your own use is not the");
-        Console.WriteLine("same as publishing them — see docs/web_app_specs.md section 4 before hosting.");
+        Console.WriteLine("same as publishing them — see docs/WEB_APP_SPECS.md section 4 before hosting.");
         return 0;
     }
 }

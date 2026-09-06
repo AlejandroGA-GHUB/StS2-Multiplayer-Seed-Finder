@@ -1,6 +1,6 @@
 namespace Sts2.SeedFinder.Web.Assets;
 
-/// <summary>Where relic art comes from. See docs/web_app_specs.md section 4 — this is a deliberate
+/// <summary>Where relic art comes from. See docs/WEB_APP_SPECS.md section 4 — this is a deliberate
 /// boundary, not a convenience: game art is never committed to or served from this repo.</summary>
 public enum AssetProviderKind
 {

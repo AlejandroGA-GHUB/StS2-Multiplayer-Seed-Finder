@@ -37,7 +37,7 @@
 
     <!--
       The one image this project ships. Everything else the UI shows is read from the user's own
-      game install at runtime and never redistributed (docs/web_app_specs.md section 4), but an
+      game install at runtime and never redistributed (docs/WEB_APP_SPECS.md section 4), but an
       application icon is compiled into the exe, so it has to be something we are allowed to
       distribute. This is a sprout from Danaida's "Free Growing Plants Pack 32x32" on itch.io,
       which grants commercial use and editing; credited in the README.

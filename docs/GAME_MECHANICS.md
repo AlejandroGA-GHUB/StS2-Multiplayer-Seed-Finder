@@ -145,7 +145,7 @@ balanced. The server sends it through untouched and `app.js` turns it into spans
 `innerHTML`.
 
 Same provenance boundary as the art: read from the user's own install at runtime, cached in
-memory, never committed. See `docs/web_app_specs.md` §4. `sts2.dll` is loaded into its own
+memory, never committed. See `docs/WEB_APP_SPECS.md` §4. `sts2.dll` is loaded into its own
 `AssemblyLoadContext` so the game's assemblies stay out of ours, and every failure path
 degrades to `X` rather than taking the app down.
 

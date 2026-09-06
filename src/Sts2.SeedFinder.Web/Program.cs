@@ -14,7 +14,7 @@ using Sts2.SeedFinder.Core.Install;
 
 // One-time export: decode every relic icon out of a local game install into a folder, so a
 // deployed instance can serve art with the `bundled` provider and no game present.
-// Read docs/web_app_specs.md section 4 before publishing the output anywhere.
+// Read docs/WEB_APP_SPECS.md section 4 before publishing the output anywhere.
 if (args is [var flag, var target, ..] && flag is "--export-assets")
     return await AssetExport.RunAsync(target, args.Skip(2).FirstOrDefault());
 

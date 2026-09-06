@@ -19,7 +19,7 @@ public readonly record struct AssetText(string Description, string? Title = null
 /// <summary>
 /// Relic descriptions lifted out of the player's own game install.
 ///
-/// Same boundary as the art (docs/web_app_specs.md section 4): the strings are read at runtime from
+/// Same boundary as the art (docs/WEB_APP_SPECS.md section 4): the strings are read at runtime from
 /// a copy of the game the user already owns, held in memory, and never written into this repo
 /// or served from a machine that does not own the game.
 ///
