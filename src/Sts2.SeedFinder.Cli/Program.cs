@@ -126,7 +126,7 @@ internal static class Program
         var offers = NeowGenerator.PredictAllOffers(SeedCodec.RunSeed(seed), ctx);
 
         Console.WriteLine();
-        Console.WriteLine($"  seed {seed}   ({opts.PlayerCount}-player co-op, StS2 {GameVersion})");
+        Console.WriteLine($"  seed {seed}   ({(opts.PlayerCount == 1 ? "singleplayer" : $"{opts.PlayerCount}-player co-op")}, StS2 {GameVersion})");
         Console.WriteLine($"  run seed hash: {SeedCodec.RunSeed(seed)}");
         Console.WriteLine();
         Console.WriteLine("  Neow's offer, by lobby slot (Act 1):");
@@ -162,7 +162,8 @@ internal static class Program
         if (!NeowCardPayload.IsPredictable(relic.Slug)) return "";
 
         var cards = NeowCardPayload.Generate(
-            SeedCodec.RunSeed(seed), slot, opts.Characters[slot], relic.Slug);
+            SeedCodec.RunSeed(seed), slot, opts.Characters[slot], relic.Slug,
+            isMultiplayer: opts.PlayerCount > 1);
 
         return cards.Count == 0
             ? ""
@@ -238,7 +239,7 @@ internal static class Program
         var hallway = CardRewardGenerator.Hallway(
             SeedCodec.RunSeed(seed), slot, opts.Characters[slot],
             CardRewardGenerator.MaxPredictableFight, opts.Ascension,
-            new Sts2.SeedFinder.Core.Acts.UnlockState(), prior);
+            new Sts2.SeedFinder.Core.Acts.UnlockState(), prior, opts.PlayerCount > 1);
 
         for (int i = 0; i < hallway.Fights.Count; i++)
         {
@@ -263,7 +264,7 @@ internal static class Program
         var run = Sts2.SeedFinder.Core.Acts.RunGenerator.GenerateRun(
             SeedCodec.RunSeed(seed),
             new Sts2.SeedFinder.Core.Acts.UnlockState(),
-            isMultiplayer: true,
+            isMultiplayer: opts.PlayerCount > 1,
             characters: opts.Characters,
             ascension: opts.Ascension,
             withShopRelics: true,
@@ -330,8 +331,9 @@ internal static class Program
         if (run.Chests is null) return;
 
         Console.WriteLine();
-        Console.WriteLine($"  Treasure chests (one per act, at co-op floors "
-                          + $"{string.Join("/", ChestRelics.MultiplayerFloors)}, unskippable):");
+        var chestFloors = opts.PlayerCount > 1 ? ChestRelics.MultiplayerFloors : ChestRelics.SingleplayerFloors;
+        Console.WriteLine($"  Treasure chests (one per act, at floors "
+                          + $"{string.Join("/", chestFloors)}, unskippable):");
 
         for (int act = 1; act <= run.Chests.Slots.Count; act++)
         {
@@ -432,7 +434,7 @@ internal static class Program
         {
             string? found = null;
             foreach (var slot in looking)
-                if (CardCatalog.Find(opts.Characters[slot], name) is { } hit) { found = hit; break; }
+                if (CardCatalog.Find(opts.Characters[slot], name, isMultiplayer: opts.PlayerCount > 1) is { } hit) { found = hit; break; }
 
             resolved.Add(found ?? throw new ArgumentException(
                 $"'{name}' is not a card "
@@ -669,7 +671,7 @@ internal static class Program
                                seed does not decide what anybody picks.
             --act1 <map>       overgrowth | underdocks. Default: either. Rolled on its own
                                RNG, so this is close to free and is tested first.
-            --players N        Lobby size, 2-4. Default: 2
+            --players N        Lobby size, 1-4. 1 is a singleplayer run. Default: 2
             --require <who>    any | all | p1,p2,...   Default: any. The fallback for every
                                --relic that does not name its own.
             --where <slot>     any | curse | positive   Default: any
@@ -745,7 +747,7 @@ internal static class Program
             --extra-chests <n>            ? rooms that became treasure rooms before Act 1's
                                           chest. Each shifts every chest by one. Default 0.
 
-            Every act has exactly one chest, at co-op floors 9, 24 and 38, and no route
+            Every act has exactly one chest, at floors 9, 24 and 38 in co-op (10, 26 and 41 solo), and no route
             skips it. It puts one relic per player on the table and the whole party votes,
             so this is run-level: it asks what is IN the chest, not who takes it. Naming
             two relics for one act asks for both, up to the player count.
@@ -1249,7 +1251,7 @@ internal static class Program
 
             var pools = slot < 0 ? Enumerable.Range(0, o.PlayerCount) : [slot];
             foreach (var i in pools)
-                if (CardCatalog.Find(o.Characters[i], parts[1]) is { } found)
+                if (CardCatalog.Find(o.Characters[i], parts[1], isMultiplayer: o.PlayerCount > 1) is { } found)
                     return new CardCriterion(slot, found, fight);
 
             var who2 = slot < 0 ? "anyone in the party" : $"the {o.Characters[slot]}";
@@ -1285,8 +1287,8 @@ internal static class Program
             var pools = slot < 0 ? Enumerable.Range(0, o.PlayerCount) : [slot];
             foreach (var i in pools)
             {
-                var pool = SpecializedPayload.Pool(o.Characters[i]);
-                if (CardCatalog.Find(o.Characters[i], parts[1]) is { } found
+                var pool = SpecializedPayload.Pool(o.Characters[i], null, o.PlayerCount > 1);
+                if (CardCatalog.Find(o.Characters[i], parts[1], isMultiplayer: o.PlayerCount > 1) is { } found
                     && pool.Any(e => e.TypeName == found))
                     return new SpecializedCriterion(slot, found);
             }
@@ -1474,8 +1476,8 @@ internal static class Program
         private static int ParsePlayers(string s)
         {
             var n = int.Parse(s);
-            if (n is < 2 or > 4)
-                throw new ArgumentException("--players must be 2-4 (this tool is co-op only)");
+            if (n is < 1 or > 4)
+                throw new ArgumentException("--players must be 1-4");
             return n;
         }
 

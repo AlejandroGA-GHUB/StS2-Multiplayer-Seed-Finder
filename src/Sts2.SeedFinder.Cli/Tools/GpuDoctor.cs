@@ -104,6 +104,17 @@ public static class GpuDoctor
             }
         }
 
+        // Solo. A lone Defect is the character whose solo and co-op pools disagree most, and
+        // fight 2 is where a Rare becomes reachable, so this is the case a kernel still building
+        // the co-op pool would fail on rather than coincidentally pass.
+        {
+            var check = GpuVerifyCards.Run(
+                engine, new[] { Sts2.SeedFinder.Core.Acts.Character.Defect },
+                ascension: 0, unlocks: null, start: 9_500_000_000, samples: 20_000, fight: 2);
+            Report(check with { Name = $"{check.Name} solo" });
+            ok &= check.Passed;
+        }
+
         // The Neow payloads, and the burn a payload's relic costs the fights after it. Both are
         // the same handful of draws at the front of the Rewards stream, and a kernel that got
         // either wrong would still look healthy: it would simply answer about a different part
@@ -349,6 +360,27 @@ public static class GpuDoctor
         // that count is now per player. If it keeps sizing every bag the same way while the CPU
         // sizes P2's from P2's own epochs, the kernel lands several draws early and every act
         // after it is wrong, silently and only for mixed lobbies.
+        // Solo, which changes act length and act selection at once: every act is a room longer,
+        // and an undiscovered non-default act is taken without a draw.
+        var solo = new[] { Character.Defect };
+
+        yield return ("solo act3 boss", Build(solo) with
+        {
+            Bosses = new[] { new BossCriterion(3, "QueenBoss") },
+        }, 8_000);
+
+        // Underdocks undiscovered forces it as Act 1 on every seed. Act 1's encounters then come
+        // from a different pool, so the act 3 boss lands elsewhere on the stream, which is what a
+        // kernel ignoring the forced table would get wrong.
+        yield return ("solo, underdocks undiscovered", Build(solo) with
+        {
+            Bosses = new[] { new BossCriterion(3, "QueenBoss") },
+            Unlocks = new UnlockState
+            {
+                DiscoveredActs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Overgrowth", "Hive", "Glory" },
+            },
+        }, 8_000);
+
         var mixed = new[] { new UnlockState(), PartlyUnlocked };
 
         yield return ("act1 boss, partner partly unlocked", Build(duo) with

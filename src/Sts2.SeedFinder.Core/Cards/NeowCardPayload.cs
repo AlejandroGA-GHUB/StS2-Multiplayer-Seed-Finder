@@ -76,13 +76,14 @@ public static class NeowCardPayload
         int playerSlotIndex,
         Character character,
         string relicSlug,
-        UnlockState? unlocks = null)
+        UnlockState? unlocks = null,
+        bool isMultiplayer = true)
     {
         int count = CardCount(relicSlug);
         if (count == 0) return Array.Empty<RewardCard>();
 
         var rng = CardRewardGenerator.RewardsRng(runSeed, playerSlotIndex);
-        var pool = CardRewardGenerator.PoolFor(character, unlocks);
+        var pool = CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer);
         var index = PoolIndex.For(pool);
 
         var cards = new List<RewardCard>(count);
@@ -122,13 +123,14 @@ public static class NeowCardPayload
         Character character,
         string relicSlug,
         UnlockState? unlocks,
-        ReadOnlySpan<int> wantedTypeIds)
+        ReadOnlySpan<int> wantedTypeIds,
+        bool isMultiplayer = true)
     {
         int count = CardCount(relicSlug);
         if (wantedTypeIds.Length > count) return false;
 
         var rng = CardRewardGenerator.RewardsRng(runSeed, playerSlotIndex);
-        var pool = CardRewardGenerator.PoolFor(character, unlocks);
+        var pool = CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer);
         var index = PoolIndex.For(pool);
 
         Span<int> taken = stackalloc int[3];
@@ -162,9 +164,10 @@ public static class NeowCardPayload
     /// The pool type id of a card in this character's pool, or -1 when the pool has no such
     /// card. Ids are only comparable within one pool, which is why this takes the character.
     /// </summary>
-    internal static int TypeIdOf(Character character, UnlockState? unlocks, string typeName)
+    internal static int TypeIdOf(
+        Character character, UnlockState? unlocks, string typeName, bool isMultiplayer = true)
     {
-        var pool = CardRewardGenerator.PoolFor(character, unlocks);
+        var pool = CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer);
         for (int i = 0; i < pool.Length; i++)
             if (string.Equals(pool[i].TypeName, typeName, StringComparison.Ordinal))
                 return PoolIndex.For(pool).TypeIds[i];
@@ -172,6 +175,7 @@ public static class NeowCardPayload
     }
 
     /// <summary>Every rare this character could be handed by a payload, in pool order.</summary>
-    public static IEnumerable<CardEntry> Offerable(Character character, UnlockState? unlocks = null) =>
-        CardRewardGenerator.PoolFor(character, unlocks).Where(c => c.Rarity == CardRarity.Rare);
+    public static IEnumerable<CardEntry> Offerable(
+        Character character, UnlockState? unlocks = null, bool isMultiplayer = true) =>
+        CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer).Where(c => c.Rarity == CardRarity.Rare);
 }

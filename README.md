@@ -1,15 +1,17 @@
-# Slay the Spire 2 Multiplayer Seed Finder
+# Slay the Spire 2 Multiplayer & Singleplayer Seed Finder
 
 Find **co-op** seeds by what each player gets. An example being: "A seed where P1 and P2 are both offered Silken
-Tress, and Vakuu shows up in Act 3 with Fiddle for both players" is a search you can actually run.
+Tress, and Vakuu shows up in Act 3 with Fiddle for both players" is a search you can actually run. Additionally, you 
+can also use this tool to find singleplayer seeds now.
 
-Multiplayer only seed finder as very good singleplayer seed finders already exist. This one exists because in co-op
-**every player rolls their own offers off their own RNG stream**, and nothing else searches
-that space.
+Multiplayer supported, for 1 to 4 players. It started as a co-op finder because in co-op **every player
+rolls their own offers off their own RNG stream**, and nothing else searches that space. Singleplayer is
+supported too now, because this is the only seed finder that handles Custom run modifiers, which gives a
+solo player a genuine reason to utilize the tool outside of the multiplayer support.
 
 
 > Huge shoutout to the creator of searchthespire, as their single player seed finder served as a strong reference for a clean UI style + supported functionality.
-> Check out their website here for single player seeds -> ([SearchTheSpire](https://searchthespire.app/)) 
+> Check out their website here for a great single player seeds alternative -> ([SearchTheSpire](https://searchthespire.app/)) 
 
 
 > Updated At **Slay the Spire 2 v0.110.1**. Predictions are version-specific, see

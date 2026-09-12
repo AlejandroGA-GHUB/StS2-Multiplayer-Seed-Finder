@@ -17,11 +17,20 @@ public readonly struct ActFilterView
     /// <summary>1 when a candidate could still satisfy the search, 0 when it rules the seed out.</summary>
     public readonly ArrayView<byte> Accept;
 
-    public ActFilterView(ArrayView<int> candidateCount, ArrayView<int> offset, ArrayView<byte> accept)
+    /// <summary>
+    /// Per act index, the candidate taken WITHOUT a draw, or -1 when that act is rolled. All -1
+    /// in multiplayer. A lobby property rather than a seed one, so it is a table and not a branch
+    /// the kernel has to work out: see <c>RunGenerator.ForcedCandidate</c>.
+    /// </summary>
+    public readonly ArrayView<int> Forced;
+
+    public ActFilterView(
+        ArrayView<int> candidateCount, ArrayView<int> offset, ArrayView<byte> accept, ArrayView<int> forced)
     {
         CandidateCount = candidateCount;
         Offset = offset;
         Accept = accept;
+        Forced = forced;
     }
 }
 
@@ -42,10 +51,11 @@ public struct ActFilterParams
 /// The GPU form of <c>SeedSearcher</c>'s Act 1 and <c>MapsCouldSatisfy</c> filters.
 ///
 /// This is the cheapest useful thing in the whole run chain and the only part of it that
-/// stands alone. Act selection is three draws on its own <c>act_selection</c> stream, and in
-/// MULTIPLAYER it has no branching: the singleplayer "first undiscovered act is taken without
-/// consuming a draw" path is unreachable, so every act is simply a bounded draw over its
-/// candidates. Nothing about bags, shuffles or cross-act state is involved.
+/// stands alone. Act selection is at most three draws on its own <c>act_selection</c> stream.
+/// Singleplayer adds one rule, that the first undiscovered act is taken without consuming a
+/// draw, but whether that fires depends on the lobby rather than the seed, so it arrives as the
+/// <see cref="ActFilterView.Forced"/> table and the kernel stays a straight loop. Nothing about
+/// bags, shuffles or cross-act state is involved.
 ///
 /// The acceptance test is precomputed host-side into a byte per candidate, so the kernel never
 /// has to know what a boss or an event is. Whether a candidate could satisfy the search is a
@@ -65,7 +75,10 @@ public static class ActFilter
         var rng = GpuRandom.Named(runSeed, p.ActNameHash);
         for (int i = 0; i < p.ActCount; i++)
         {
-            int pick = rng.NextInt(0, acts.CandidateCount[i]);
+            // A forced act costs no draw, so skipping NextInt here is what keeps every later act
+            // on the right point of the stream.
+            int forced = acts.Forced[i];
+            int pick = forced >= 0 ? forced : rng.NextInt(0, acts.CandidateCount[i]);
             if (acts.Accept[acts.Offset[i] + pick] == 0) return false;
         }
         return true;
@@ -94,11 +107,15 @@ public static class ActFilterFactory
         SearchCriteria criteria,
         out int[] candidateCount,
         out int[] offset,
-        out byte[] accept)
+        out byte[] accept,
+        out int[] forced)
     {
         var byIndex = ActData.ByIndex;
         candidateCount = new int[byIndex.Length];
         offset = new int[byIndex.Length];
+        forced = new int[byIndex.Length];
+        for (int i = 0; i < byIndex.Length; i++)
+            forced[i] = RunGenerator.ForcedCandidate(i, criteria.Unlocks, criteria.IsMultiplayer);
 
         int total = 0;
         for (int i = 0; i < byIndex.Length; i++)

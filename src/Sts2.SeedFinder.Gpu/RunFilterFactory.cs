@@ -27,6 +27,9 @@ public sealed class RunFilterTables
     public required int[] AncientCriteria { get; init; }
     public required int[] ShopProbes { get; init; }
 
+    /// <summary>See <see cref="RunFilterView.Forced"/>.</summary>
+    public required int[] Forced { get; init; }
+
     /// <summary>
     /// Flatten a search into run-stage tables, or return false when the stage does not apply.
     ///
@@ -106,7 +109,7 @@ public sealed class RunFilterTables
 
             if (!AppendPool(act.Regular, encounters, info, at, RunFilter.FldRegularStart)) return false;
             info[at + RunFilter.FldRegularDraws] =
-                act.GetNumberOfRooms(isMultiplayer: true) - act.NumberOfWeakEncounters;
+                act.GetNumberOfRooms(criteria.IsMultiplayer) - act.NumberOfWeakEncounters;
 
             if (!AppendPool(act.Elites, encounters, info, at, RunFilter.FldEliteStart)) return false;
             info[at + RunFilter.FldEliteDraws] = EliteEncountersPerAct;
@@ -169,6 +172,9 @@ public sealed class RunFilterTables
             EventStartIndex = eventStart,
             AncientCriteria = ancientCriteria,
             ShopProbes = shopProbes,
+            Forced = Enumerable.Range(0, actCount)
+                .Select(i => RunGenerator.ForcedCandidate(i, unlocks, criteria.IsMultiplayer))
+                .ToArray(),
             Params = new RunFilterParams
             {
                 UpFrontNameHash = GameHash.Deterministic(GameHash.SnakeCase("UpFront")),

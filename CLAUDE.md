@@ -1,6 +1,6 @@
 # Sts2 Multiplayer Seed Finder
 
-A seed finder for **Slay the Spire 2 co-op runs**. Shipped. **Nothing is in progress** — start
+A seed finder for **Slay the Spire 2**, multiplayer supported: 1 to 4 players. Shipped. **Nothing is in progress** — start
 nothing without the user's go-ahead.
 
 **Elite relics and shop relic slots 1 and 2 are PENDING, not rejected.** Both were investigated
@@ -33,15 +33,34 @@ a clone will not have it and nothing here depends on reading it.
 
 ## Scope — read this first
 
-**Multiplayer only.** Every search runs with `isMultiplayer = true` and `playerCount >= 2`. The product is
+**Multiplayer supported, 1 to 4 players** (singleplayer added 2026-09-12). The headline product is still
 *joint, per-player criteria*: "find a seed where P1 gets X and P2 gets Y."
 
-**Do not build a singleplayer mode.** Good SP finders already exist (SearchTheSpire, SearchTheSeed, sts.gg)
-and the user has explicitly ruled SP out. No SP code path ships.
+**Why singleplayer now ships.** It was held back from the start because good singleplayer
+finders already exist (SearchTheSpire, SearchTheSeed, sts.gg) and competing with them was not the point.
+Custom run modifier support changed that: no other seed finding tool supports modifiers at all, so a solo
+player now has a real reason to use this one. The user reversed the earlier "no singleplayer" rule on
+that basis, and that rule should not be reinstated from older notes or history.
 
-Careful with the boundary: run-level generation (acts, bosses, map, encounters, events) is **not** SP work —
-co-op runs need all of it, just with the MP flag, shorter acts, and MP-adjusted pools. Only SP *packaging*
-is out of scope.
+**The mode is derived, never assumed.** A lobby is multiplayer exactly when it has more than one player,
+which is also the game's own test. Everything reads `SearchCriteria.IsMultiplayer` (or `players > 1` at the
+edges); a hardcoded `isMultiplayer: true` anywhere is now a bug. What the mode changes, all verified or
+read off the game:
+
+- **Act selection.** Solo force-picks an act that is NOT a default act and has not been discovered, without
+  a draw. Only Underdocks can be forced today, since Overgrowth, Hive and Glory are default acts. Getting
+  either half wrong is invisible on any seed whose roll lands on the default act anyway, which is exactly
+  how the first version of this shipped broken. See `RunGenerator.ForcedCandidate`.
+- **Act length.** Every solo act is one room longer, which moves the encounters, the bosses and the chest
+  floors (10/26/41 solo against 9/24/38 co-op).
+- **Card pools.** Solo strips five multiplayer-only cards per character, all Uncommon or Rare. Commons are
+  identical in both modes, so a match on an all-Common reward does not confirm the solo pool.
+- **Neow's relic pool.** Silver Crucible and Winged Boots exist only solo, Massive Scroll only in co-op.
+
+**Verified solo** (2026-09-12, seed `GCUEX7VHVF8W`, A10 Defect): `--verify` matched act selection, both
+relic bags, every event, encounter and boss including the A10 second boss, all three Ancients, the UpFront
+counter and the Act 1 map node for node; Neow's offer and the fight 1 reward matched in play. The solo
+card pool is still **unconfirmed in play**, because that fight 1 was three Commons.
 
 ## Status
 

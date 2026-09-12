@@ -119,7 +119,7 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
 
     RelicDto Neow(NeowRelic r, string group) => new(
         r.Slug, r.Name, group, RelicNotes.For(r),
-        assets.AvailableSlugs.Contains(r.Slug), Describe(r.Slug));
+        assets.AvailableSlugs.Contains(r.Slug), Describe(r.Slug), RelicNotes.ModeOf(r));
 
     var ancients = Enum.GetValues<Ancient>().Select(a => new AncientDto(
         a.ToString(),
@@ -165,11 +165,9 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         Group(ActCatalog.Bosses(act)),
         Group(ActCatalog.Events(act), assets.TryGetEventText))).ToArray();
 
-    // Singleplayer-only relics can never appear in co-op, so they are never offered as
-    // choices — Silver Crucible in the curse branch and Winged Boots in the positive pool
-    // both gate on Players.Count == 1. Offering them would let a user build a search that
-    // cannot match by construction.
-    static bool InCoop(NeowRelic r) => r.Availability != RelicAvailability.SingleplayerOnly;
+    // Every Neow relic ships, each tagged with the kind of run it belongs to. Silver Crucible and
+    // Winged Boots only exist solo and Massive Scroll only in co-op, and the lobby size is chosen
+    // after the catalog loads, so the page filters rather than the server deciding once.
 
     // One pool per character, because the card a player can be offered depends entirely on who
     // they picked. The game's own title is preferred over our name-splitter wherever the
@@ -190,7 +188,8 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
                 text?.Title ?? CardCatalog.Display(card.TypeName),
                 card.Rarity.ToString(),
                 assets.AvailableCardSlugs.Contains(slug),
-                text?.Description);
+                text?.Description,
+                card.Mode == CardMode.MultiplayerOnly);
         }).ToArray())).ToArray();
 
     // Shop relics share the relic art and text tables with Neow's, so they need no new asset
@@ -224,13 +223,13 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
     // a table rather than hardcoded in the page, because both come out of Core and a second
     // copy in JavaScript would be free to drift after a patch.
     var neowCardRelics = NeowRelics.Curses.Concat(NeowRelics.Positives).Concat(NeowRelics.CoinFlips)
-        .Where(InCoop)
         .Select(r => new NeowCardRelicDto(
             r.Slug,
             assets.TryGetText(r.Slug)?.Title ?? r.Name,
             NeowCardPayload.CardCount(r.Slug),
             CardRewardGenerator.NeowRewardDrawCost(r.Slug, Character.Ironclad),
-            CardRewardGenerator.NeowRewardDrawCost(r.Slug, Character.Defect)))
+            CardRewardGenerator.NeowRewardDrawCost(r.Slug, Character.Defect),
+            RelicNotes.ModeOf(r)))
         .Where(r => r.PayloadCards > 0 || r.Draws != 0)
         .ToArray();
 
@@ -253,9 +252,9 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         drift.Warn ? drift.Message : null,
         assets.Kind.ToString().ToLowerInvariant(),
         assets.Status,
-        NeowRelics.Curses.Where(InCoop).Select(r => Neow(r, "curse")).ToArray(),
-        NeowRelics.Positives.Where(InCoop).Select(r => Neow(r, "positive")).ToArray(),
-        NeowRelics.CoinFlips.Where(InCoop).Select(r => Neow(r, "coinflip")).ToArray(),
+        NeowRelics.Curses.Select(r => Neow(r, "curse")).ToArray(),
+        NeowRelics.Positives.Select(r => Neow(r, "positive")).ToArray(),
+        NeowRelics.CoinFlips.Select(r => Neow(r, "coinflip")).ToArray(),
         ancients,
         // The slug is just the lowercased enum name, which is what the game names its
         // character-select art by, so no mapping table is needed.
@@ -315,7 +314,12 @@ app.MapGet("/api/profile", (IConfiguration config) =>
         DiscoveredActs: profile.DiscoveredActs.ToArray(),
         Lobby: run is null ? null : new LobbyDto(
             run.Seed, run.Characters.ToArray(), run.Ascension, run.IsMultiplayer),
-        Code: UnlockCode.Encode(profile.Unlocks)), json);
+        Code: UnlockCode.Encode(profile.Unlocks),
+        SoloForcedActs: Enumerable.Range(0, ActData.ByIndex.Length)
+            .Select(i => RunGenerator.ForcedCandidate(i, profile.Unlocks, isMultiplayer: false) is var f && f >= 0
+                ? ActData.ByIndex[i][f].Name
+                : null)
+            .ToArray()), json);
 });
 
 // ---- Somebody else's unlock state ---------------------------------------------------------

@@ -119,8 +119,10 @@ public static class CardRewardGenerator
         Character character,
         int ascension = 0,
         UnlockState? unlocks = null,
-        int priorDraws = 0) =>
-        Hallway(runSeed, playerSlotIndex, character, 1, ascension, unlocks, priorDraws).Fights[0];
+        int priorDraws = 0,
+        bool isMultiplayer = true) =>
+        Hallway(runSeed, playerSlotIndex, character, 1, ascension, unlocks, priorDraws,
+                isMultiplayer).Fights[0];
 
     /// <summary>
     /// The rewards of the first <paramref name="fights"/> consecutive normal fights.
@@ -150,12 +152,15 @@ public static class CardRewardGenerator
         int fights = 2,
         int ascension = 0,
         UnlockState? unlocks = null,
-        int priorDraws = 0)
+        int priorDraws = 0,
+        bool isMultiplayer = true)
     {
         var rng = RewardsRng(runSeed, playerSlotIndex);
         Burn(rng, priorDraws);
 
-        var pool = PoolFor(character, unlocks);
+        // Solo and co-op pools differ by the five multiplayer-only cards per character, all of
+        // them Uncommon or Rare, so the rarity roll is unaffected but the pick inside it is not.
+        var pool = PoolFor(character, unlocks, isMultiplayer);
         var index = PoolIndex.For(pool);
         var results = new List<FirstFightReward>(fights);
 

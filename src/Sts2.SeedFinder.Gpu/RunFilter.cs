@@ -17,6 +17,13 @@ public readonly struct RunFilterView
     /// <summary>Where each act's candidates start, which is also the act definition's own index.</summary>
     public readonly ArrayView<int> CandidateOffset;
 
+    /// <summary>
+    /// Per act index, the candidate taken WITHOUT a draw, or -1 when that act is rolled. All -1
+    /// in multiplayer. A lobby property rather than a seed one, so it is a table and not a branch
+    /// the kernel has to work out: see <c>RunGenerator.ForcedCandidate</c>.
+    /// </summary>
+    public readonly ArrayView<int> Forced;
+
     /// <summary>Per act definition, <see cref="RunFilter.Stride"/> integers. See the Fld constants.</summary>
     public readonly ArrayView<int> Info;
 
@@ -70,9 +77,10 @@ public readonly struct RunFilterView
         ArrayView<ulong> conflict, ArrayView<int> bossId, ArrayView<int> ancientId,
         ArrayView<int> bossCriteria, ArrayView<int> eventCriteria,
         ArrayView<int> eventStartIndex, ArrayView<int> ancientCriteria,
-        ArrayView<int> shopProbes)
+        ArrayView<int> shopProbes, ArrayView<int> forced)
     {
         ShopProbes = shopProbes;
+        Forced = forced;
         CandidateCount = candidateCount;
         CandidateOffset = candidateOffset;
         Info = info;
@@ -371,7 +379,10 @@ public static class RunFilter
 
         for (int i = 0; i < p.ActCount; i++)
         {
-            int actDef = v.CandidateOffset[i] + actRng.NextInt(0, v.CandidateCount[i]);
+            // Same rule as ActFilter: a forced act is taken without touching the act stream.
+            int forcedAct = v.Forced[i];
+            int actDef = v.CandidateOffset[i]
+                         + (forcedAct >= 0 ? forcedAct : actRng.NextInt(0, v.CandidateCount[i]));
             int at = actDef * Stride;
 
             // 1. Events. Each criterion follows its own event through the same swaps from the

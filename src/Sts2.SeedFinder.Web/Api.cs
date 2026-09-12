@@ -15,8 +15,13 @@ namespace Sts2.SeedFinder.Web;
 /// <param name="Note">A gate worth knowing about before you search for it, or null.</param>
 /// <param name="Description">What the relic does, in the game's own words, or null when the
 /// text is unavailable (no install, or a bundled export without descriptions).</param>
+/// <param name="Mode">
+/// "singleplayer" or "multiplayer" when the relic only exists in that kind of run, else null. Sent
+/// rather than filtered here because the catalog is loaded once and the lobby size changes after.
+/// </param>
 public sealed record RelicDto(
-    string Slug, string Name, string Group, string? Note, bool HasArt, string? Description);
+    string Slug, string Name, string Group, string? Note, bool HasArt, string? Description,
+    string? Mode = null);
 
 public sealed record AncientDto(
     string Id, string Name, int[] Acts, bool SeedDetermined, string? DeckNote, RelicDto[] Relics);
@@ -35,7 +40,12 @@ public sealed record ActThingDto(string Slug, string Name, string[] Maps, string
 public sealed record ActContentDto(int Act, string[] Maps, ActThingDto[] Bosses, ActThingDto[] Events);
 
 /// <param name="Rarity">Common, Uncommon or Rare — the only three a combat reward can roll.</param>
-public sealed record CardDto(string Slug, string Name, string Rarity, bool HasArt, string? Description);
+/// <param name="MultiplayerOnly">
+/// True for the five cards per character a solo run strips from the pool. The catalog ships the
+/// co-op pool with this flag so the page can drop them for a one-player lobby.
+/// </param>
+public sealed record CardDto(
+    string Slug, string Name, string Rarity, bool HasArt, string? Description, bool MultiplayerOnly = false);
 
 /// <summary>One character's reward pool, for that player's card picker.</summary>
 public sealed record CardPoolDto(string Character, CardDto[] Cards);
@@ -80,7 +90,7 @@ public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 /// The same for a Defect. Only Scroll Boxes differs, by the two extra all-Claw checks it rolls.
 /// </param>
 public sealed record NeowCardRelicDto(
-    string Slug, string Name, int PayloadCards, int Draws, int DefectDraws);
+    string Slug, string Name, int PayloadCards, int Draws, int DefectDraws, string? Mode = null);
 
 /// <param name="BossArtSlugs">Boss slugs the install can serve node art for.</param>
 /// <param name="AncientArtSlugs">
@@ -129,10 +139,14 @@ public sealed record CatalogDto(
 /// This profile's own epochs as a shareable code, so the person running the tool can hand their
 /// state to someone else's lobby as easily as they can import one.
 /// </param>
+/// <param name="SoloForcedActs">
+/// Per act, the map a SOLO run on this profile is handed without a roll, or null when that act is
+/// rolled. Worked out here with the same rule the search uses, so the page cannot disagree with it.
+/// </param>
 public sealed record ProfileDto(
     bool Found, string? Path, string[] SearchedIn, string OverrideVariable,
     int RevealedEpochs, int TotalEpochs, bool FullyUnlocked,
-    string[] DiscoveredActs, LobbyDto? Lobby, string? Code);
+    string[] DiscoveredActs, LobbyDto? Lobby, string? Code, string?[]? SoloForcedActs = null);
 
 /// <summary>
 /// The OS and runtime, named the way somebody reading a bug report would name them.
@@ -436,8 +450,8 @@ public static class Query
         IQueryCollection q, string? savesDirectory = null)
     {
         int players = (int)(ULong(q, "players") ?? 2);
-        if (players is < 2 or > 4)
-            throw new ArgumentException("players must be 2-4, as this tool is co-op only.");
+        if (players is < 1 or > 4)
+            throw new ArgumentException("players must be 1-4.");
 
         var chars = Characters(q["characters"]);
         var ctx = new NeowContext
@@ -609,7 +623,7 @@ public static class Query
         {
             string? found = null;
             foreach (var slot in looking)
-                if (CardCatalog.Find(chars[slot], name) is { } hit) { found = hit; break; }
+                if (CardCatalog.Find(chars[slot], name, isMultiplayer: players > 1) is { } hit) { found = hit; break; }
 
             resolved.Add(found ?? throw new ArgumentException(
                 $"'{name}' is not a card {relic.Name} can hand to "
@@ -753,7 +767,7 @@ public static class Query
 
             var lookIn = slot < 0 ? Enumerable.Range(0, players) : [slot];
             var found = lookIn
-                .Select(s => CardCatalog.Find(chars[s], parts[1]))
+                .Select(s => CardCatalog.Find(chars[s], parts[1], isMultiplayer: players > 1))
                 .FirstOrDefault(x => x is not null);
 
             // Which fight, 1-based. Only fight 1 is guaranteed by the map; see CardCriterion.
@@ -826,7 +840,7 @@ public static class Query
 
             var lookIn = slot < 0 ? Enumerable.Range(0, players) : [slot];
             var found = lookIn
-                .Select(s => CardCatalog.Find(chars[s], parts[1]))
+                .Select(s => CardCatalog.Find(chars[s], parts[1], isMultiplayer: players > 1))
                 .FirstOrDefault(x => x is not null);
 
             wanted.Add(new SpecializedCriterion(slot, found
@@ -958,7 +972,10 @@ public static class Predictions
         // Which map each act uses is decided by its own RNG, before and independently of the
         // party — so we can always answer that much, even with nobody picked yet. Bosses and
         // Ancients are the part that needs a full run.
-        var selected = RunGenerator.SelectActs(runSeed, unlocks, isMultiplayer: true);
+        // The mode changes act selection itself, not just what follows: a solo run takes an
+        // undiscovered act without rolling, and every act is one room longer.
+        bool isMultiplayer = players > 1;
+        var selected = RunGenerator.SelectActs(runSeed, unlocks, isMultiplayer);
 
         if (characters.Count == 0)
             return new SeedResultDto(
@@ -982,7 +999,7 @@ public static class Predictions
         // anyway, and it only happens for the handful of seeds actually being shown.
         var run = hit?.Run is { ShopRelics: not null, Chests: not null } ready
             ? ready
-            : RunGenerator.GenerateRun(runSeed, unlocks, isMultiplayer: true,
+            : RunGenerator.GenerateRun(runSeed, unlocks, isMultiplayer,
                                        characters, selected, ascension, withShopRelics: true,
                                        playerUnlocks: playerUnlocks,
                                        withChestRelics: true,
@@ -1034,7 +1051,7 @@ public static class Predictions
                 if (!NeowCardPayload.IsPredictable(relic.Slug)) continue;
 
                 var cards = NeowCardPayload.Generate(
-                    runSeed, slot, characters[slot], relic.Slug, Own(slot));
+                    runSeed, slot, characters[slot], relic.Slug, Own(slot), isMultiplayer);
                 if (cards.Count > 0)
                     payloads.Add(new NeowPayloadDto(slot, relic.Slug, cards.Select(c => c.Slug).ToArray()));
             }
@@ -1044,7 +1061,7 @@ public static class Predictions
             CardRewardGenerator
                 .Hallway(runSeed, slot, characters[slot],
                          CardRewardGenerator.MaxPredictableFight, ascension, Own(slot),
-                         prior[slot])
+                         prior[slot], isMultiplayer)
                 .Fights
                 .Select((reward, i) => new FirstFightDto(
                     slot, reward.Cards.Select(c => c.Slug).ToArray(), reward.HasPotion, i + 1)))
@@ -1061,7 +1078,7 @@ public static class Predictions
         // have drained it.
         var chests = (run.Chests?.Slots ?? []).Select((slots, i) => new ChestDto(
             i + 1,
-            i < ChestRelics.MultiplayerFloors.Length ? ChestRelics.MultiplayerFloors[i] : 0,
+            ChestRelics.FloorOf(i, isMultiplayer),
             slots.Select(s => new ChestSlotDto(
                 s.Rarity,
                 s.Expected?.Slug ?? "",
@@ -1080,7 +1097,7 @@ public static class Predictions
                 var card = hit?.SpecializedCards is { } known && slot < known.Length && known[slot] is { } t
                     ? t
                     : SpecializedPayload.Predict(
-                        runSeed, slot, characters[slot], Own(slot), true, specPrior)?.TypeName;
+                        runSeed, slot, characters[slot], Own(slot), isMultiplayer, specPrior)?.TypeName;
 
                 if (card is null) continue;
                 specialized.Add(new SpecializedDto(
@@ -1105,9 +1122,18 @@ public static class Predictions
 /// </summary>
 public static class RelicNotes
 {
+    /// <summary>Which kind of run a relic is limited to, for the page to filter on.</summary>
+    public static string? ModeOf(NeowRelic r) => r.Availability switch
+    {
+        RelicAvailability.SingleplayerOnly => "singleplayer",
+        RelicAvailability.MultiplayerOnly => "multiplayer",
+        _ => null,
+    };
+
     public static string? For(NeowRelic r) => r.Availability switch
     {
-        RelicAvailability.MultiplayerOnly => "Co-op only.",
+        RelicAvailability.MultiplayerOnly => "Multiplayer only.",
+        RelicAvailability.SingleplayerOnly => "Singleplayer only.",
         RelicAvailability.RequiresAllCharactersUnlocked => "Needs every character unlocked.",
         RelicAvailability.RequiresBundleableCardPool => "Needs 4+ commons and 2+ uncommons in your pool.",
         _ => null,

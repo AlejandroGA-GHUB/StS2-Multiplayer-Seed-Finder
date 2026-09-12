@@ -1,6 +1,6 @@
 # Web UI — specification
 
-The browser front end for the co-op seed finder. Everything the CLI can do, made usable by
+The browser front end for the seed finder, multiplayer supported for 1 to 4 players. Everything the CLI can do, made usable by
 someone who has never touched a terminal and does not know what a "lobby slot index" is.
 
 Status: **phases 1–4 built.** `src/Sts2.SeedFinder.Web`, run with
@@ -65,7 +65,6 @@ behaviour each, so jump straight to the one you are changing.
 
 ## 2. Non-goals
 
-- **No singleplayer mode.** Same scope rule as the rest of the project.
 - **No accounts, no persistence, no database.**
 - **No monetization.** Free tool, no ads, no donations tied to it. See §4.
 - **No build toolchain.** No npm, no bundler. One `dotnet run`, static HTML/CSS/JS.
@@ -234,6 +233,13 @@ grouping did.
 ## 7. Interaction detail
 
 ### Lobby
+The player count runs 1 to 4, and 1 is a real singleplayer run rather than a co-op lobby of one: act
+selection, act length, the card pools and Neow's relic pool all follow it. The catalog ships both
+modes' content tagged (`mode` on Neow relics, `multiplayerOnly` on cards), and the pickers filter on
+the current count, because the catalog loads before the lobby is set. Import Friend Epoch is hidden
+for a solo lobby, since there is nobody else's unlock state to bring in, and shrinking the lobby
+drops imports past its end.
+
 Player count 2–4 as a segmented control. One character dropdown per player, in lobby order,
 each labelled with a plain-language note: *"lobby order matters — this is who joins first."*
 Characters are required for anything involving acts, so the Ancient section stays disabled
@@ -298,8 +304,9 @@ place and missing in another. Only the group headings and the asset kind differ.
   Neow; a single "everything this Ancient can offer" group for an Ancient; **Common** and
   **Uncommon** for cards, since rarity is what decides how long the search will take.
 - 3-column grid of tiles: icon, name, and an availability badge where one applies
-  (co-op only, needs all characters unlocked, …). Singleplayer-only relics are hidden
-  entirely — this tool is co-op.
+  (singleplayer only, multiplayer only, needs all characters unlocked, …). A relic that cannot exist
+  in a lobby of the current size is left out of the picker rather than shown disabled, and a pick
+  it strands by changing the lobby size is cleared.
 - **Hover or focus shows a tooltip**: name, the description from the loc table, and for relics
   the one fact the game will not tell you — which pool it comes from and what gates it.
 - Relic icons are square art drawn to fit; card portraits are wide paintings, so they are

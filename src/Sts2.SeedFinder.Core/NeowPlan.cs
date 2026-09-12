@@ -130,7 +130,7 @@ public sealed class NeowPlan
         // else has touched yet.
         return NeowCardPayload.Offers(
             runSeed, slot, _characters[slot], item.Relic.Slug, _unlocksBySlot[slot],
-            item.WantedBySlot[slot]);
+            item.WantedBySlot[slot], _context.IsMultiplayer);
     }
 
     private bool OfferMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)
@@ -169,7 +169,8 @@ public sealed class NeowPlan
 
             var character = criteria.Characters[slot];
             rows[slot] = want.Cards
-                .Select(c => NeowCardPayload.TypeIdOf(character, criteria.UnlocksFor(slot), c))
+                .Select(c => NeowCardPayload.TypeIdOf(
+                    character, criteria.UnlocksFor(slot), c, criteria.IsMultiplayer))
                 .ToArray();
         }
         return rows;

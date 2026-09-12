@@ -409,7 +409,13 @@ public static class SaveVerifier
                     revealed.Add(id);
             }
         }
-        return UnlockState.FromRevealedEpochs(revealed);
+        // ACT.OVERGROWTH -> OVERGROWTH. Matched case-insensitively downstream, since the save's
+        // form and the act table's differ only in case.
+        var discovered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (doc.RootElement.TryGetProperty("discovered_acts", out var da) && da.ValueKind == JsonValueKind.Array)
+            foreach (var a in da.EnumerateArray())
+                if (a.GetString() is { Length: > 0 } id) discovered.Add(id[(id.IndexOf('.') + 1)..]);
+        return UnlockState.FromRevealedEpochs(revealed) with { DiscoveredActs = discovered };
     }
 
     private static bool TryGetIgnoreCase(JsonElement obj, string name, out JsonElement value)

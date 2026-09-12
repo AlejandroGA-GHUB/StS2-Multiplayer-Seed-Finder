@@ -84,7 +84,7 @@ public sealed class GpuSeedScan : IDisposable
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _noInts;
     private readonly MemoryBuffer1D<ulong, Stride1D.Dense> _noULongs;
 
-    private ActFilterView EmptyActs => new(_noInts.View, _noInts.View, _noBytes.View);
+    private ActFilterView EmptyActs => new(_noInts.View, _noInts.View, _noBytes.View, _noInts.View);
 
     private NeowPrefilterView EmptyNeow => new(_noInts.View, _noInts.View);
 
@@ -97,7 +97,7 @@ public sealed class GpuSeedScan : IDisposable
     private RunFilterView EmptyRun => new(
         _noInts.View, _noInts.View, _noInts.View, _noULongs.View,
         _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View,
-        _noInts.View);
+        _noInts.View, _noInts.View);
 
     /// <summary>
     /// <paramref name="hitCapacity"/> is settable only so the verifier can force the overflow

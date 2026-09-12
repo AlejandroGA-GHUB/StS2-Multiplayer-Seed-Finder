@@ -82,14 +82,16 @@ public sealed class GpuCardPools : IDisposable
     public CardPoolView View => new(
         _rarity.View, _typeId.View, _group.View, _groupStart.View, _groupCount.View, _poolBase.View);
 
-    public GpuCardPools(Accelerator accelerator, IReadOnlyList<Character> characters, UnlockState? unlocks)
+    public GpuCardPools(
+        Accelerator accelerator, IReadOnlyList<Character> characters, UnlockState? unlocks,
+        bool isMultiplayer = true)
     {
         // Distinct pools only. A co-op lobby of two Ironclads is one pool, not two.
         var pools = new List<CardEntry[]>();
         PoolOfSlot = new int[characters.Count];
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            var pool = CardRewardGenerator.PoolFor(characters[slot], unlocks);
+            var pool = CardRewardGenerator.PoolFor(characters[slot], unlocks, isMultiplayer);
             int existing = pools.FindIndex(p => ReferenceEquals(p, pool));
             if (existing < 0) { existing = pools.Count; pools.Add(pool); }
             PoolOfSlot[slot] = existing;

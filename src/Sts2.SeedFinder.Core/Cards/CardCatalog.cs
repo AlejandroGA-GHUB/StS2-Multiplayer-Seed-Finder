@@ -30,8 +30,10 @@ public static class CardCatalog
     public static readonly CardRarity[] FirstFightRarities = [CardRarity.Common, CardRarity.Uncommon];
 
     /// <summary>Every card the first fight could offer this character, in pool order.</summary>
-    public static IEnumerable<CardEntry> FirstFightOfferable(Character character, UnlockState? unlocks = null) =>
-        CardRewardGenerator.PoolFor(character, unlocks).Where(c => FirstFightRarities.Contains(c.Rarity));
+    public static IEnumerable<CardEntry> FirstFightOfferable(
+        Character character, UnlockState? unlocks = null, bool isMultiplayer = true) =>
+        CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer)
+            .Where(c => FirstFightRarities.Contains(c.Rarity));
 
     /// <summary>"StrikeIronclad" -> "strike_ironclad". The game's own id form.</summary>
     public static string Slug(string typeName) => GameHash.SnakeCase(typeName);
@@ -54,14 +56,17 @@ public static class CardCatalog
     /// dropped: a rarity roll only ever yields Common, Uncommon or Rare, so nothing else is
     /// reachable even though it sits in the pool.
     /// </summary>
-    public static IEnumerable<CardEntry> Offerable(Character character, UnlockState? unlocks = null) =>
-        CardRewardGenerator.PoolFor(character, unlocks).Where(c => RewardRarities.Contains(c.Rarity));
+    public static IEnumerable<CardEntry> Offerable(
+        Character character, UnlockState? unlocks = null, bool isMultiplayer = true) =>
+        CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer)
+            .Where(c => RewardRarities.Contains(c.Rarity));
 
     /// <summary>Resolve a user-typed name or slug against one character's offerable cards.</summary>
-    public static string? Find(Character character, string nameOrSlug, UnlockState? unlocks = null)
+    public static string? Find(
+        Character character, string nameOrSlug, UnlockState? unlocks = null, bool isMultiplayer = true)
     {
         var wanted = Normalize(nameOrSlug);
-        return Offerable(character, unlocks)
+        return Offerable(character, unlocks, isMultiplayer)
             .Select(c => c.TypeName)
             .FirstOrDefault(t => Normalize(Slug(t)) == wanted || Normalize(t) == wanted);
     }

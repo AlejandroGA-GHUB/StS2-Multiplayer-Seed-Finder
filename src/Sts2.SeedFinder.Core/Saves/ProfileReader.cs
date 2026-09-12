@@ -88,7 +88,7 @@ public static class ProfileReader
                 foreach (var a in da.EnumerateArray())
                     if (Entry(a.GetString()) is { Length: > 0 } name) acts.Add(name);
 
-            var unlocks = UnlockState.FromRevealedEpochs(revealed) with { DiscoveredActs = acts.ToHashSet() };
+            var unlocks = UnlockState.FromRevealedEpochs(revealed) with { DiscoveredActs = acts.ToHashSet(StringComparer.OrdinalIgnoreCase) };
             return new ProfileInfo(path, unlocks, revealed.Count, total, acts);
         }
     }

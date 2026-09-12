@@ -31,7 +31,9 @@ public static class GpuVerifyCards
         int fight,
         int[]? priorDraws = null)
     {
-        using var pools = new GpuCardPools(engine.Accelerator, characters, unlocks);
+        // A lone character is a solo run, which is the whole of what decides the pool.
+        bool isMultiplayer = characters.Count > 1;
+        using var pools = new GpuCardPools(engine.Accelerator, characters, unlocks, isMultiplayer);
 
         // A card each player can actually be offered: the first Common in that slot's pool.
         // Commons are the likeliest rarity, so the criterion is dense enough that a range this
@@ -39,7 +41,7 @@ public static class GpuVerifyCards
         var wanted = new string[characters.Count];
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            var pool = CardRewardGenerator.PoolFor(characters[slot], unlocks);
+            var pool = CardRewardGenerator.PoolFor(characters[slot], unlocks, isMultiplayer);
             wanted[slot] = pool.First(e => e.Rarity == CardRarity.Common).TypeName;
         }
 
@@ -105,7 +107,8 @@ public static class GpuVerifyCards
             for (int slot = 0; slot < characters.Count && want; slot++)
             {
                 var rewards = CardRewardGenerator.Hallway(
-                    runSeed, slot, characters[slot], fight, ascension, unlocks, draws[slot]);
+                    runSeed, slot, characters[slot], fight, ascension, unlocks, draws[slot],
+                    isMultiplayer);
                 want = rewards.Fight(fight)?.Cards.Any(c => c.TypeName == wanted[slot]) == true;
             }
 
@@ -145,7 +148,9 @@ public static class GpuVerifyCards
         int picks = NeowCardPayload.CardCount(relicSlug);
         if (picks == 0) return new GpuCheck($"payload {relicSlug}", false, "relic has no modelled payload");
 
-        using var pools = new GpuCardPools(engine.Accelerator, characters, unlocks);
+        // A lone character is a solo run, which is the whole of what decides the pool.
+        bool isMultiplayer = characters.Count > 1;
+        using var pools = new GpuCardPools(engine.Accelerator, characters, unlocks, isMultiplayer);
 
         // The first rare in pool order. Dense enough over a range this size to produce matches
         // for the two sides to disagree about: one pick in ~27 for a full pool.
@@ -157,7 +162,7 @@ public static class GpuVerifyCards
 
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            wanted[slot] = NeowCardPayload.Offerable(characters[slot], unlocks).First().TypeName;
+            wanted[slot] = NeowCardPayload.Offerable(characters[slot], unlocks, isMultiplayer).First().TypeName;
             critSlot[slot] = slot;
             critFight[slot] = 0;                 // 0 marks a payload criterion
             critType[slot] = pools.TypeIdOf(wanted[slot]);
@@ -211,7 +216,7 @@ public static class GpuVerifyCards
             bool want = true;
             for (int slot = 0; slot < characters.Count && want; slot++)
                 want = NeowCardPayload
-                    .Generate(runSeed, slot, characters[slot], relicSlug, unlocks)
+                    .Generate(runSeed, slot, characters[slot], relicSlug, unlocks, isMultiplayer)
                     .Any(c => c.TypeName == wanted[slot]);
 
             if (want) matches++;

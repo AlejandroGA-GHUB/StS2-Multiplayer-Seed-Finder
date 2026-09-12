@@ -58,14 +58,16 @@ public sealed class GpuSearchPlanner : IDisposable
         public required MemoryBuffer1D<int, Stride1D.Dense> CandidateCount { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> Offset { get; init; }
         public required MemoryBuffer1D<byte, Stride1D.Dense> Accept { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> Forced { get; init; }
 
-        public ActFilterView View => new(CandidateCount.View, Offset.View, Accept.View);
+        public ActFilterView View => new(CandidateCount.View, Offset.View, Accept.View, Forced.View);
 
         public void Dispose()
         {
             CandidateCount.Dispose();
             Offset.Dispose();
             Accept.Dispose();
+            Forced.Dispose();
         }
     }
 
@@ -147,7 +149,7 @@ public sealed class GpuSearchPlanner : IDisposable
         // still needing full run generation on the CPU.
         var actParams = default(ActFilterParams);
         ActResources? actResources = null;
-        if (ActFilterFactory.TryBuild(criteria, out var counts, out var offsets, out var accept))
+        if (ActFilterFactory.TryBuild(criteria, out var counts, out var offsets, out var accept, out var forced))
         {
             var acc0 = _engine.Accelerator;
             actResources = new ActResources
@@ -155,6 +157,7 @@ public sealed class GpuSearchPlanner : IDisposable
                 CandidateCount = acc0.Allocate1D(counts),
                 Offset = acc0.Allocate1D(offsets),
                 Accept = acc0.Allocate1D(accept),
+                Forced = acc0.Allocate1D(forced),
             };
             actParams = new ActFilterParams
             {
@@ -218,7 +221,8 @@ public sealed class GpuSearchPlanner : IDisposable
         int n = criteria.Cards.Count + payloads.Sum(x => x.Cards.Count);
         if (n > 32) return null;
 
-        var pools = new GpuCardPools(_engine.Accelerator, criteria.Characters, criteria.Unlocks);
+        var pools = new GpuCardPools(
+            _engine.Accelerator, criteria.Characters, criteria.Unlocks, criteria.IsMultiplayer);
 
         var slot = new int[n];
         var fight = new int[n];

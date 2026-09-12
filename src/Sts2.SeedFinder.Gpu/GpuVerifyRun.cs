@@ -96,7 +96,7 @@ public static class GpuVerifyRun
         // fully-unlocked reference against a kernel that was correctly honouring a mixed lobby,
         // and report the kernel as broken for being right.
         var run = RunGenerator.GenerateRun(
-            runSeed, criteria.Unlocks, isMultiplayer: true, criteria.Characters,
+            runSeed, criteria.Unlocks, criteria.IsMultiplayer, criteria.Characters,
             acts: null, criteria.Ascension, withShopRelics: criteria.NeedsShopRelics,
             playerUnlocks: criteria.PlayerUnlocks);
 

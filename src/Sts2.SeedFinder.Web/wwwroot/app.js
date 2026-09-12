@@ -102,7 +102,18 @@ function bossSlots(act) {
 /** The maps this act could still draw. One entry unless Act 1 is left on "Either". */
 function mapsFor(act) {
   const maps = catalog.actContent.find(c => c.act === act).maps;
+  const forced = soloForcedMap(act);
+  if (forced) return maps.filter(m => m === forced);
   return act === 1 && state.act1 !== 'any' ? maps.filter(m => m === state.act1) : maps;
+}
+
+/**
+ * The map a solo run on this profile is given for this act without a roll, or null. Only ever
+ * set for a non-default act the profile has never played, which today means Underdocks. Comes
+ * from the server, which applies the same rule the search does.
+ */
+function soloForcedMap(act) {
+  return state.players === 1 ? (myProfile?.soloForcedActs?.[act - 1] ?? null) : null;
 }
 
 function reachable(list, act) {
@@ -787,7 +798,7 @@ const INFO = {
   chests: {
     title: 'Treasure chest',
     body: () => [
-      { lead: 'One chest per act, at co-op floors 9, 24 and 38, and no route skips it. It puts one '
+      { lead: 'One chest per act, at floors 9, 24 and 38 in co-op or 10, 26 and 41 solo, and no route skips it. It puts one '
             + 'relic per player on the table and the whole party votes, so this asks what is in '
             + 'the chest, not who gets it.' },
       'The rarity is exact. The relic itself assumes nobody has pulled one out of the shared bag '
@@ -1839,7 +1850,9 @@ function syncActAvailability() {
   for (const box of ['#ancients', '#bosses', '#events'])
     // Dropdowns are <button>s, which is half the reason they are: one selector disables
     // every control in the panel, including them, with no special case.
-    for (const s of $(box).querySelectorAll('button, input')) s.disabled = !ok;
+    // A control locked for its own reason, like a solo slot rule, stays locked when the panel
+    // as a whole is enabled.
+    for (const s of $(box).querySelectorAll('button, input')) s.disabled = !ok || s.dataset.locked === '1';
 
   // How each of these works is behind the ? on its header now. The gate is not: "you cannot use
   // this yet" is about the state of the form, and hiding it would leave three dead panels with no
@@ -1858,7 +1871,10 @@ function syncActAvailability() {
 /** The card list for whoever is in this slot, or an empty list until they pick a character. */
 function cardPoolFor(slot) {
   const c = state.characters[slot];
-  return (c && catalog.cardPools.find(p => p.character === c)?.cards) || [];
+  const cards = (c && catalog.cardPools.find(p => p.character === c)?.cards) || [];
+  // A solo run strips the five multiplayer-only cards per character, so none of them can be asked
+  // for, and none can turn up in a reward or as a Specialized pick.
+  return state.players === 1 ? cards.filter(card => !card.multiplayerOnly) : cards;
 }
 
 /**
@@ -1950,7 +1966,7 @@ function renderCards() {
       : [
           { label: 'Nothing that draws cards', value: '' },
           ...(catalog.neowCardRelics ?? [])
-            .filter(r => r.draws > 0)
+            .filter(r => r.draws > 0 && allowedHere(r))
             .map(r => ({
               label: `${r.name} (${pickDraws(i, r.slug)} draw${pickDraws(i, r.slug) === 1 ? '' : 's'})`,
               value: r.slug,
@@ -2432,6 +2448,8 @@ function renderAncients() {
         label: `${a.name} (Act ${a.acts.join(' or ')})`,
         value: a.id,
         icon: () => iconFor(a.id.toLowerCase(), a.name, 20, 'ancient'),
+        // Greyed when it could not share a run with the other rows, e.g. a second Act 2 Ancient.
+        disabled: !ancientsFit([...state.ancients.filter((_, i) => i !== idx).map(x => x.ancient), a.id]),
       })),
       crit.ancient,
       v => { crit.ancient = v; crit.relic = ''; renderAncients(); });
@@ -2468,8 +2486,11 @@ function renderAncients() {
       // Shrinking the lobby can strand a selection on a player who no longer exists.
       if (!choices.some(o => o.value === crit.require)) crit.require = 'any';
 
+      if (state.players === 1) crit.require = 'p1';
+
       const req = dropdown(choices, crit.require, v => { crit.require = v; renderAncients(); });
       req.classList.add('span');
+      if (state.players === 1) { req.disabled = true; req.dataset.locked = '1'; req.title = 'A solo run has only P1.'; }
       row.appendChild(req);
     }
 
@@ -2483,6 +2504,22 @@ function renderAncients() {
     box.appendChild(row);
   });
   syncActAvailability();
+  // Nothing left that could share a run with the rows already there.
+  if (!catalog.ancients.some(a => ancientsFit([...state.ancients.map(x => x.ancient), a.id])))
+    $('#addAncient').disabled = true;
+}
+
+/**
+ * Whether these Ancients can all turn up in one run. Each act opens with exactly one, so every
+ * DIFFERENT Ancient needs an act of its own. Darv can take Act 2 or 3, which is why this tries the
+ * assignments rather than just looking for two on the same act. Mirrors ValidateAncientActs.
+ */
+function ancientsFit(ids) {
+  const unique = [...new Set(ids)];
+  const actsOf = id => catalog.ancients.find(a => a.id === id)?.acts ?? [];
+  const place = (i, used) => i === unique.length
+    || actsOf(unique[i]).some(act => !used.has(act) && place(i + 1, new Set([...used, act])));
+  return place(0, new Set());
 }
 
 // ---- Results -------------------------------------------------------------------------------
@@ -3055,7 +3092,7 @@ async function loadCurrentRun() {
 
   // Copy the lobby BEFORE the seed: changing the player count rebuilds every per-player
   // control, and doing it afterwards would discard what we just set.
-  if (lobby.characters?.length >= 2) {
+  if (lobby.characters?.length >= 1) {
     const n = Math.min(lobby.characters.length, 4);
     state.players = n;
     renderPlayers();
@@ -3069,14 +3106,6 @@ async function loadCurrentRun() {
 
   $('#inspectSeed').value = lobby.seed;
   await inspect();
-
-  // A solo run generates differently — one more room per act, and singleplayer force-picks
-  // undiscovered acts before the roll. So the acts below are the CO-OP reading of that seed and
-  // will not match what that player is actually seeing. Said after inspect(), which sets its own
-  // status line.
-  if (!lobby.isMultiplayer)
-    setBusy(false, 'That run is singleplayer. Acts and bosses here are the co-op reading of the '
-      + 'seed and will not match it.');
 }
 
 $('#fromRun').onclick = loadCurrentRun;
@@ -3087,12 +3116,21 @@ $('#players').onclick = e => {
   const b = e.target.closest('button[data-n]');
   if (!b) return;
   state.players = +b.dataset.n;
+  // An import belongs to a lobby slot, so shrinking the lobby drops the ones past its end rather
+  // than sending a partner the server has no slot for.
+  state.epochs.length = state.players;
+  renderEpochButton();
   renderPlayers();
   // Every per-player control has to be rebuilt, not just the character list — each Neow row
   // and each Ancient row also enumerate player slots.
   renderNeow();
   renderCharacters();
   renderAncients();
+  // Solo can force Act 1's map, which narrows what the boss and event pickers may offer.
+  renderAct1();
+  pruneForMap();
+  renderBosses();
+  renderEvents();
 };
 
 /** Fills one of the fixed hosts in index.html with a dropdown. */
@@ -3116,9 +3154,19 @@ const BRANCH_NOTE = {
   coinflip: ['Coin-flip pair', 'a coin flip decides which of its pair joins the positive pool'],
 };
 
-/** Every relic Neow can offer, across all three branches. */
+/**
+ * Whether a relic can exist in a lobby of this size. Silver Crucible and Winged Boots only appear
+ * solo and Massive Scroll only in co-op. The catalog tags them instead of filtering, because the
+ * lobby size is chosen after it loads.
+ */
+function allowedHere(item) {
+  if (!item?.mode) return true;
+  return item.mode === (state.players === 1 ? 'singleplayer' : 'multiplayer');
+}
+
+/** Every relic Neow can offer this lobby, across all three branches. */
 function neowCatalog() {
-  return [...catalog.neowCurses, ...catalog.neowPositives, ...catalog.neowCoinFlip];
+  return [...catalog.neowCurses, ...catalog.neowPositives, ...catalog.neowCoinFlip].filter(allowedHere);
 }
 
 /**
@@ -3175,15 +3223,18 @@ function renderNeow() {
   state.neow.forEach((crit, idx) => {
     const row = el('div', 'ancient-row relic-first');
 
+    // Changing the lobby size can strand a relic that only exists in the other kind of run.
+    if (crit.relic && !neowCatalog().some(r => r.slug === crit.relic)) { crit.relic = ''; crit.cards = []; }
+
     const chosen = crit.relic ? neowCatalog().find(r => r.slug === crit.relic) ?? null : null;
 
     const what = fillRelicField(newRelicField(), chosen, 'Any relic');
     what.onclick = async e => {
       if (e.target.dataset.clear) { crit.relic = ''; renderNeow(); return; }
       const picked = await openPicker('Neow offers…', [
-        { title: 'Curse branch: take a curse to get it', items: catalog.neowCurses },
-        { title: 'Positive pool', items: catalog.neowPositives },
-        { title: 'Coin-flip pairs: one of each pair joins the pool', items: catalog.neowCoinFlip },
+        { title: 'Curse branch: take a curse to get it', items: catalog.neowCurses.filter(allowedHere) },
+        { title: 'Positive pool', items: catalog.neowPositives.filter(allowedHere) },
+        { title: 'Coin-flip pairs: one of each pair joins the pool', items: catalog.neowCoinFlip.filter(allowedHere) },
       ]);
       if (picked) { crit.relic = picked.slug; crit.cards = []; renderNeow(); renderCards(); }
     };
@@ -3206,8 +3257,13 @@ function renderNeow() {
       // Shrinking the lobby can strand a selection on a player who no longer exists.
       if (!choices.some(o => o.value === crit.require)) crit.require = 'any';
 
+      // Alone, "any", "every" and "P1" all mean the same player. Pinning it to P1 is the one that
+      // also tells the card panel whose rewards a card-granting relic moves.
+      if (state.players === 1) crit.require = 'p1';
+
       const req = dropdown(choices, crit.require, v => { crit.require = v; renderNeow(); renderCards(); });
       req.classList.add('span');
+      if (state.players === 1) { req.disabled = true; req.dataset.locked = '1'; req.title = 'A solo run has only P1.'; }
       row.appendChild(req);
     }
 
@@ -3297,6 +3353,21 @@ function renderNeow() {
 }
 
 function renderAct1() {
+  const forced = soloForcedMap(1);
+  const hint = $('#act1Hint');
+  hint.hidden = !forced;
+  if (forced) {
+    // Nothing to choose: the game decides this one before it rolls, so the control states it.
+    state.act1 = 'any';
+    mount('#act1', [{ label: forced, value: 'any' }], 'any', () => {});
+    const box = $('#act1').firstElementChild;
+    box.disabled = true;
+    box.title = `Solo runs on this profile always start on ${forced}.`;
+    hint.textContent = `Solo runs on this profile always start on ${forced}. The game hands you an act `
+      + 'you have never played before it rolls, so the other map is only possible once you have '
+      + `played ${forced}.`;
+    return;
+  }
   mount('#act1',
     [{ label: 'Either', value: 'any' }, ...catalog.act1Maps.map(m => ({ label: m, value: m }))],
     state.act1,
@@ -3317,7 +3388,10 @@ $('#addNeow').onclick = () => {
 };
 
 $('#addAncient').onclick = () => {
-  state.ancients.push({ ancient: catalog.ancients[0].id, relic: '', require: 'any' });
+  // The first Ancient that can still share a run with the existing rows.
+  const fits = catalog.ancients.find(a => ancientsFit([...state.ancients.map(x => x.ancient), a.id]));
+  if (!fits) return;
+  state.ancients.push({ ancient: fits.id, relic: '', require: 'any' });
   renderAncients();
 };
 
@@ -3482,6 +3556,11 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
   fetch('/api/profile').then(r => r.json()).then(p => {
     myProfile = p;
     renderEpochSlots();
+    // The forced solo map is only known once the profile has been read.
+    renderAct1();
+    pruneForMap();
+    renderBosses();
+    renderEvents();
     const meta = $('#meta');
     if (!p.found) { meta.textContent += ' · no save found, assuming all unlocked'; return; }
     meta.textContent += p.fullyUnlocked
@@ -3503,6 +3582,8 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
 function renderPlayers() {
   for (const b of $('#players').children)
     b.setAttribute('aria-pressed', String(+b.dataset.n === state.players));
+  // A solo run has nobody else's unlocks to bring in.
+  $('#epochBtn').closest('.row').hidden = state.players === 1;
 }
 
 /**

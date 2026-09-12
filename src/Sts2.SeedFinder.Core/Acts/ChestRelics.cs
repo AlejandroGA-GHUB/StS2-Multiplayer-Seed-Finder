@@ -133,6 +133,21 @@ public static class ChestRelics
     public static readonly int[] MultiplayerFloors = { 9, 24, 38 };
 
     /// <summary>
+    /// The solo floor of each act's chest. A solo act is one room longer, which moves the chest
+    /// row up one and pushes every later act back by the floors before it. Act 3's is the other
+    /// half of the same game constant: <c>IsBeforeAct3TreasureChest</c> tests 41 when
+    /// <c>Players.Count</c> is 1.
+    /// </summary>
+    public static readonly int[] SingleplayerFloors = { 10, 26, 41 };
+
+    /// <summary>The floor of act <paramref name="actIndex"/>'s chest, or 0 past the last act.</summary>
+    public static int FloorOf(int actIndex, bool isMultiplayer)
+    {
+        var floors = isMultiplayer ? MultiplayerFloors : SingleplayerFloors;
+        return (uint)actIndex < (uint)floors.Length ? floors[actIndex] : 0;
+    }
+
+    /// <summary>
     /// Relics whose <c>IsAllowed</c> is <c>IsBeforeAct3TreasureChest</c>, and which therefore leave
     /// the deques for good once the party reaches the Act 3 chest. <c>RemoveDisallowedRelicsFromDeques</c>
     /// runs before every pull, so this is a filter on the deque, not a skip of one entry.

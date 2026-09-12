@@ -1,10 +1,11 @@
-v1.x.x
+v1.5.1
 
-Release Date: x/x/2026
+Release Date: 9/12/2026
 
 v0.111.0 beta steam release 
 
 # CHANGELOG
 
-
-
+1. Singleplayer support. The lobby now takes 1 to 4 players, with full support for single player seed finding. Main reason this was
+implemented whereas before I referenced other tools for single player, is that I've implemented modifier support in the form of "Specialized"
+being in the tool, and plan to add more which is fully unique to this tool as of now. 

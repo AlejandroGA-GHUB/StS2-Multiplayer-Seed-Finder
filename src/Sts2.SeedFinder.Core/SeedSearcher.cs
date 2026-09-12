@@ -516,6 +516,13 @@ public sealed record SearchCriteria
     public int SeedLength { get; init; } = SeedCodec.DefaultLength;
 
     public int PlayerCount => Context.PlayerCount;
+
+    /// <summary>
+    /// Whether this lobby is a multiplayer run, which the game decides from player count alone.
+    /// Every generation call reads this rather than assuming, because the two modes differ in act
+    /// selection, act length, the card pools and the Neow relic pool.
+    /// </summary>
+    public bool IsMultiplayer => Context.IsMultiplayer;
 }
 
 /// <summary>
@@ -625,7 +632,7 @@ public static class SeedSearcher
             var offered = new HallwayRewards?[playerCount];
             HallwayRewards For(int slot) => offered[slot] ??= CardRewardGenerator.Hallway(
                 runSeed, slot, criteria.Characters[slot], deepest, criteria.Ascension,
-                criteria.UnlocksFor(slot), priorDraws[slot]);
+                criteria.UnlocksFor(slot), priorDraws[slot], criteria.IsMultiplayer);
 
             bool Offers(int slot, CardCriterion want) =>
                 For(slot).Fight(want.Fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
@@ -694,7 +701,7 @@ public static class SeedSearcher
             bool Starts(int slot, SpecializedCriterion want) =>
                 SpecializedPayload.Predict(
                     runSeed, slot, criteria.Characters[slot], criteria.UnlocksFor(slot),
-                    isMultiplayer: true, specializedPrior)?.TypeName == want.Card;
+                    criteria.IsMultiplayer, specializedPrior)?.TypeName == want.Card;
 
             foreach (var want in criteria.Specialized)
             {
@@ -718,7 +725,7 @@ public static class SeedSearcher
             for (int slot = 0; slot < playerCount; slot++)
                 cards[slot] = SpecializedPayload.Predict(
                     runSeed, slot, criteria.Characters[slot], criteria.UnlocksFor(slot),
-                    isMultiplayer: true, prior)?.TypeName;
+                    criteria.IsMultiplayer, prior)?.TypeName;
             return cards;
         }
 
@@ -749,7 +756,7 @@ public static class SeedSearcher
             if (!criteria.NeedsRun) return null;
 
             var run = RunGenerator.GenerateRun(
-                runSeed, criteria.Unlocks, isMultiplayer: true, criteria.Characters, acts,
+                runSeed, criteria.Unlocks, criteria.IsMultiplayer, criteria.Characters, acts,
                 criteria.Ascension, criteria.NeedsShopRelics,
                 playerUnlocks: criteria.PlayerUnlocks,
                 withChestRelics: criteria.NeedsChestRelics,
@@ -866,7 +873,7 @@ public static class SeedSearcher
                     ActDefinition[]? acts = null;
                     if (criteria.Act1 is not null || criteria.NeedsRun)
                     {
-                        acts = RunGenerator.SelectActs(runSeed, criteria.Unlocks, isMultiplayer: true);
+                        acts = RunGenerator.SelectActs(runSeed, criteria.Unlocks, criteria.IsMultiplayer);
                         if (criteria.Act1 is not null
                             && !acts[0].Name.Equals(criteria.Act1, StringComparison.OrdinalIgnoreCase)) return;
                         if (!MapsCouldSatisfy(acts)) return;
@@ -985,6 +992,18 @@ public static class SeedSearcher
                 $"'{c.Act1}' is not an Act 1 map. Choose one of: " +
                 string.Join(", ", ActData.ByIndex[0].Select(a => a.Name)));
 
+        // A solo profile that has never seen a non-default Act 1 map is given that map outright,
+        // so asking for the other one can never match.
+        if (c.Act1 is not null && RunGenerator.ForcedCandidate(0, c.Unlocks, c.IsMultiplayer) is var forcedAct1
+            && forcedAct1 >= 0
+            && !ActData.ByIndex[0][forcedAct1].Name.Equals(c.Act1, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(
+                $"A solo run on this profile always starts on {ActData.ByIndex[0][forcedAct1].Name}: the game "
+                + "hands you an act you have never played before it rolls, so Act 1 cannot be "
+                + $"{c.Act1} until you have seen {ActData.ByIndex[0][forcedAct1].Name} once.");
+
+        ValidateAncientActs(c);
+
         if (c.Ascension < 0 || c.Ascension > AscensionLevels.Max)
             throw new ArgumentException(
                 $"ascension {c.Ascension} is not a level; use 0-{AscensionLevels.Max}.");
@@ -1099,13 +1118,13 @@ public static class SeedSearcher
             foreach (int slot in slots)
             {
                 if (slot >= c.Characters.Count) continue;
-                var pool = SpecializedPayload.Pool(c.Characters[slot], c.UnlocksFor(slot));
+                var pool = SpecializedPayload.Pool(c.Characters[slot], c.UnlocksFor(slot), c.IsMultiplayer);
                 if (pool.Any(e => e.TypeName == want.Card)) continue;
 
                 // "Any player" is only impossible when NOBODY could be given it, so keep
                 // looking before rejecting.
                 if (want.Slot < 0 && slots.Any(o => o != slot && o < c.Characters.Count
-                        && SpecializedPayload.Pool(c.Characters[o], c.UnlocksFor(o))
+                        && SpecializedPayload.Pool(c.Characters[o], c.UnlocksFor(o), c.IsMultiplayer)
                             .Any(e => e.TypeName == want.Card)))
                     break;
 
@@ -1158,13 +1177,13 @@ public static class SeedSearcher
                     s < c.Characters.Count && pool(c.Characters[s], c.UnlocksFor(s)).Any(e => e.TypeName == card);
 
                 bool reachable = everySlot
-                    ? slots.Count > 0 && slots.All(s => Holds(s, NeowCardPayload.Offerable))
-                    : slots.Any(s => Holds(s, NeowCardPayload.Offerable));
+                    ? slots.Count > 0 && slots.All(s => Holds(s, (ch, u) => NeowCardPayload.Offerable(ch, u, c.IsMultiplayer)))
+                    : slots.Any(s => Holds(s, (ch, u) => NeowCardPayload.Offerable(ch, u, c.IsMultiplayer)));
                 if (reachable) continue;
 
                 // Split apart because the two are different mistakes: a card from the wrong
                 // character's pool, and a card of the wrong rarity entirely.
-                bool inSomePool = slots.Any(s => Holds(s, CardCatalog.Offerable));
+                bool inSomePool = slots.Any(s => Holds(s, (ch, u) => CardCatalog.Offerable(ch, u, c.IsMultiplayer)));
 
                 throw new ArgumentException(inSomePool && !everySlot
                     ? $"{want.Relic.Name} only ever gives Rares, and {CardCatalog.Display(card)} is not one."
@@ -1483,8 +1502,10 @@ public static class SeedSearcher
                       "Double Boss (Ascension 10) gives the final act two."
                     : $"Act {act} has {slots} bosses, so it cannot be all {include.Count} of those.");
 
-            // Maps this act could draw, once the Act 1 choice is honoured.
+            // Maps this act could draw, once the Act 1 choice and any solo forced act are honoured.
+            int forced = RunGenerator.ForcedCandidate(act - 1, c.Unlocks, c.IsMultiplayer);
             var maps = ActData.ByIndex[act - 1]
+                .Where((m, j) => forced < 0 || j == forced)
                 .Where(m => act != 1 || c.Act1 is null || m.Name.Equals(c.Act1, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
@@ -1506,12 +1527,53 @@ public static class SeedSearcher
             var asked = include.Select(ActCatalog.Display)
                 .Concat(exclude.Select(b => "not " + ActCatalog.Display(b)))
                 .Concat(events.Select(e => ActCatalog.Display(e.Event)));
-            var pinned = act == 1 && c.Act1 is not null ? maps[0].Name : null;
+            var pinned = (act == 1 && c.Act1 is not null) || forced >= 0 ? maps[0].Name : null;
             throw new ArgumentException(
                 $"no Act {act} map has all of {string.Join(", ", asked)}" +
                 (pinned is null ? "" : $" on the {pinned}") + ", so no seed can match." +
                 (act == 1 ? " Act 1's two maps share neither bosses nor most events." : ""));
         }
+    }
+
+    /// <summary>
+    /// Every act has exactly one Ancient, so two different Ancients that can only open the same
+    /// act can never appear together. Darv can open Act 2 or Act 3, which makes this an assignment
+    /// rather than a clash check: Darv beside Orobas is fine (Darv takes Act 3), Darv beside
+    /// Orobas and Vakuu is not. Two rows naming the SAME Ancient are fine, since one Ancient can
+    /// answer both.
+    /// </summary>
+    private static void ValidateAncientActs(SearchCriteria c)
+    {
+        var distinct = c.Ancients.Select(a => a.Ancient).Distinct().ToList();
+        if (distinct.Count < 2) return;
+
+        List<int> ActsOf(Ancient ancient)
+        {
+            var name = ancient.ToString();
+            var acts = new List<int>();
+            for (int i = 0; i < ActData.ByIndex.Length; i++)
+            {
+                // Shared Ancients are handed to every act after the first.
+                bool own = ActData.ByIndex[i].Any(d => d.Ancients.Contains(name, StringComparer.OrdinalIgnoreCase));
+                bool shared = i > 0 && ActData.SharedAncients.Contains(name, StringComparer.OrdinalIgnoreCase);
+                if (own || shared) acts.Add(i + 1);
+            }
+            return acts;
+        }
+
+        var options = distinct.Select(ActsOf).ToList();
+        bool Place(int i, int usedMask)
+        {
+            if (i == options.Count) return true;
+            foreach (int act in options[i])
+                if ((usedMask & (1 << act)) == 0 && Place(i + 1, usedMask | (1 << act))) return true;
+            return false;
+        }
+
+        if (!Place(0, 0))
+            throw new ArgumentException(
+                $"{string.Join(" and ", distinct)} cannot all appear in one run. Each act opens with "
+                + "exactly one Ancient, and there are not enough acts for these to have one each.");
     }
 
     /// <summary>
@@ -1529,7 +1591,7 @@ public static class SeedSearcher
 
             // "Any player" only needs SOMEONE who could be offered it.
             var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
-            if (slots.Any(s => CardCatalog.Offerable(c.Characters[s], c.UnlocksFor(s))
+            if (slots.Any(s => CardCatalog.Offerable(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer)
                     .Any(e => e.TypeName == want.Card)))
                 continue;
 
@@ -1547,7 +1609,7 @@ public static class SeedSearcher
         foreach (var want in c.Cards.Where(w => !CardRewardGenerator.CanOfferRare(w.Fight)))
         {
             var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
-            if (slots.Any(s => CardCatalog.FirstFightOfferable(c.Characters[s], c.UnlocksFor(s))
+            if (slots.Any(s => CardCatalog.FirstFightOfferable(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer)
                     .Any(e => e.TypeName == want.Card)))
                 continue;
 

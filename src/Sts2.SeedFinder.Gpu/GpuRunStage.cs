@@ -25,6 +25,7 @@ public sealed class GpuRunStage : IDisposable
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _eventStartIndex;
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _ancientCriteria;
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _shopProbes;
+    private readonly MemoryBuffer1D<int, Stride1D.Dense> _forced;
 
     /// <summary>The scalars, ready to hand to a kernel launch.</summary>
     public RunFilterParams RunParams { get; }
@@ -35,7 +36,7 @@ public sealed class GpuRunStage : IDisposable
     public RunFilterView View => new(
         _candidateCount.View, _candidateOffset.View, _info.View, _conflict.View, _bossId.View,
         _ancientId.View, _bossCriteria.View, _eventCriteria.View, _eventStartIndex.View,
-        _ancientCriteria.View, _shopProbes.View);
+        _ancientCriteria.View, _shopProbes.View, _forced.View);
 
     /// <summary>The stage's views wrapped as a whole-kernel argument, for a run-only scan.</summary>
     public SeedFilterViews Views => new(default, default, default, default, View);
@@ -66,6 +67,7 @@ public sealed class GpuRunStage : IDisposable
         _eventStartIndex = acc.Allocate1D(NonEmpty(tables.EventStartIndex));
         _ancientCriteria = acc.Allocate1D(NonEmpty(tables.AncientCriteria));
         _shopProbes = acc.Allocate1D(NonEmpty(tables.ShopProbes));
+        _forced = acc.Allocate1D(tables.Forced);
     }
 
     private static int[] NonEmpty(int[] values) => values.Length > 0 ? values : new int[1];
@@ -83,5 +85,6 @@ public sealed class GpuRunStage : IDisposable
         _eventStartIndex.Dispose();
         _ancientCriteria.Dispose();
         _shopProbes.Dispose();
+        _forced.Dispose();
     }
 }
