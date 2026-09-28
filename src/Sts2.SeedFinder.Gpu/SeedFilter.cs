@@ -79,13 +79,42 @@ public static class SeedFilter
         ArrayView<int> counter)
     {
         long first = (long)idx.X * perThread;
+
+        // A base-34 odometer over the seed string, because this thread's seeds are consecutive.
+        // Building a string from scratch is twelve 64-bit divisions, which no GPU has an
+        // instruction for, and on a one-draw stage like the Neow curse that was most of the
+        // per-seed cost. Consecutive indices only differ in the LAST character until it wraps,
+        // so the full pack runs once per 34 seeds and every other seed rewrites one byte. The
+        // hash's first half reads only the first eight characters, so it is kept from the same
+        // pack. The bytes hashed are exactly the ones Pack produces; only how they are reached
+        // changed.
+        ulong prefix = 0;
+        uint hiHead = 0;                  // the last word's first three characters
+        int last = GpuSeedString.Radix;   // past the end, so the first seed packs in full
+
         for (int n = 0; n < perThread; n++)
         {
             long offset = first + n;
             if (offset >= total) return;
 
             ulong index = start + (ulong)offset;
-            ulong runSeed = GpuSeedString.RunSeed(index);
+
+            // Stepping from a last digit of 33 carries into the character before it, which is
+            // the one case the byte rewrite cannot express.
+            if (last >= GpuSeedString.Radix - 1)
+            {
+                GpuSeedString.Pack(index, out ulong lo, out uint hi);
+                prefix = GpuHash.Prefix(lo);
+                hiHead = hi & 0x00FFFFFFu;
+                last = (int)(index % GpuSeedString.Radix);
+            }
+            else
+            {
+                last++;
+            }
+
+            // The twelfth character is the top byte of the four-byte word, as Pack lays it out.
+            ulong runSeed = GpuHash.Finish(prefix, hiHead | ((uint)GpuSeedString.DigitToAscii(last) << 24));
 
             // Acts first: three draws and an array lookup, and it gates the criteria that would
             // otherwise need full run generation.

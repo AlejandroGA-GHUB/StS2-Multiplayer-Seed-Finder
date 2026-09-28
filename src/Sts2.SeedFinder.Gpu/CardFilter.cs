@@ -243,61 +243,113 @@ public static class CardFilter
                 }
             }
 
-            if (p.DeepestFight <= 0) continue;
+            // The fight walk is the whole cost of this stage, and it is only worth paying for a
+            // player some fight criterion can be answered by: one pinned to them, or one asking
+            // about anybody. A criterion aimed at P1 used to walk every player in the lobby.
+            if (p.DeepestFight > 0 && WalksFights(slot, p, criteria)
+                && !WalkFights(runSeed, slot, p, pools, criteria, pool, poolBase, ref satisfied))
+                return false;
 
-            var rng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
-
-            // Whatever that player's Neow pick already spent. Zero for the great majority of
-            // picks, and the whole reason the ten stream-drawing options need naming at all.
-            rng.Burn(criteria.PriorDraws[slot]);
-
-            float rarityOffset = BaseRarityOffset;
-            float potionOdds = BasePotionRewardOdds;
-
-            for (int fight = 1; fight <= p.DeepestFight; fight++)
-            {
-                bool hasPotion = rng.NextFloat() < potionOdds;
-                potionOdds += hasPotion ? -0.1f : 0.1f;
-
-                rng.Burn(1);                  // GoldReward.Populate
-                if (hasPotion) rng.Burn(2);   // PotionReward.Populate: rarity, then pick
-
-                int t0 = -1, t1 = -1, takenCount = 0;
-
-                for (int i = 0; i < 3; i++)
-                {
-                    int rarity = RollRarity(ref rng, ref rarityOffset, p, pools, pool, poolBase, t0, t1, takenCount);
-                    int count = CountAvailable(pools, pool, poolBase, rarity, t0, t1, takenCount);
-
-                    // Unreachable for a real pool: only a pool with no Common, Uncommon or Rare
-                    // could drain every rung of the ladder. The CPU path throws here; a kernel
-                    // cannot, so it declines the seed instead, and the verifier would show it.
-                    if (count <= 0) return false;
-
-                    int picked = NthAvailable(pools, pool, poolBase, rarity, rng.NextInt(0, count), t0, t1, takenCount);
-                    if (picked < 0) return false;
-
-                    rng.NextFloat();          // upgrade roll, taken whether or not it can land
-
-                    int type = pools.TypeId[poolBase + picked];
-                    for (int c = 0; c < p.CriterionCount; c++)
-                    {
-                        // A payload criterion is settled above and never by a fight, even under
-                        // any-order: its card is a Rare, and a later fight can offer one.
-                        if (criteria.Fight[c] == 0) continue;
-                        if (p.AnyOrder == 0 && criteria.Fight[c] != fight) continue;
-                        int want = criteria.Slot[c];
-                        if (want >= 0 && want != slot) continue;
-                        if (criteria.TypeId[c] == type) satisfied |= 1 << c;
-                    }
-
-                    if (takenCount == 0) t0 = picked; else if (takenCount == 1) t1 = picked;
-                    takenCount++;
-                }
-            }
+            // Everything pinned to this player is settled once their stream has been walked, so a
+            // miss here is final and the players after them need not be walked at all.
+            if (!PinnedSatisfied(slot, AnyFight, satisfied, p, criteria)) return false;
         }
 
         return satisfied == p.AllMask;
+    }
+
+    /// <summary>For <see cref="PinnedSatisfied"/>: every criterion on the slot, whatever its fight.</summary>
+    private const int AnyFight = -1;
+
+    /// <summary>Whether any fight criterion can be satisfied by this slot's rewards.</summary>
+    private static bool WalksFights(int slot, CardFilterParams p, CardCriteriaView criteria)
+    {
+        for (int c = 0; c < p.CriterionCount; c++)
+            if (criteria.Fight[c] != 0 && (criteria.Slot[c] < 0 || criteria.Slot[c] == slot)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Whether every criterion pinned to <paramref name="slot"/> has been met, limited to one
+    /// fight unless <paramref name="fight"/> is <see cref="AnyFight"/>. Only criteria pinned to
+    /// the slot are asked: an "any player" one can still be met by someone walked later.
+    /// </summary>
+    private static bool PinnedSatisfied(
+        int slot, int fight, int satisfied, CardFilterParams p, CardCriteriaView criteria)
+    {
+        for (int c = 0; c < p.CriterionCount; c++)
+        {
+            if (criteria.Slot[c] != slot) continue;
+            if (fight != AnyFight && criteria.Fight[c] != fight) continue;
+            if ((satisfied & (1 << c)) == 0) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Walk one player's fights, marking every criterion a card satisfies. False when the seed is
+    /// already known to fail, which lets the caller stop without walking anyone else.
+    /// </summary>
+    private static bool WalkFights(
+        ulong runSeed, int slot, CardFilterParams p, CardPoolView pools, CardCriteriaView criteria,
+        int pool, int poolBase, ref int satisfied)
+    {
+        var rng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
+
+        // Whatever that player's Neow pick already spent. Zero for the great majority of
+        // picks, and the whole reason the ten stream-drawing options need naming at all.
+        rng.Burn(criteria.PriorDraws[slot]);
+
+        float rarityOffset = BaseRarityOffset;
+        float potionOdds = BasePotionRewardOdds;
+
+        for (int fight = 1; fight <= p.DeepestFight; fight++)
+        {
+            bool hasPotion = rng.NextFloat() < potionOdds;
+            potionOdds += hasPotion ? -0.1f : 0.1f;
+
+            rng.Burn(1);                  // GoldReward.Populate
+            if (hasPotion) rng.Burn(2);   // PotionReward.Populate: rarity, then pick
+
+            int t0 = -1, t1 = -1, takenCount = 0;
+
+            for (int i = 0; i < 3; i++)
+            {
+                int rarity = RollRarity(ref rng, ref rarityOffset, p, pools, pool, poolBase, t0, t1, takenCount);
+                int count = CountAvailable(pools, pool, poolBase, rarity, t0, t1, takenCount);
+
+                // Unreachable for a real pool: only a pool with no Common, Uncommon or Rare
+                // could drain every rung of the ladder. The CPU path throws here; a kernel
+                // cannot, so it declines the seed instead, and the verifier would show it.
+                if (count <= 0) return false;
+
+                int picked = NthAvailable(pools, pool, poolBase, rarity, rng.NextInt(0, count), t0, t1, takenCount);
+                if (picked < 0) return false;
+
+                rng.NextFloat();          // upgrade roll, taken whether or not it can land
+
+                int type = pools.TypeId[poolBase + picked];
+                for (int c = 0; c < p.CriterionCount; c++)
+                {
+                    // A payload criterion is settled above and never by a fight, even under
+                    // any-order: its card is a Rare, and a later fight can offer one.
+                    if (criteria.Fight[c] == 0) continue;
+                    if (p.AnyOrder == 0 && criteria.Fight[c] != fight) continue;
+                    int want = criteria.Slot[c];
+                    if (want >= 0 && want != slot) continue;
+                    if (criteria.TypeId[c] == type) satisfied |= 1 << c;
+                }
+
+                if (takenCount == 0) t0 = picked; else if (takenCount == 1) t1 = picked;
+                takenCount++;
+            }
+
+            // In pick order a criterion names its fight, so once that fight is walked it is
+            // settled, and most seeds miss fight 1 — no need to walk fights 2 and 3 for them.
+            // Any order waits for the whole walk: a card can still turn up in a later fight.
+            if (p.AnyOrder == 0 && !PinnedSatisfied(slot, fight, satisfied, p, criteria)) return false;
+        }
+        return true;
     }
 
     /// <summary>

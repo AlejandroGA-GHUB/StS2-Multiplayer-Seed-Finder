@@ -490,6 +490,45 @@ public static class GpuDoctor
             Cards = new[] { new CardCriterion(1, p2Common, 2) },
         }, 400_000);
 
+        // The card stage's shortcuts, one shape each. It skips players nothing can be answered
+        // by, stops at a pinned player's miss, and in pick order stops after the fight a
+        // criterion names; each is only sound for the criteria it is taken on, so each shape
+        // below is one a wrong shortcut would reject real seeds on.
+        var four = new[] { Character.Ironclad, Character.Silent, Character.Defect, Character.Regent };
+        var trio = new[] { Character.Ironclad, Character.Silent, Character.Defect };
+        string CommonOf(Character c, int nth = 0) => CardRewardGenerator.PoolFor(c, null)
+            .Where(e => e.Rarity == CardRarity.Common).ElementAt(nth).TypeName;
+
+        yield return ("cards p3 fight 2 only, 4p", new SearchCriteria
+        {
+            Context = new NeowContext { PlayerCount = 4 },
+            Characters = four,
+            Cards = new[] { new CardCriterion(2, CommonOf(Character.Defect), 2) },
+        }, 200_000);
+
+        yield return ("cards anyone fight 1 + p1 fight 2, 3p", new SearchCriteria
+        {
+            Context = new NeowContext { PlayerCount = 3 },
+            Characters = trio,
+            Cards = new[]
+            {
+                new CardCriterion(-1, CommonOf(Character.Silent), 1),
+                new CardCriterion(0, CommonOf(Character.Ironclad), 2),
+            },
+        }, 200_000);
+
+        yield return ("cards p2 any order x2, 3p", new SearchCriteria
+        {
+            Context = new NeowContext { PlayerCount = 3 },
+            Characters = trio,
+            CardOrder = CardOrder.AnyPermutation,
+            Cards = new[]
+            {
+                new CardCriterion(1, CommonOf(Character.Silent), 1),
+                new CardCriterion(1, CommonOf(Character.Silent, 1), 1),
+            },
+        }, 200_000);
+
         // The payload walk reads the same per-slot pool, and a rare is where the missing cards
         // sit, so this is the shape the shorter pool moves most.
         var p2Rare = p2Pool.First(e => e.Rarity == CardRarity.Rare).TypeName;

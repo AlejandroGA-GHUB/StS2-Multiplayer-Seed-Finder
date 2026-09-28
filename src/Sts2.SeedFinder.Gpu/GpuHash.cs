@@ -32,7 +32,18 @@ public static class GpuHash
     /// (<paramref name="hi"/>), each little-endian. Returns what the game calls the run seed.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static ulong Xxh64Seed(ulong lo, uint hi)
+    public static ulong Xxh64Seed(ulong lo, uint hi) => Finish(Prefix(lo), hi);
+
+    /// <summary>
+    /// The state after the first eight bytes, which is everything that depends on
+    /// <paramref name="lo"/> alone.
+    ///
+    /// Split out because consecutive seed strings share their first eight characters for about
+    /// 1.3 million seeds at a time (34^4), so a scan can compute this once per run of seeds and
+    /// pay only <see cref="Finish"/> per seed. See <see cref="SeedFilter.Kernel"/>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ulong Prefix(ulong lo)
     {
         // Inputs under 32 bytes skip the four-lane accumulator and start from Prime5.
         ulong h = Prime5 + GpuSeedString.Length;
@@ -40,8 +51,13 @@ public static class GpuHash
         // one full eight-byte block
         ulong k = Rotl(lo * Prime2, 31) * Prime1;
         h ^= k;
-        h = Rotl(h, 27) * Prime1 + Prime4;
+        return Rotl(h, 27) * Prime1 + Prime4;
+    }
 
+    /// <summary>The rest of the hash: the last four bytes and the final avalanche.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ulong Finish(ulong h, uint hi)
+    {
         // four-byte tail
         h ^= hi * Prime1;
         h = Rotl(h, 23) * Prime2 + Prime3;
