@@ -174,7 +174,7 @@ public static class GpuDoctor
             }
             else
             {
-                foreach (var (label, criteria, count) in PlannerCases())
+                foreach (var (label, criteria, count) in PlannerCases().Concat(NeowPoolCases()))
                 {
                     var check = GpuVerifyPlanner.Run(planner, criteria, start: 12_000_000_000, count: count, label: label);
                     Report(check);
@@ -293,6 +293,20 @@ public static class GpuDoctor
             // walk instead of only with the one-draw curse test.
             yield return ($"{players}p positive-all/{positives[0].Slug}",
                 With(new NeowCriterion(positives[0], SlotRequirement.All)), 2_000_000);
+        }
+
+        // Nobody in the lobby has every character, so Kaleidoscope is out of everyone's base pool
+        // and every relic after it moves up one. Uniform, so the kernel still holds one pool and
+        // must agree exactly; the last relic is the one the missing entry moves.
+        {
+            var ctx = new NeowContext { PlayerCount = 2, AllCharactersUnlockedBySlot = new[] { false, false } };
+            var positives = NeowRelics.Positives.Where(ctx.IsAllowed).ToList();
+            yield return ($"2p positive/{positives[^1].Slug}, nobody has every character",
+                new SearchCriteria
+                {
+                    Context = ctx,
+                    NeowRelicsWanted = new[] { new NeowCriterion(positives[^1], SlotRequirement.Any) },
+                }, 400_000);
         }
     }
 
@@ -489,6 +503,27 @@ public static class GpuDoctor
             {
                 new NeowCriterion(NeowRelics.Find("hefty_tablet")!, SlotRequirement.Specific,
                     new[] { 1 }, PayloadCards: new[] { p2Rare }),
+            },
+        }, 400_000);
+    }
+
+    /// <summary>
+    /// A lobby whose players are offered from different Neow pools: P1 has every character, P2
+    /// does not, so Kaleidoscope is in P1's positive pool only. The kernel holds one pool, so the
+    /// factory keeps only the curse criterion; this proves that leaves nothing out.
+    /// </summary>
+    private static IEnumerable<(string Label, SearchCriteria Criteria, ulong Count)> NeowPoolCases()
+    {
+        var ctx = new NeowContext { PlayerCount = 2, AllCharactersUnlockedBySlot = new[] { true, false } };
+        var curse = NeowGenerator.CurseCandidates(ctx)[0];
+
+        yield return ("curse p1 + lead paperweight p2, kaleidoscope for p1 only", new SearchCriteria
+        {
+            Context = ctx,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(curse, SlotRequirement.Specific, new[] { 0 }),
+                new NeowCriterion(NeowRelics.Find("lead_paperweight")!, SlotRequirement.Specific, new[] { 1 }),
             },
         }, 400_000);
     }

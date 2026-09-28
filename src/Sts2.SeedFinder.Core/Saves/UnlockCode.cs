@@ -16,7 +16,9 @@ namespace Sts2.SeedFinder.Core.Saves;
 /// The code is a bitmask over <see cref="Epochs"/>, prefixed with how many epochs that build
 /// knew about. The prefix is the point: a patch that adds an epoch shifts every bit after it, so
 /// a code minted by another build must be refused rather than silently decoded into a state
-/// nobody has. Refusing costs a re-import; accepting costs a wrong run.
+/// nobody has. Refusing costs a re-import; accepting costs a wrong run. The one exception is the
+/// layout from before the character epochs were carried, which can be decoded exactly: see
+/// <see cref="LegacyEpochs"/>.
 /// </summary>
 public static class UnlockCode
 {
@@ -25,16 +27,26 @@ public static class UnlockCode
     /// rather than by discovery order so the ordering is a property of the set and not of how
     /// the tables happen to be laid out.
     ///
-    /// The three sources are the three kinds of gate: the six named flags on
-    /// <see cref="UnlockState"/> (Ancients and events), the relic pools, and the card pools.
-    /// An epoch outside this list gates nothing we predict, so a code that cannot carry it
-    /// loses nothing.
+    /// The four sources are the four kinds of gate: the six named flags on
+    /// <see cref="UnlockState"/> (Ancients and events), the relic pools, the card pools, and
+    /// the character unlocks (<see cref="UnlockState.CharacterEpochs"/>, which decide whether
+    /// Neow can offer Kaleidoscope). An epoch outside this list gates nothing we predict, so a
+    /// code that cannot carry it loses nothing.
     /// </summary>
     public static IReadOnlyList<string> Epochs => AllEpochs;
 
-    private static readonly string[] AllEpochs = BuildEpochs();
+    private static readonly string[] AllEpochs = BuildEpochs(withCharacters: true);
 
-    private static string[] BuildEpochs()
+    /// <summary>
+    /// The list codes were minted against before the character epochs were carried
+    /// (2026-09-28). Kept so a code or a shared link from then still decodes: it says nothing
+    /// about characters, and "not known" has always meant "assume revealed", which is exactly
+    /// what those codes were read as. Refusing them would cost every partner a re-import for
+    /// no change in what their code describes.
+    /// </summary>
+    private static readonly string[] LegacyEpochs = BuildEpochs(withCharacters: false);
+
+    private static string[] BuildEpochs(bool withCharacters)
     {
         var names = new SortedSet<string>(StringComparer.Ordinal)
         {
@@ -45,6 +57,8 @@ public static class UnlockCode
             foreach (var epoch in pool.Keys) names.Add(epoch);
         foreach (var pool in CardPoolData.EpochGates.Values)
             foreach (var epoch in pool.Keys) names.Add(epoch);
+        if (withCharacters)
+            foreach (var epoch in UnlockState.CharacterEpochs) names.Add(epoch);
 
         if (names.Count > 64)
             throw new InvalidOperationException(
@@ -74,16 +88,30 @@ public static class UnlockCode
         int dash = code.IndexOf('-');
         if (dash <= 0 || dash == code.Length - 1) return null;
 
-        if (!int.TryParse(code.AsSpan(0, dash), out int count) || count != AllEpochs.Length)
+        if (!int.TryParse(code.AsSpan(0, dash), out int count))
             return null;
+
+        // The current layout, or the one from before characters were carried. Anything else was
+        // minted by a build that counted a different set, and decoding it would shift bits.
+        var layout = count == AllEpochs.Length ? AllEpochs
+                   : count == LegacyEpochs.Length ? LegacyEpochs
+                   : null;
+        if (layout is null) return null;
+
         if (!ulong.TryParse(code.AsSpan(dash + 1), System.Globalization.NumberStyles.HexNumber,
                             System.Globalization.CultureInfo.InvariantCulture, out ulong mask))
             return null;
 
         // FromRevealedEpochs matches on the slugified id, which is the form a save file uses.
         var revealed = new List<string>(AllEpochs.Length);
-        for (int i = 0; i < AllEpochs.Length; i++)
-            if ((mask & (1uL << i)) != 0) revealed.Add(GameHash.Slugify(AllEpochs[i]));
+        for (int i = 0; i < layout.Length; i++)
+            if ((mask & (1uL << i)) != 0) revealed.Add(GameHash.Slugify(layout[i]));
+
+        // A legacy code carries nothing about the epochs it predates, so they read as revealed,
+        // which is what the code meant when it was made.
+        if (!ReferenceEquals(layout, AllEpochs))
+            foreach (var epoch in AllEpochs)
+                if (!layout.Contains(epoch)) revealed.Add(GameHash.Slugify(epoch));
 
         return UnlockState.FromRevealedEpochs(revealed);
     }

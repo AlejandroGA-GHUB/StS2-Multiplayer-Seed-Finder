@@ -69,8 +69,10 @@ public static class NeowGenerator
         positives.Add(rng.NextBool() ? NeowRelics.NutritiousOyster : NeowRelics.StoneHumidifier);
         positives.Add(rng.NextBool() ? NeowRelics.NeowsTalisman : NeowRelics.Pomander);
 
-        // 6. Availability filtering happens only now, after the flips.
-        positives.RemoveAll(r => !ctx.IsAllowed(r));
+        // 6. Availability filtering happens only now, after the flips, and against THIS player:
+        //    Neow asks IsAllowedAtNeow of the offer's owner, so Kaleidoscope can be in one
+        //    player's pool and not another's in the same lobby.
+        positives.RemoveAll(r => !ctx.IsAllowedFor(r, slot));
 
         // 7. Shuffle (consumes count-1 draws) and take the first two.
         Shuffle(positives, rng);

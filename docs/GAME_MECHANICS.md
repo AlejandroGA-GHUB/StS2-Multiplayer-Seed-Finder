@@ -234,6 +234,20 @@ index    = Rng(neowSeed).NextInt(0, curseCount)       // FIRST draw of Neow.Gene
 Availability gates that matter: `WingedBoots` SP-only, `MassiveScroll` MP-only,
 `Kaleidoscope` needs every character unlocked, `ScrollBoxes` needs ≥4 commons + ≥2 uncommons.
 
+**Kaleidoscope's gate is PER PLAYER** (read against v0.111.0, 2026-09-28). Neow filters with
+`IsAllowedAtNeow(base.Owner)`, and Kaleidoscope's override counts the OWNER's
+`UnlockState.CharacterCardPools`, which the game builds from every character minus each whose
+first epoch (`Silent1Epoch`, `Regent1Epoch`, `Necrobinder1Epoch`, `Defect1Epoch`) is unrevealed.
+So one lobby can have it in some players' positive pools and not others', and a player without
+it shuffles a pool one relic shorter, which changes BOTH of their positive options, not just
+whether Kaleidoscope shows. Confirmed on two finished runs: `VSYRUD21LBUE` (P3 a brand-new
+account) and `4UMBC071HUKJ` (P3 a partly unlocked partner) each match the game for all three
+players only with Kaleidoscope in P1's and P2's pools and out of P3's. Encoded as
+`UnlockState.AllCharactersUnlocked` and `NeowContext.AllCharactersUnlockedBySlot`; unlock codes
+carry the four epochs since the same date (older 36-epoch codes still decode, as "unknown, so
+assumed revealed", which is what they always meant). The GPU Neow stage holds one pool for the
+lobby, so when players differ it keeps only its curse criteria and leaves positives to the CPU.
+
 Card *payloads* (Hefty Tablet's 3 rare cards, Arcane Scroll's rare, Scroll Boxes' bundles)
 are rolled in `AfterObtained`, not at Neow. **Arcane Scroll's and Hefty Tablet's are now
 modelled and searchable** (`Core/Cards/NeowCardPayload.cs`, Oracle-verified against v0.111.0);

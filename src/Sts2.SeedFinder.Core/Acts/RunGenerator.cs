@@ -35,6 +35,31 @@ public sealed record UnlockState
     /// </summary>
     public IReadOnlySet<string>? RevealedEpochIds { get; init; }
 
+    /// <summary>
+    /// The epochs that unlock each character after the Ironclad. The game's
+    /// <c>UnlockState.Characters</c> starts from every character and drops each one whose first
+    /// epoch is not revealed, so these four ARE the character unlocks. Hand-kept, like
+    /// <see cref="RunGenerator.DefaultActs"/>: <c>sts2seed --refresh</c> does not read that
+    /// getter, so a patch adding a character has to be checked against this list by hand.
+    /// </summary>
+    public static readonly IReadOnlyList<string> CharacterEpochs =
+        ["Silent1Epoch", "Regent1Epoch", "Necrobinder1Epoch", "Defect1Epoch"];
+
+    /// <summary>
+    /// Whether this player has every character unlocked, which is what Kaleidoscope's
+    /// <c>IsAllowedAtNeow</c> asks of the player Neow is talking to. Per player, not per run:
+    /// Neow checks the offer's owner, so one lobby can offer it to some players and not others.
+    /// </summary>
+    public bool AllCharactersUnlocked
+    {
+        get
+        {
+            foreach (var epoch in CharacterEpochs)
+                if (!IsEpochRevealed(epoch)) return false;
+            return true;
+        }
+    }
+
     public bool IsEpochRevealed(string epoch) => epoch switch
     {
         "NeowEpoch" => NeowEpoch,

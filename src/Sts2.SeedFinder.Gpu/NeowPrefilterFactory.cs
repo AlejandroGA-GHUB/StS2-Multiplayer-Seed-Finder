@@ -68,6 +68,12 @@ public static class NeowPrefilterFactory
             if (want.Where == OfferSlot.CurseOnly && kind != NeowPrefilterView.KindCurse) continue;
             if (want.Where == OfferSlot.PositiveOnly && kind == NeowPrefilterView.KindCurse) continue;
 
+            // The kernel holds ONE base positive pool for the lobby. When players are offered
+            // from different ones (Kaleidoscope for some, not others) that pool is wrong for
+            // somebody, and a wrong start position would reject real seeds. So only the curse
+            // draw, which never reads the positive pool, is kept; the CPU checks the rest.
+            if (ctx.PoolsDifferBySlot && kind != NeowPrefilterView.KindCurse) continue;
+
             bool anySlot = want.Requirement == SlotRequirement.Any;
             int mask = 0;
             foreach (var slot in want.ResolveSlots(ctx.PlayerCount))

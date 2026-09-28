@@ -446,6 +446,19 @@ public static class Query
         return (UnlockState.Union(perPlayer), perPlayer);
     }
 
+    /// <summary>
+    /// Per slot, whether that player has every character unlocked, from the same states
+    /// <see cref="LobbyUnlocks"/> resolved: their own when imported, the run's otherwise.
+    /// </summary>
+    public static bool[] AllCharactersBySlot(
+        (UnlockState Run, IReadOnlyList<UnlockState>? PerPlayer) lobby, int players)
+    {
+        var result = new bool[players];
+        for (int i = 0; i < players; i++)
+            result[i] = (lobby.PerPlayer is { } own && i < own.Count ? own[i] : lobby.Run).AllCharactersUnlocked;
+        return result;
+    }
+
     public static (SearchCriteria, int Players, IReadOnlyList<Character>) BuildCriteria(
         IQueryCollection q, string? savesDirectory = null)
     {
@@ -473,6 +486,12 @@ public static class Query
         var (requirement, slots) = ParseRequire(q["require"].ToString(), players);
 
         var lobbyUnlocks = LobbyUnlocks(q, players, savesDirectory);
+
+        // Whether Neow can offer Kaleidoscope is each player's own question, read off their own
+        // unlocks: yours from progress.save, a partner's from their imported code, and yours
+        // again for anyone not imported, which is the same assumption every other per-player
+        // pool makes. ?allCharacters=false still takes it away from everybody.
+        ctx = ctx with { AllCharactersUnlockedBySlot = AllCharactersBySlot(lobbyUnlocks, players) };
 
         // Repeated ?relic=<slug>[:<require>] — e.g. silken_tress, silken_tress:all,
         // golden_pearl:p2. Shaped like ?ancient= on purpose: wanting one relic for the whole
@@ -958,7 +977,15 @@ public static class Predictions
         UnlockState Own(int slot) =>
             playerUnlocks is { } own && (uint)slot < (uint)own.Count ? own[slot] : unlocks;
         ulong runSeed = SeedCodec.RunSeed(seed);
-        var ctx = new NeowContext { PlayerCount = players };
+
+        // Each player's own unlocks decide whether Kaleidoscope is in their positive pool, the
+        // same rule the search applies, so Inspect and a search hit cannot show different offers.
+        var ctx = new NeowContext
+        {
+            PlayerCount = players,
+            AllCharactersUnlockedBySlot = Enumerable.Range(0, players)
+                .Select(s => Own(s).AllCharactersUnlocked).ToArray(),
+        };
 
         // A Custom run never reaches Neow's own options, so there is nothing to report. See
         // SeedHit: a search hit already carries an empty array, but Inspect builds this from a

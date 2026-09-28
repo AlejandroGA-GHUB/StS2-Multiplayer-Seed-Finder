@@ -1034,10 +1034,20 @@ public static class SeedSearcher
         {
             var relic = want.Relic;
 
-            if (!c.Context.IsAllowed(relic))
+            if (!c.Context.IsAllowedForAnyone(relic))
                 throw new ArgumentException(
                     $"'{relic.Name}' can never be offered under these settings " +
                     $"({c.PlayerCount} players, availability: {relic.Availability}).");
+
+            // Availability can differ by player (Kaleidoscope needs every character unlocked,
+            // and that is the offer owner's own unlocks), so a row that pins players has to be
+            // offerable to each of them. "Any player" only needs the one above.
+            if (want.Requirement != SlotRequirement.Any)
+                foreach (var slot in want.ResolveSlots(c.PlayerCount))
+                    if (slot >= 0 && slot < c.PlayerCount && !c.Context.IsAllowedFor(relic, slot))
+                        throw new ArgumentException(
+                            $"'{relic.Name}' can never be offered to P{slot + 1}: it needs every "
+                            + "character unlocked, and that player's unlocks do not have them all.");
 
             if (want.Where == OfferSlot.CurseOnly && relic.Pool != NeowPool.Curse)
                 throw new ArgumentException($"'{relic.Name}' is not a curse-branch relic.");

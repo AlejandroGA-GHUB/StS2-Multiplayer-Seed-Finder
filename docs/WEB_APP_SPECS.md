@@ -538,7 +538,11 @@ then wanted out of the way.
 - Two routes in, because a friend who runs the tool should not have to send a file: drop their
   `progress.save`, or paste the **code** shown at the bottom of the sheet. The code is a bitmask
   over `UnlockCode.Epochs` prefixed with that build's epoch count, so one minted by a different
-  version is refused rather than decoded into a state nobody has.
+  version is refused rather than decoded into a state nobody has. One exception: 36-epoch codes
+  from before the character epochs were added (2026-09-28) still decode, reading those four as
+  revealed, which is what they meant when they were made. An imported state also decides whether
+  that player can be offered Kaleidoscope, so importing a newer account can change their Neow
+  offer, not only their pools.
 - The Lobby button carries a **count badge**. This is the one setting on the page that changes
   every answer while looking like nothing happened, so it is visible without opening the sheet.
 - On the wire: repeated `epochs=<player>:<code>`, sent by both search and inspect. Only imported
