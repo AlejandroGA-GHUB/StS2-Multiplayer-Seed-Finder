@@ -248,7 +248,7 @@ public static class CardFilter
             var rng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
 
             // Whatever that player's Neow pick already spent. Zero for the great majority of
-            // picks, and the whole reason the five card-drawing options need naming at all.
+            // picks, and the whole reason the ten stream-drawing options need naming at all.
             rng.Burn(criteria.PriorDraws[slot]);
 
             float rarityOffset = BaseRarityOffset;

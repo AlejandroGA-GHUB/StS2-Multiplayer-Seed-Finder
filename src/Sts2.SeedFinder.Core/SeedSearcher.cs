@@ -206,7 +206,7 @@ public sealed record SpecializedCriterion(int Slot, string Card)
 /// A Neow option a player is ASSUMED to take, which is a different claim from any criterion
 /// here: nothing about the seed decides it, the player does.
 ///
-/// It exists because five of Neow's options draw cards the moment they are taken, off the same
+/// It exists because ten of Neow's options draw the moment they are taken, off the same
 /// <c>Rewards</c> stream the fight rewards come from, so taking one moves every card that
 /// player is offered for the rest of the predictable hallway. The cost is in
 /// <see cref="Cards.CardRewardGenerator.NeowRewardDrawCost"/>; everything else Neow can hand out

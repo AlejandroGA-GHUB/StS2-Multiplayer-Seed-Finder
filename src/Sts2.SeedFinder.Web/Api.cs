@@ -637,7 +637,7 @@ public static class Query
     /// <summary>
     /// Repeated ?pick=&lt;slot&gt;:&lt;relic&gt; — which Neow option a player is assumed to take.
     ///
-    /// Not a criterion: it asks nothing of the seed. It exists because the five card-drawing
+    /// Not a criterion: it asks nothing of the seed. It exists because the ten stream-drawing
     /// options draw off the same stream the fight rewards come from, so taking one shifts every
     /// card that player is later offered. The slot is 1-based on the wire, as everywhere else.
     /// </summary>

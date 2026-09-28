@@ -206,12 +206,13 @@ internal static class Program
         {
             Console.WriteLine("  Read after the Neow pick you named: "
                               + string.Join(", ", told.Select(x => x.ToString())) + ".");
-            Console.WriteLine("  Every other player is read as though they took nothing that draws cards.");
+            Console.WriteLine("  Every other player is read as though they took nothing that shifts rewards.");
         }
         else
         {
-            Console.WriteLine("  All assume the Neow pick took no cards. Arcane Scroll, Hefty Tablet, Massive");
-            Console.WriteLine("  Scroll, Scroll Boxes and Neow's Bones draw off the same stream first;");
+            Console.WriteLine("  All assume the Neow pick drew nothing off this stream. Arcane Scroll, Hefty");
+            Console.WriteLine("  Tablet, Massive Scroll, Scroll Boxes, Lead Paperweight, Kaleidoscope, Lost");
+            Console.WriteLine("  Coffer, both Capsules and Neow's Bones draw off it first;");
             Console.WriteLine("  --neow-pick p1:arcane_scroll says one was taken.");
         }
     }
@@ -665,9 +666,11 @@ internal static class Program
                                read one (or three) draws along.
             --neow-pick <who>:<relic>
                                Assume this player takes this Neow option, which shifts their
-                               fight card rewards. Only the five that draw cards matter:
-                               arcane_scroll (1 draw), hefty_tablet (3), massive_scroll (9),
-                               scroll_boxes (6, or 8 for the Defect). Not a criterion: the
+                               fight card rewards. Only the options that draw off that
+                               stream matter: arcane_scroll (1 draw), hefty_tablet (3),
+                               massive_scroll (9), scroll_boxes (6, or 8 for the Defect),
+                               lead_paperweight (6), kaleidoscope (18), lost_coffer (11),
+                               small_capsule (1), large_capsule (2). Not a criterion: the
                                seed does not decide what anybody picks.
             --act1 <map>       overgrowth | underdocks. Default: either. Rolled on its own
                                RNG, so this is close to free and is tested first.
@@ -762,9 +765,10 @@ internal static class Program
             --list shows only what is actually reachable.
 
             One caveat worth knowing: Arcane Scroll, Hefty Tablet, Massive Scroll,
-            Scroll Boxes and Neow's Bones draw cards off the same stream at Neow, which
-            shifts this reward. The prediction assumes you took none of them. Every other
-            Neow option, Silken Tress included, leaves it alone.
+            Scroll Boxes, Lead Paperweight, Kaleidoscope, Lost Coffer, both Capsules and
+            Neow's Bones draw off the same stream at Neow, which shifts this reward. The
+            prediction assumes you took none of them unless --neow-pick says otherwise.
+            Every other Neow option, Silken Tress included, leaves it alone.
 
           ACT 2/3 ANCIENTS (repeatable; both need --characters)
             --ancient <name>              Require this Ancient to appear, whatever it
@@ -1163,7 +1167,7 @@ internal static class Program
         /// "p1:arcane_scroll" — which player is assumed to take which Neow option.
         ///
         /// Not a criterion: nothing about the seed decides what a player picks. It exists
-        /// because five of Neow's options draw cards off the same stream the fight rewards
+        /// because ten of Neow's options draw off the same stream the fight rewards
         /// come from, so taking one moves every card that player is later offered.
         /// </summary>
         private static NeowPick ParsePick(string s, Options o)

@@ -574,9 +574,11 @@ ask two players for two different cards at once.
 
 - Each player gets **two** rows: `P{n} took at Neow [relic ▾]` above `P{n} is offered [card
   field]`. The first is an assumption rather than a criterion — nothing about the seed decides
-  what somebody picks — and it lists only the options that draw cards, with their cost:
-  Arcane Scroll (1 draw), Hefty Tablet (3), Massive Scroll (9), Scroll Boxes (6, or 8 for the
-  Defect). Neow's Bones is deliberately absent: its shuffle length is not modelled, so offering
+  what somebody picks — and it lists only the options that draw off that stream, with their
+  cost: Arcane Scroll (1 draw), Hefty Tablet (3), Massive Scroll (9), Scroll Boxes (6, or 8 for
+  the Defect), Lead Paperweight (6), Kaleidoscope (18), Lost Coffer (11), Small Capsule (1) and
+  Large Capsule (2). The list is sent by the server from `NeowRewardDrawCost`, so it follows that
+  table rather than being kept here. Neow's Bones is deliberately absent: its shuffle length is not modelled, so offering
   it would be offering a wrong answer. Set it and that player's fights are read from the right
   place in their stream; leave it and they read as though nothing was taken, which is right for
   the great majority of picks.
@@ -599,8 +601,8 @@ ask two players for two different cards at once.
   rather than sitting there refusing to open. This panel comes alive a row at a time, unlike
   the act panels, which need every player's character before run generation can run at all.
 - Changing a character clears a pick that its pool no longer contains.
-- The hint names the five Neow relics that shift the result (Arcane Scroll, Hefty Tablet,
-  Massive Scroll, Scroll Boxes, Neow's Bones) — they draw off the same stream first. Everything
+- The hint points at the options listed in the row above as the ones that shift the result —
+  they draw off the same stream first. Everything
   else, Silken Tress included, leaves it alone. It also says the thing users assume wrongly:
   **a Neow pick does not make fight 1 able to offer a rare**. The rare penalty is a counter, and
   none of those relics moves it, so the picker keeps refusing rares on fight 1 whatever is set.

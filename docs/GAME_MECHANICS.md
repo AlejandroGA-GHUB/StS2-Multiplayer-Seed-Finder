@@ -319,9 +319,23 @@ Two properties fall out of `CardRarityOdds` and are worth knowing before anyone 
   rares and `ValidateCardCriteria` rejects one outright, rather than scanning to no answers.
 - **No card is ever upgraded in Act 1**, because the upgrade odds scale with the act index.
 
-**THE CAVEAT — five Neow relics shift the whole result.** They draw off `Rewards` before the
+**THE CAVEAT — ten Neow relics shift the whole result.** They draw off `Rewards` before the
 fight does: Arcane Scroll 1, Hefty Tablet 3, Massive Scroll 9, Scroll Boxes 6 (8 for Defect,
-which adds a 1-in-100 all-Claw check per bundle), Neow's Bones a shuffle of the Neow pool.
+which adds a 1-in-100 all-Claw check per bundle), Neow's Bones a shuffle of the Neow pool, and
+five that are easy to miss because they hand out rewards rather than cards:
+Lead Paperweight 6, Kaleidoscope 18, Lost Coffer 11, Small Capsule 1, Large Capsule 2.
+
+The rule behind the second group (read against v0.111.0, 2026-09-28): every reward factory
+defaults to this stream. `CardFactory.CreateForReward` picks and rolls upgrades on it, and
+`PlayerOddsSet` binds `CardRarityOdds` to it too, so a non-Uniform card costs 3 (rarity via
+`RollWithBaseOdds` for a non-Encounter source, which moves no pity; pick; upgrade). A
+`PotionReward` costs 2 (rarity, pick) and `RelicFactory.RollRarity` costs 1. So Lead Paperweight
+is Massive Scroll with two cards, Kaleidoscope is two rewards of one card from each of three
+other pools, Lost Coffer is a 3-card reward then a potion, and each Capsule relic is a rarity
+roll. Four were confirmed against finished runs (fight 1 matched only at these offsets:
+Lead Paperweight x2, Lost Coffer x2, Small Capsule x2, Large Capsule x1); Kaleidoscope is from
+source alone, since every finished run that took it predates the current card pools.
+
 Encoded in `CardRewardGenerator.NeowRewardDrawCost`; everything else costs zero, so the default
 `priorDraws = 0` is right for the great majority of picks, Silken Tress included. The UI says so
 in the panel hint. Not automatic: nothing knows which Neow option a player will take.

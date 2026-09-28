@@ -38,11 +38,11 @@ function defaultState() {
     neow: [],
     // Which Neow option each player is assumed to take, by slot: '' for nothing that draws
     // cards. Not a criterion — it asks nothing of the seed, it says how to READ that player's
-    // card rewards, because five of Neow's options draw off the same stream first.
+    // card rewards, because ten of Neow's options draw off the same stream first.
     neowPicks: [],
     // Which slots of `neowPicks` the user has set themselves, by slot. An untouched slot is
     // purely derived from the Neow requirements and is refilled on every redraw; a touched one
-    // is left exactly where it was put. Without this, choosing "Nothing that draws cards" on a
+    // is left exactly where it was put. Without this, choosing "Nothing that shifts rewards" on a
     // player whose row names a scroll would be undone by the next render, which reads as the
     // page arguing with you.
     neowPickSet: [],
@@ -777,7 +777,7 @@ const INFO = {
       'Fight 1 can never offer a Rare. Later ones can, and that does not change with what was '
         + 'taken at Neow: the rare penalty is a counter those relics never touch.',
       'Say what a player took at Neow above and their rewards are read from the right place in the '
-        + 'stream, since those five options draw off it first.',
+        + 'stream, since the options listed there draw off it first.',
     ],
   },
 
@@ -1937,8 +1937,8 @@ function renderCards() {
     const pool = cardPoolFor(i);
     const want = state.cards[i] || (state.cards[i] = { picks: [] });
 
-    // What that player took at Neow, which decides where their stream starts. Five of Neow's
-    // options draw cards off it before the first fight ever rolls; everything else is free.
+    // What that player took at Neow, which decides where their stream starts. Ten of Neow's
+    // options draw off it before the first fight ever rolls; everything else is free.
     const pinned = pinnedPick(i);
     if (pinned) {
       state.neowPicks[i] = pinned;
@@ -1964,7 +1964,7 @@ function renderCards() {
       ? [{ label: `${forcedByModifier.map(m => m.name).join(' + ')} (${modifierDraws()} `
                 + `draw${modifierDraws() === 1 ? '' : 's'})`, value: '' }]
       : [
-          { label: 'Nothing that draws cards', value: '' },
+          { label: 'Nothing that shifts rewards', value: '' },
           ...(catalog.neowCardRelics ?? [])
             .filter(r => r.draws > 0 && allowedHere(r))
             .map(r => ({

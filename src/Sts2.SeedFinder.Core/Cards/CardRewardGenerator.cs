@@ -54,7 +54,7 @@ public sealed record HallwayRewards(IReadOnlyList<FirstFightReward> Fights)
 /// </code>
 ///
 /// THE ONE CAVEAT: this assumes the player's Neow pick consumed no draws from this stream.
-/// Most do not, but five relics obtainable at Neow do — see <see cref="NeowRewardDrawCost"/>.
+/// Most do not, but ten relics obtainable at Neow do — see <see cref="NeowRewardDrawCost"/>.
 /// Pass the cost through <c>priorDraws</c> when you know what was taken.
 ///
 /// Two consequences of the pity counter starting at -0.05 are worth knowing:
@@ -88,19 +88,35 @@ public static class CardRewardGenerator
 
     /// <summary>
     /// Draws a Neow option takes off the Rewards stream before the first fight ever rolls.
-    /// Zero for all but these five: everything else Neow can hand out either uses a different
-    /// generator or none at all.
+    /// Zero for all but the ten below: everything else Neow can hand out either uses a
+    /// different generator or none at all.
     /// </summary>
     /// <remarks>
+    /// Not only the scrolls. Anything that builds a card, potion or relic reward in
+    /// <c>AfterObtained</c> pays for it here, because every reward factory defaults to this
+    /// stream: <c>CardFactory.CreateForReward</c> (and <c>CardRarityOdds</c>, which is bound to
+    /// it), <c>PotionFactory</c> via <c>PotionReward.Populate</c>, and <c>RelicFactory.RollRarity</c>.
+    /// A non-Uniform card costs 3 (rarity via <c>RollWithBaseOdds</c>, which moves no pity, then
+    /// pick, then upgrade), a potion 2, a relic rarity 1.
+    ///
     /// Scroll Boxes is listed at its floor. It draws 6 for the two bundles, plus one extra
     /// per bundle for Defect only (a 1-in-100 all-Claw check), so a Defect player's cost is 8.
     /// Neow's Bones shuffles the other Neow relics, which is <c>count - 1</c> draws.
+    ///
+    /// Lead Paperweight, Lost Coffer and both Capsules were confirmed against finished v0.110.1
+    /// and v0.111.0 runs, whose fight 1 matched only at these offsets. Kaleidoscope is from
+    /// source alone (v0.111.0): no finished run on a current card pool took it.
     /// </remarks>
     public static int NeowRewardDrawCost(string relicSlug, Character character) => relicSlug switch
     {
         "arcane_scroll" => 1,          // 1 uniform-rare card, no upgrade roll
         "hefty_tablet" => 3,           // 3 of the same
         "massive_scroll" => 9,         // 3 cards with rarity and upgrade rolls
+        "lead_paperweight" => 6,       // 2 colourless cards with rarity and upgrade rolls
+        "kaleidoscope" => 18,          // 2 rewards x 3 other pools x 1 card with both rolls
+        "lost_coffer" => 11,           // a 3-card reward (9), then a potion (2)
+        "small_capsule" => 1,          // a relic reward: one rarity roll
+        "large_capsule" => 2,          // two relics, one rarity roll each
         "scroll_boxes" => character == Character.Defect ? 8 : 6,
         "neows_bones" => -1,           // shuffle length depends on the Neow pool; see NeowGenerator
         _ => 0,
