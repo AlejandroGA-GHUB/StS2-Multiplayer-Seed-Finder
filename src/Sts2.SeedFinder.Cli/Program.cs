@@ -759,9 +759,12 @@ internal static class Program
             every relic anyone picks up earlier removes an entry from, so raise n to accept
             the next relics of that rarity instead.
 
-            Two limits, both from the game's rarity odds rather than from this tool:
-            the first fight can never offer a RARE (the rare odds carry a penalty that
-            has not worn off by the third draw), and nothing is upgraded in Act 1.
+            Limits from the game's rarity odds rather than from this tool: the first
+            fight can never offer a RARE (the rare odds carry a penalty that has not worn
+            off by the third draw), and nothing is upgraded in Act 1. From --ascension 7
+            (Scarcity) only the last card of fight 3 can be Rare, so a rare in fight 1 or
+            2, or two rares for one player, can never match. Below A7 a player can get
+            rares in fights 2 AND 3, but only rarely: a rare resets the odds.
             --list shows only what is actually reachable.
 
             One caveat worth knowing: Arcane Scroll, Hefty Tablet, Massive Scroll,

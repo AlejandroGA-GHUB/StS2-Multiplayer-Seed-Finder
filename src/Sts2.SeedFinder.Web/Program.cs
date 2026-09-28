@@ -274,7 +274,10 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         assets.AvailableEventSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
         assets.AvailableBossSlugs.Select(s => s.ToLowerInvariant()).ToArray(),
         neowCardRelics,
-        modifiers), json);
+        modifiers,
+        // Which fights can offer a Rare, per ascension, from the same pity arithmetic the search
+        // validates against. The picker greys rares by this rather than keeping its own rule.
+        Enumerable.Range(0, AscensionLevels.Max + 1).Select(CardRewardGenerator.RareFights).ToArray()), json);
 });
 
 // ---- The player's own profile --------------------------------------------------------------

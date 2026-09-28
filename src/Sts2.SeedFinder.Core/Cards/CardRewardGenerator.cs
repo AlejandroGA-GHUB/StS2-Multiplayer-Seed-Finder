@@ -235,14 +235,74 @@ public static class CardRewardGenerator
     }
 
     /// <summary>
-    /// Whether a fight this far into a run can offer a Rare at all.
+    /// Whether a fight this far into a run can offer a Rare at all, at this ascension.
     ///
-    /// Fight 1 never can: the pity offset starts at -0.05 and grows by at most 0.01 a draw, so
-    /// the rare threshold is still ≤ 0 on all three draws and no roll can fall under it. By
-    /// fight 2 it has grown past zero, so a Rare becomes possible — which is why the pickers
-    /// must stop hiding rares the moment a criterion targets anything but the first fight.
+    /// Fight 1 never can: the pity offset starts at -0.05 and grows by 0.01 a draw, so the rare
+    /// threshold is still ≤ 0 on all three draws and no roll can fall under it. Below A7 it has
+    /// grown past zero by fight 2. Scarcity (A7+) halves both the base odds and the growth, and
+    /// then the first card whose threshold clears zero is the LAST card of fight 3, so fights 1
+    /// and 2 can never offer a Rare there.
     /// </summary>
-    public static bool CanOfferRare(int fight) => fight >= 2;
+    public static bool CanOfferRare(int fight, int ascension) => RaresCanLand([fight], ascension);
+
+    /// <summary>
+    /// The fights, up to <see cref="MaxPredictableFight"/>, that can offer a Rare at this
+    /// ascension. What the web picker greys rares against, sent by the server so the page never
+    /// carries its own copy of the pity arithmetic.
+    /// </summary>
+    public static int[] RareFights(int ascension) =>
+        Enumerable.Range(1, MaxPredictableFight).Where(f => CanOfferRare(f, ascension)).ToArray();
+
+    /// <summary>
+    /// Whether ONE player's consecutive rewards can hold a Rare in each fight listed, together.
+    /// A fight listed twice asks for two Rares in that one reward.
+    ///
+    /// Not a product of the single-fight answers, because a Rare resets the pity offset to its
+    /// floor: after one lands, the threshold is back below zero for the next few cards. So at A0
+    /// Rares in fights 2 and 3 are possible only when the first comes early in fight 2 (a Rare
+    /// on fight 2's last card leaves fight 3 unable to roll one), and at A7+, where only fight
+    /// 3's last card can ever be Rare, any two Rares are impossible.
+    ///
+    /// Walks the card positions with the offset arithmetic <see cref="RollRarity"/> uses, float
+    /// for float, since the answer hinges on thresholds that land exactly on zero. A Rare is
+    /// possible on a card when its threshold is above zero, since a roll is never negative.
+    /// Rolling a Rare nobody asked for is never taken: it only resets the offset, which can only
+    /// make a later Rare harder.
+    /// </summary>
+    public static bool RaresCanLand(IReadOnlyList<int> rareFights, int ascension)
+    {
+        var need = new int[MaxPredictableFight + 1];
+        foreach (int f in rareFights)
+        {
+            if (f < 1 || f > MaxPredictableFight) return false;
+            if (++need[f] > 3) return false;   // a reward is three cards
+        }
+        return Walk(0, BaseRarityOffset);
+
+        bool Walk(int card, float offset)
+        {
+            int fight = card / 3 + 1;
+            if (card % 3 == 0 && fight > 1 && need[fight - 1] > 0) return false;   // left one behind
+            if (card == MaxPredictableFight * 3) return true;
+
+            if (need[fight] > 0 && RegularRareOdds(ascension) + offset > 0f)
+            {
+                need[fight]--;
+                bool landed = Walk(card + 1, NextRarityOffset(offset, rare: true, ascension));
+                need[fight]++;
+                if (landed) return true;
+            }
+            return Walk(card + 1, NextRarityOffset(offset, rare: false, ascension));
+        }
+    }
+
+    /// <summary>
+    /// The pity offset after one card: a Rare resets it to the floor, anything else nudges it up
+    /// toward the cap. Shared by <see cref="RollRarity"/> and <see cref="RaresCanLand"/> so the
+    /// two can never disagree about the arithmetic.
+    /// </summary>
+    private static float NextRarityOffset(float offset, bool rare, int ascension) =>
+        rare ? BaseRarityOffset : Math.Min(offset + RarityGrowth(ascension), MaxRarityOffset);
 
     /// <summary>
     /// How deep into a hallway the tool will predict.
@@ -283,9 +343,7 @@ public static class CardRewardGenerator
                    : roll < RegularUncommonOdds + rareThreshold ? CardRarity.Uncommon
                    : CardRarity.Common;
 
-        offset = rarity == CardRarity.Rare
-            ? BaseRarityOffset
-            : Math.Min(offset + RarityGrowth(ascension), MaxRarityOffset);
+        offset = NextRarityOffset(offset, rarity == CardRarity.Rare, ascension);
 
         return NextAllowedRarity(rarity, index, pool, taken);
     }

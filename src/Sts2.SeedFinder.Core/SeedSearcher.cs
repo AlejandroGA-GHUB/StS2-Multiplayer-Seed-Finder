@@ -1612,28 +1612,20 @@ public static class SeedSearcher
                 $"{CardCatalog.Display(want.Card)} is not in {who}'s card pool, so no seed can offer it.");
         }
 
-        // A rare is in the pool but out of reach on floor 1, so asking for one there would
-        // otherwise scan the whole range and report nothing found, which reads as a bad seed
-        // range. From fight 2 the pity offset has grown past zero and a rare is reachable, so
-        // this only rejects the first fight.
-        foreach (var want in c.Cards.Where(w => !CardRewardGenerator.CanOfferRare(w.Fight)))
-        {
-            var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
-            if (slots.Any(s => CardCatalog.FirstFightOfferable(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer)
-                    .Any(e => e.TypeName == want.Card)))
-                continue;
-
-            throw new ArgumentException(
-                $"{CardCatalog.Display(want.Card)} is Rare, and the first fight of a run can never " +
-                "offer one: the rare odds carry a penalty that only wears off over later rewards. " +
-                "Ask for it after fight 2 instead.");
-        }
-
         foreach (var want in c.Cards)
             if (want.Fight is < 1 or > CardRewardGenerator.MaxPredictableFight)
                 throw new ArgumentException(
                     $"fight must be between 1 and {CardRewardGenerator.MaxPredictableFight}; "
                     + $"got {want.Fight}.");
+
+        // A rare can be in the pool and still out of reach in a given fight, and asking for one
+        // there would scan the whole range and report nothing found, which reads as a bad seed
+        // range. Only exact order pins a card to its fight; any order is checked below, once
+        // the number of picks per player is known to fit.
+        if (c.CardOrder == CardOrder.Exact)
+            foreach (var want in c.Cards)
+                if (IsRareCard(c, want.Card) && !CardRewardGenerator.CanOfferRare(want.Fight, c.Ascension))
+                    throw new ArgumentException(RareUnreachable(want.Card, want.Fight, c.Ascension));
 
         // Any-order spends one fight per pick, so a slot cannot ask for more picks than there
         // are predictable fights. Without this the search would run to the end of the range and
@@ -1662,6 +1654,87 @@ public static class SeedSearcher
                     $"a card reward offers three cards, so P{group.Key.Slot + 1} cannot be offered all " +
                     $"{distinct} of those at once.");
         }
+
+        // Rares TOGETHER, per player. Each is checked alone above, but a Rare resets the rare
+        // odds to their floor, so two that are each reachable can still be impossible as a pair:
+        // at A7+ only fight 3's last card can ever be Rare, so any two are. "Any player" rows in
+        // exact order are left out, since each can be met by a different player.
+        if (c.CardOrder == CardOrder.Exact)
+        {
+            foreach (var group in c.Cards.Where(w => w.Slot >= 0).GroupBy(w => w.Slot))
+            {
+                var rares = group.Where(w => IsRareCard(c, w.Card)).ToList();
+                if (rares.Count < 2 || CardRewardGenerator.RaresCanLand(rares.Select(w => w.Fight).ToList(), c.Ascension))
+                    continue;
+
+                throw new ArgumentException(RaresTogether(
+                    $"P{group.Key + 1}", rares.Select(w => w.Card), c.Ascension,
+                    $"in fights {string.Join(" and ", rares.Select(w => w.Fight).OrderBy(f => f))}"));
+            }
+        }
+        else
+        {
+            // Any order lays a player's k picks one per fight over the first k fights, so the
+            // Rares among them need SOME set of those fights that can hold them all at once.
+            foreach (var group in c.Cards.GroupBy(w => w.Slot))
+            {
+                int k = group.Count();
+                var rares = group.Where(w => IsRareCard(c, w.Card)).ToList();
+                if (rares.Count == 0) continue;
+
+                bool fits = Enumerable.Range(0, 1 << k)
+                    .Where(mask => System.Numerics.BitOperations.PopCount((uint)mask) == rares.Count)
+                    .Any(mask => CardRewardGenerator.RaresCanLand(
+                        Enumerable.Range(1, k).Where(f => (mask & (1 << (f - 1))) != 0).ToList(), c.Ascension));
+                if (fits) continue;
+
+                throw new ArgumentException(rares.Count == 1
+                    ? RareUnreachable(rares[0].Card, k, c.Ascension, anyOrder: true)
+                    : RaresTogether(group.Key < 0 ? "One player" : $"P{group.Key + 1}",
+                        rares.Select(w => w.Card), c.Ascension, $"across fights 1 to {k}"));
+            }
+        }
+    }
+
+    /// <summary>Whether a card is Rare, read off whichever party pool holds it.</summary>
+    private static bool IsRareCard(SearchCriteria c, string card)
+    {
+        for (int s = 0; s < c.PlayerCount && s < c.Characters.Count; s++)
+            foreach (var e in CardRewardGenerator.PoolFor(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer))
+                if (e.TypeName == card) return e.Rarity == CardRarity.Rare;
+        return false;
+    }
+
+    /// <summary>
+    /// Why a Rare cannot be offered where it was asked for, naming where it CAN be, if anywhere.
+    /// With <paramref name="anyOrder"/>, <paramref name="fight"/> is the last fight the player's
+    /// picks reach rather than a fight the card was pinned to.
+    /// </summary>
+    private static string RareUnreachable(string card, int fight, int ascension, bool anyOrder = false)
+    {
+        var can = CardRewardGenerator.RareFights(ascension);
+        string where = anyOrder ? $"fights 1 to {fight}" : $"fight {fight}";
+        string scarcity = ascension >= CardRewardGenerator.Scarcity ? $" at Ascension {ascension}" : "";
+        string instead = can.Length == 0
+            ? "No predictable fight can offer one here."
+            : ascension >= CardRewardGenerator.Scarcity
+                ? $"Scarcity (A7+) slows the rare odds so much that the first card that can be Rare is the "
+                  + $"last card of fight {can[0]}, so ask for it there."
+                : $"The first fight that can is fight {can[0]}.";
+        return $"{CardCatalog.Display(card)} is Rare, and {where} can never offer one{scarcity}: the rare odds "
+               + $"start below zero and only climb a little with each card drawn. {instead}";
+    }
+
+    /// <summary>Why one player cannot be offered these Rares together.</summary>
+    private static string RaresTogether(string who, IEnumerable<string> cards, int ascension, string where)
+    {
+        string list = string.Join(" and ", cards.Select(CardCatalog.Display));
+        return ascension >= CardRewardGenerator.Scarcity
+            ? $"{who} cannot be offered {list} {where} at Ascension {ascension}. Scarcity (A7+) leaves only "
+              + "the last card of fight 3 able to roll a Rare, so a player can be offered one Rare at most "
+              + "in the predictable fights."
+            : $"{who} cannot be offered {list} {where}. A Rare resets the rare odds to their floor, and "
+              + "they cannot climb back above zero in time for the next one.";
     }
 
     /// <summary>

@@ -381,6 +381,24 @@ Two things change at fight 2 and are easy to get wrong:
   `AscensionLevel.Scarcity` (A7+), so `--ascension` is a real input to card prediction, not just
   the A10 double-boss switch.
 
+**Where a Rare can land, exactly** (2026-09-28). The rare threshold per card, walked in float
+the way `RollRarity` walks it, with no Rare along the way:
+
+| Card (fight) | 1 | 2 | 3 | 4 (f2) | 5 | 6 | 7 (f3) | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|
+| A0-6 | -0.02 | -0.01 | **0** | 0.01 | 0.02 | 0.03 | 0.04 | 0.05 | 0.06 |
+| A7+ | -0.035 | -0.030 | -0.025 | -0.020 | -0.015 | -0.010 | -0.005 | **-0.0001** | 0.0049 |
+
+A roll is never negative, so a Rare needs a threshold above zero: fight 2 onward below A7, and
+**only card 9, the last of fight 3, from A7**. Card 3 lands on exactly 0 and card 8 at A7 just
+under it, which is why this is computed rather than eyeballed. And a Rare RESETS the offset to
+-0.05, so two Rares interact: below A7, Rares in fights 2 and 3 need the first early in fight 2
+(one on card 6 leaves fight 3 unable to roll one), about 7 in 10 million per player for two
+named rares; from A7 any two are impossible. `CardRewardGenerator.RaresCanLand` walks this for
+the validator and `RareFights` feeds the picker, both through the offset step `RollRarity` uses.
+Before this, the validator only refused a Rare in fight 1, so an A7+ search for a Rare in fight 2
+was accepted and scanned forever.
+
 **Verification.** `--verify` **cannot** cover this — the reward is rolled on room entry, not
 during upfront generation, so it is not in the save's generation section. Two Oracle checks do:
 

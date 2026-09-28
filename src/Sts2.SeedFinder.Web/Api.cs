@@ -112,6 +112,11 @@ public sealed record NeowCardRelicDto(
 /// picker offers exactly the fights the search will accept instead of carrying its own copy of
 /// the number.
 /// </param>
+/// <param name="RareFights">
+/// Indexed by ascension: the fights that can offer a Rare there, from
+/// <see cref="Sts2.SeedFinder.Core.Cards.CardRewardGenerator.RareFights"/>. Fights 2 and 3 below
+/// A7, only fight 3 from A7 on, where Scarcity leaves just its last card able to roll one.
+/// </param>
 public sealed record CatalogDto(
     string GameVersion, string AppVersion, int MaxFight,
     string? DriftWarning, string AssetProvider, string AssetStatus,
@@ -119,7 +124,7 @@ public sealed record CatalogDto(
     AncientDto[] Ancients, CharacterDto[] Characters, string[] Act1Maps, ActContentDto[] ActContent,
     CardPoolDto[] CardPools, ShopRelicDto[] ShopRelics, ChestRelicDto[] ChestRelics,
     string[] AncientArtSlugs, string[] EventArtSlugs, string[] BossArtSlugs,
-    NeowCardRelicDto[] NeowCardRelics, ModifierDto[] Modifiers);
+    NeowCardRelicDto[] NeowCardRelics, ModifierDto[] Modifiers, int[][] RareFights);
 
 /// <summary>
 /// What the local game install knows about this player, for the "sync from my save" button.

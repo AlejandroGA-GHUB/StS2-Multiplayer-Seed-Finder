@@ -575,10 +575,11 @@ let pickerMulti = null;
  * Single-select by default: one click resolves with the item and closes. Passing `multi` turns
  * it into a running list instead, resolving with an array of slugs in click order.
  *
- * @param multi `{ max, initial, disableFirst }` or null.
- *   `disableFirst` is a predicate on an item: true means it cannot be the FIRST pick. Cards use
- *   it for rares, which fight 1 can never roll, and it has to be re-evaluated on every render
- *   because taking a pick back changes which fight the remaining ones mean.
+ * @param multi `{ max, initial, disableAt }` or null.
+ *   `disableAt(item, position)` is true when the item cannot be the pick at that 0-based
+ *   position. Cards use it for rares, which only some fights can roll (never fight 1, and only
+ *   fight 3 from Ascension 7), and it has to be re-evaluated on every render because taking a
+ *   pick back changes which fight the remaining ones mean.
  */
 function openPicker(title, groups, kind = 'relic', multi = null) {
   $('#pickerTitle').textContent = title;
@@ -634,10 +635,9 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
               ? el('span', 'fight-badge is-tick', '✓')
               : el('span', 'fight-badge', String(at + 1)));
           }
-          // Disabled only while nothing is chosen: the next pick would be fight 1 then. Once
-          // something holds fight 1 the same card is a legal fight 2 or 3.
-          tile.disabled = at < 0 && pickerMulti.chosen.length === 0
-            && (pickerMulti.disableFirst?.(r) ?? false);
+          // Judged at the position the NEXT pick would take, which is the fight it would name.
+          // The same card can be illegal as fight 1 and legal as fight 3.
+          tile.disabled = at < 0 && (pickerMulti.disableAt?.(r, pickerMulti.chosen.length) ?? false);
           tile.onclick = () => toggle(r, filter);
         } else {
           tile.onclick = () => { $('#picker').close(); pickerResolve?.(r); pickerResolve = null; };
@@ -661,10 +661,13 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
     if (at >= 0) chosen.splice(at, 1);
     else if (chosen.length < pickerMulti.max) chosen.push(item.slug);
 
-    // Renumbering can push a card that was legal at fight 2 into fight 1, and rares cannot be
-    // there. Dropping it is the only consistent answer: the alternative is refusing a removal
-    // for a reason that happens two rows further down.
-    while (chosen.length && pickerMulti.disableFirst?.(pickerMulti.itemFor?.(chosen[0]))) chosen.shift();
+    // Renumbering can push a card into a fight that cannot roll it: a rare from fight 2 into
+    // fight 1, or at A7+ from fight 3 into fight 2. Dropping it is the only consistent answer:
+    // the alternative is refusing a removal for a reason that happens two rows further down.
+    for (let i = 0; i < chosen.length;) {
+      if (pickerMulti.disableAt?.(pickerMulti.itemFor?.(chosen[i]), i)) chosen.splice(i, 1);
+      else i++;
+    }
 
     if (chosen.length >= pickerMulti.max) { $('#picker').close(); return; }
     render(filter);
@@ -774,8 +777,15 @@ const INFO = {
       { h: 'What has to be true when you play' },
       'Every fight after the first assumes you walk straight into the next monster room, with no '
         + `shop, elite, event or rest between, so all ${MAX_FIGHT} have to be consecutive.`,
-      'Fight 1 can never offer a Rare. Later ones can, and that does not change with what was '
-        + 'taken at Neow: the rare penalty is a counter those relics never touch.',
+      'Fight 1 can never offer a Rare. Below Ascension 7, fights 2 and 3 can. From Ascension 7 '
+        + '(Scarcity) the rare odds climb so slowly that only the last card of fight 3 can be Rare, '
+        + 'so fight 3 is the only place to ask for one there.',
+      'A Rare also resets the rare odds to their floor. Below Ascension 7 a player can still be '
+        + 'offered Rares in both fights 2 and 3, but only when the first comes early in fight 2, '
+        + 'which makes that pair very unlikely. From Ascension 7 it is impossible: one Rare per '
+        + 'player at most.',
+      'None of this changes with what was taken at Neow: the rare penalty is a counter those '
+        + 'relics never touch.',
       'Say what a player took at Neow above and their rewards are read from the right place in the '
         + 'stream, since the options listed there draw off it first.',
     ],
@@ -1923,6 +1933,42 @@ function pickDraws(slot, slug) {
   return state.characters[slot] === 'Defect' ? relic.defectDraws : relic.draws;
 }
 
+/**
+ * The fights that can offer a Rare at the chosen ascension: 2 and 3 below A7, only 3 from A7.
+ * Sent by the server from the same pity arithmetic the search validates against, so the page
+ * never keeps its own copy of the rule. The fallback is the A0 answer, for a catalog that
+ * predates the field.
+ */
+function rareFights() {
+  return catalog.rareFights?.[state.ascension] ?? [2, 3];
+}
+
+/** Whether a card can be the pick at 0-based position `at`, which is the fight it names. */
+function cardAllowedAt(card, at) {
+  return card?.rarity !== 'Rare' || rareFights().includes(at + 1);
+}
+
+/**
+ * A player's picks with any that cannot land where they sit removed, keeping order. Dropping one
+ * renumbers the rest, which can strand another, so each is judged at its position AFTER the ones
+ * before it have been kept or dropped.
+ */
+function legalCardPicks(picks, pool) {
+  const kept = [];
+  for (const slug of picks) {
+    if (cardAllowedAt(pool.find(c => c.slug === slug), kept.length)) kept.push(slug);
+  }
+  return kept;
+}
+
+/** The picker's heading for rares, saying where they can go at this ascension. */
+function rareGroupTitle() {
+  const fights = rareFights();
+  if (!fights.length) return 'Rare (none can land at this ascension)';
+  if (fights.length === 1) return `Rare (fight ${fights[0]} only at this ascension)`;
+  return `Rare (never on fight 1)`;
+}
+
 function renderCards() {
   const box = $('#cards');
   hideTip();
@@ -2000,6 +2046,9 @@ function renderCards() {
     box.appendChild(pickRow);
     // Changing character strands whatever was picked for the old one.
     want.picks = (want.picks ?? []).filter(slug => pool.some(c => c.slug === slug));
+    // So does changing the ascension: from A7 a rare can only sit in fight 3, so a rare picked
+    // for fight 2 has nowhere left to land.
+    want.picks = legalCardPicks(want.picks, pool);
 
     const row = el('div', 'row');
     row.appendChild(el('label', null, `P${i + 1} is offered`));
@@ -2041,7 +2090,7 @@ function renderCards() {
         // Rares are listed rather than hidden even where they cannot land, since a greyed tile
         // says "not here" where a missing one just looks like a gap in the pool.
         ['Common', 'Uncommon', 'Rare'].map(r => ({
-          title: r === 'Rare' ? 'Rare (never on fight 1)' : r,
+          title: r === 'Rare' ? rareGroupTitle() : r,
           items: pool.filter(c => c.rarity === r),
         })),
         'card',
@@ -2049,7 +2098,7 @@ function renderCards() {
           max: MAX_FIGHT,
           initial: want.picks,
           itemFor: slug => pool.find(c => c.slug === slug),
-          disableFirst: c => c?.rarity === 'Rare',
+          disableAt: (c, at) => !cardAllowedAt(c, at),
         });
       if (picked) { want.picks = picked; renderCards(); }
     };
@@ -3419,6 +3468,8 @@ function renderAscension() {
       // The number of boss slots on the final act just changed, so a row that was blocked
       // from excluding may now be free to, or the other way round.
       renderBosses();
+      // Which fights can roll a rare depends on it too, so card picks are re-checked.
+      renderCards();
       syncAscensionHint();
     });
   syncAscensionHint();
