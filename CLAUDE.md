@@ -352,6 +352,12 @@ None replaces the others, and knowing which to reach for saves time:
   every act after that point is quietly wrong.
   It compares hit SETS, not sampled hits, because a kernel that wrongly REJECTS seeds produces
   a search that is quietly incomplete and looks perfectly healthy.
+  Its `planner` checks (2026-09-28) go one layer up and run whole searches through
+  `GpuSearchPlanner.TryPlan` against plain `SeedSearcher`, because the kernel checks build their
+  own pools and parameters and so cannot see the planner building them differently. That gap hid
+  a real bug: the card pools came from the lobby's union unlock state instead of each player's
+  own, dropping seeds whenever an imported friend epoch differed in card epochs. They need a real
+  device and are skipped on the CPU accelerator.
 
 Correct pieces wired in the wrong order pass the Oracle and fail `--verify`. A patch that
 changes `NextFloat` fails the Oracle immediately. Card rewards are Oracle-only, by necessity —

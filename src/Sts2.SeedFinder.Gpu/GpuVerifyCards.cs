@@ -29,11 +29,13 @@ public static class GpuVerifyCards
         ulong start,
         int samples,
         int fight,
-        int[]? priorDraws = null)
+        int[]? priorDraws = null,
+        IReadOnlyList<UnlockState?>? unlocksBySlot = null)
     {
         // A lone character is a solo run, which is the whole of what decides the pool.
         bool isMultiplayer = characters.Count > 1;
-        using var pools = new GpuCardPools(engine.Accelerator, characters, unlocks, isMultiplayer);
+        var bySlot = BySlot(characters, unlocks, unlocksBySlot);
+        using var pools = new GpuCardPools(engine.Accelerator, characters, bySlot, isMultiplayer);
 
         // A card each player can actually be offered: the first Common in that slot's pool.
         // Commons are the likeliest rarity, so the criterion is dense enough that a range this
@@ -41,7 +43,7 @@ public static class GpuVerifyCards
         var wanted = new string[characters.Count];
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            var pool = CardRewardGenerator.PoolFor(characters[slot], unlocks, isMultiplayer);
+            var pool = CardRewardGenerator.PoolFor(characters[slot], bySlot[slot], isMultiplayer);
             wanted[slot] = pool.First(e => e.Rarity == CardRarity.Common).TypeName;
         }
 
@@ -107,7 +109,7 @@ public static class GpuVerifyCards
             for (int slot = 0; slot < characters.Count && want; slot++)
             {
                 var rewards = CardRewardGenerator.Hallway(
-                    runSeed, slot, characters[slot], fight, ascension, unlocks, draws[slot],
+                    runSeed, slot, characters[slot], fight, ascension, bySlot[slot], draws[slot],
                     isMultiplayer);
                 want = rewards.Fight(fight)?.Cards.Any(c => c.TypeName == wanted[slot]) == true;
             }
@@ -143,14 +145,16 @@ public static class GpuVerifyCards
         UnlockState? unlocks,
         ulong start,
         int samples,
-        string relicSlug)
+        string relicSlug,
+        IReadOnlyList<UnlockState?>? unlocksBySlot = null)
     {
         int picks = NeowCardPayload.CardCount(relicSlug);
         if (picks == 0) return new GpuCheck($"payload {relicSlug}", false, "relic has no modelled payload");
 
         // A lone character is a solo run, which is the whole of what decides the pool.
         bool isMultiplayer = characters.Count > 1;
-        using var pools = new GpuCardPools(engine.Accelerator, characters, unlocks, isMultiplayer);
+        var bySlot = BySlot(characters, unlocks, unlocksBySlot);
+        using var pools = new GpuCardPools(engine.Accelerator, characters, bySlot, isMultiplayer);
 
         // The first rare in pool order. Dense enough over a range this size to produce matches
         // for the two sides to disagree about: one pick in ~27 for a full pool.
@@ -162,7 +166,7 @@ public static class GpuVerifyCards
 
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            wanted[slot] = NeowCardPayload.Offerable(characters[slot], unlocks, isMultiplayer).First().TypeName;
+            wanted[slot] = NeowCardPayload.Offerable(characters[slot], bySlot[slot], isMultiplayer).First().TypeName;
             critSlot[slot] = slot;
             critFight[slot] = 0;                 // 0 marks a payload criterion
             critType[slot] = pools.TypeIdOf(wanted[slot]);
@@ -216,7 +220,7 @@ public static class GpuVerifyCards
             bool want = true;
             for (int slot = 0; slot < characters.Count && want; slot++)
                 want = NeowCardPayload
-                    .Generate(runSeed, slot, characters[slot], relicSlug, unlocks, isMultiplayer)
+                    .Generate(runSeed, slot, characters[slot], relicSlug, bySlot[slot], isMultiplayer)
                     .Any(c => c.TypeName == wanted[slot]);
 
             if (want) matches++;
@@ -233,5 +237,18 @@ public static class GpuVerifyCards
                 $"{samples:N0} seeds, {matches:N0} matches, every verdict agrees")
             : new GpuCheck($"payload {relicSlug}", false,
                 $"{disagreements:N0} of {samples:N0} disagree; first: {firstDetail}");
+    }
+
+    /// <summary>
+    /// One unlock state per slot, fed to BOTH sides of a check: a case that gave the kernel
+    /// per-slot pools and the reference one shared state would compare two different questions.
+    /// </summary>
+    private static IReadOnlyList<UnlockState?> BySlot(
+        IReadOnlyList<Character> characters, UnlockState? unlocks, IReadOnlyList<UnlockState?>? unlocksBySlot)
+    {
+        if (unlocksBySlot is null) return Enumerable.Repeat(unlocks, characters.Count).ToArray();
+        if (unlocksBySlot.Count != characters.Count)
+            throw new ArgumentException("one unlock state per slot", nameof(unlocksBySlot));
+        return unlocksBySlot;
     }
 }

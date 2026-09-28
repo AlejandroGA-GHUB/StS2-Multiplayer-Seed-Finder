@@ -73,7 +73,10 @@ public sealed class GpuCardPools : IDisposable
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _groupCount;
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _poolBase;
 
-    /// <summary>Which uploaded pool each player slot uses. Identical characters share one.</summary>
+    /// <summary>
+    /// Which uploaded pool each player slot uses. Slots with the same character AND the same
+    /// unlock state share one.
+    /// </summary>
     public int[] PoolOfSlot { get; }
 
     /// <summary>Type name to global id, for turning a card criterion into an int.</summary>
@@ -82,18 +85,40 @@ public sealed class GpuCardPools : IDisposable
     public CardPoolView View => new(
         _rarity.View, _typeId.View, _group.View, _groupStart.View, _groupCount.View, _poolBase.View);
 
+    /// <param name="unlocksBySlot">
+    /// Each slot's OWN unlock state, in lobby order — what <c>SearchCriteria.UnlocksBySlot</c>
+    /// returns. Not the run's union: a card pool is gated by its player's epochs, and the CPU
+    /// reads it that way through <c>UnlocksFor(slot)</c>. A single shared state here once made
+    /// the kernel draw from a partner's union-sized pool while the CPU drew from their own, so an
+    /// imported friend epoch that differed in card epochs silently dropped real seeds.
+    /// </param>
     public GpuCardPools(
-        Accelerator accelerator, IReadOnlyList<Character> characters, UnlockState? unlocks,
-        bool isMultiplayer = true)
+        Accelerator accelerator, IReadOnlyList<Character> characters,
+        IReadOnlyList<UnlockState?> unlocksBySlot, bool isMultiplayer = true)
     {
-        // Distinct pools only. A co-op lobby of two Ironclads is one pool, not two.
+        if (unlocksBySlot.Count != characters.Count)
+            throw new ArgumentException(
+                $"one unlock state per slot: {characters.Count} characters, {unlocksBySlot.Count} states.",
+                nameof(unlocksBySlot));
+
+        // Distinct pools only. A co-op lobby of two Ironclads on the same unlocks is one pool,
+        // not two. Keyed on the inputs rather than on PoolFor's array: its cache holds one entry
+        // per character, so alternating unlock states for the same character rebuild the array
+        // and would defeat an identity match, uploading duplicates.
         var pools = new List<CardEntry[]>();
+        var keys = new List<(Character Character, UnlockState? Unlocks)>();
         PoolOfSlot = new int[characters.Count];
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            var pool = CardRewardGenerator.PoolFor(characters[slot], unlocks, isMultiplayer);
-            int existing = pools.FindIndex(p => ReferenceEquals(p, pool));
-            if (existing < 0) { existing = pools.Count; pools.Add(pool); }
+            var character = characters[slot];
+            var unlocks = unlocksBySlot[slot];
+            int existing = keys.FindIndex(k => k.Character == character && ReferenceEquals(k.Unlocks, unlocks));
+            if (existing < 0)
+            {
+                existing = pools.Count;
+                keys.Add((character, unlocks));
+                pools.Add(CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer));
+            }
             PoolOfSlot[slot] = existing;
         }
 

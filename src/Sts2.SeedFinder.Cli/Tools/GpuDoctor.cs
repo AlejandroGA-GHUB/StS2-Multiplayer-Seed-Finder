@@ -142,6 +142,47 @@ public static class GpuDoctor
             }
         }
 
+        // Per-slot pools. Two Silents on different unlock states is the one lobby where the
+        // SAME character needs two different pools uploaded, so a kernel or pool builder that
+        // keyed on the character alone would hand the partner the wrong one.
+        {
+            var twins = new[] { Character.Silent, Character.Silent };
+            var bySlot = new UnlockState?[] { new UnlockState(), MissingCardEpochs(Character.Silent) };
+
+            var fights = GpuVerifyCards.Run(
+                engine, twins, ascension: 0, unlocks: null,
+                start: 10_750_000_000, samples: 20_000, fight: 2, unlocksBySlot: bySlot);
+            Report(fights with { Name = $"{fights.Name}, partner missing card epochs" });
+            ok &= fights.Passed;
+
+            var payload = GpuVerifyCards.RunPayload(
+                engine, twins, unlocks: null, start: 10_750_000_000, samples: 20_000,
+                relicSlug: "hefty_tablet", unlocksBySlot: bySlot);
+            Report(payload with { Name = $"{payload.Name}, partner missing card epochs" });
+            ok &= payload.Passed;
+        }
+
+        // The planner, end to end. Everything above hands the kernel pools and parameters the
+        // check built itself, so none of it can see the planner building them differently from
+        // how the CPU reads the same criteria. These go through TryPlan exactly as a search does.
+        // It needs a real device: the planner never picks ILGPU's CPU backend on its own.
+        using (var planner = GpuSearchPlanner.Create())
+        {
+            if (!planner.Available)
+            {
+                Console.WriteLine($"  [--] planner checks skipped: {planner.Status.Detail}");
+            }
+            else
+            {
+                foreach (var (label, criteria, count) in PlannerCases())
+                {
+                    var check = GpuVerifyPlanner.Run(planner, criteria, start: 12_000_000_000, count: count, label: label);
+                    Report(check);
+                    ok &= check.Passed;
+                }
+            }
+        }
+
         // Run generation, against RunGenerator. The most demanding of these checks by far: the
         // stage walks several hundred sequential draws, so every case here is really asking
         // whether the stream is still in step at the far end of it.
@@ -398,6 +439,71 @@ public static class GpuDoctor
             Unlocks = UnlockState.Union(mixed),
             PlayerUnlocks = mixed,
         }, 4_000);
+    }
+
+    /// <summary>
+    /// Searches for the planner checks. Each has to be one the planner accelerates, and the
+    /// ranges stay small because the plain half of every comparison is the CPU searcher.
+    /// </summary>
+    private static IEnumerable<(string Label, SearchCriteria Criteria, ulong Count)> PlannerCases()
+    {
+        var duo = new[] { Character.Ironclad, Character.Silent };
+        var ctx = new NeowContext { PlayerCount = 2 };
+
+        // A control: with one unlock state for everybody there is nothing for the per-slot
+        // pools to get wrong, so a failure here is the comparison itself, not the unlocks.
+        var p1Common = CardRewardGenerator.PoolFor(Character.Ironclad, null)
+            .First(e => e.Rarity == CardRarity.Common).TypeName;
+        yield return ("cards p1, one unlock state", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Cards = new[] { new CardCriterion(0, p1Common, 1) },
+        }, 200_000);
+
+        // P2's own pool is nine cards short of the union's. Fight 2 so the pity counter and a
+        // second reward both run over the shorter pool.
+        var mixed = new[] { new UnlockState(), MissingCardEpochs(Character.Silent) };
+        var p2Pool = CardRewardGenerator.PoolFor(Character.Silent, mixed[1]);
+        var p2Common = p2Pool.First(e => e.Rarity == CardRarity.Common).TypeName;
+
+        yield return ("cards p2, partner missing card epochs", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Unlocks = UnlockState.Union(mixed),
+            PlayerUnlocks = mixed,
+            Cards = new[] { new CardCriterion(1, p2Common, 2) },
+        }, 400_000);
+
+        // The payload walk reads the same per-slot pool, and a rare is where the missing cards
+        // sit, so this is the shape the shorter pool moves most.
+        var p2Rare = p2Pool.First(e => e.Rarity == CardRarity.Rare).TypeName;
+        yield return ("hefty tablet p2, partner missing card epochs", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Unlocks = UnlockState.Union(mixed),
+            PlayerUnlocks = mixed,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(NeowRelics.Find("hefty_tablet")!, SlotRequirement.Specific,
+                    new[] { 1 }, PayloadCards: new[] { p2Rare }),
+            },
+        }, 400_000);
+    }
+
+    /// <summary>
+    /// A profile missing every card epoch one character has, and nothing else. Read off
+    /// <see cref="CardPoolData.EpochGates"/> rather than written out, so a patch that renames or
+    /// adds one cannot quietly turn this into a fully-unlocked case that tests nothing.
+    /// </summary>
+    private static UnlockState MissingCardEpochs(Character character)
+    {
+        var missing = CardPoolData.EpochGates[character.ToString()].Keys.ToHashSet();
+        return UnlockState.FromRevealedEpochs(UnlockCode.Epochs
+            .Where(e => !missing.Contains(e))
+            .Select(GameHash.Slugify));
     }
 
     /// <summary>

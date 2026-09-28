@@ -221,8 +221,9 @@ public sealed class GpuSearchPlanner : IDisposable
         int n = criteria.Cards.Count + payloads.Sum(x => x.Cards.Count);
         if (n > 32) return null;
 
+        // Each slot's own unlocks, as CardsMatch and NeowPlan read them, not the run's union.
         var pools = new GpuCardPools(
-            _engine.Accelerator, criteria.Characters, criteria.Unlocks, criteria.IsMultiplayer);
+            _engine.Accelerator, criteria.Characters, criteria.UnlocksBySlot(), criteria.IsMultiplayer);
 
         var slot = new int[n];
         var fight = new int[n];
