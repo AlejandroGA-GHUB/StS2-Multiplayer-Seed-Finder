@@ -580,6 +580,8 @@ let pickerMulti = null;
  *   position. Cards use it for rares, which only some fights can roll (never fight 1, and only
  *   fight 3 from Ascension 7), and it has to be re-evaluated on every render because taking a
  *   pick back changes which fight the remaining ones mean.
+ *   `skippable` shows a strip of the fights with buttons to skip one, so a pick can be for a
+ *   later fight alone. A skip is a null in the chosen list: position is still the fight.
  */
 function openPicker(title, groups, kind = 'relic', multi = null) {
   $('#pickerTitle').textContent = title;
@@ -591,6 +593,7 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
   hint.hidden = !multi;
   if (multi) hint.textContent = multi.hint
     ?? `Click up to ${multi.max} cards. The first is fight 1, the next fight 2, and so on. `
+       + (multi.skippable ? 'Skip a fight to leave it open, so a card can be for fight 3 alone. ' : '')
        + 'Close this when you have the ones you want.';
 
   render('');
@@ -605,6 +608,7 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
   return new Promise(res => { pickerResolve = res; });
 
   function render(filter) {
+    renderFights(filter);
     const body = $('#pickerBody');
     body.replaceChildren();
     const f = filter.trim().toLowerCase();
@@ -650,6 +654,52 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
   }
 
   /**
+   * What each fight holds, and the buttons that skip one. Only a card picker asks for it.
+   *
+   * A skip is a placeholder in the chosen list, so the next card lands one fight later; it is
+   * only offered while a later fight is left to pick for, since skipping the last fight is the
+   * same as not picking. Undo takes the most recent skip back.
+   */
+  function renderFights(filter) {
+    const strip = $('#pickerFights');
+    strip.hidden = !pickerMulti?.skippable;
+    if (strip.hidden) return;
+    strip.replaceChildren();
+
+    const chosen = pickerMulti.chosen;
+    for (let f = 0; f < pickerMulti.max; f++) {
+      const slot = el('span', 'fight-slot');
+      slot.appendChild(el('span', 'fight-badge', String(f + 1)));
+      if (f < chosen.length && chosen[f] === null) {
+        slot.classList.add('is-skip');
+        slot.appendChild(el('span', null, 'Skipped'));
+      } else if (f < chosen.length) {
+        slot.appendChild(el('span', null, pickerMulti.itemFor?.(chosen[f])?.name ?? chosen[f]));
+      } else if (f === chosen.length) {
+        slot.classList.add('is-next');
+        slot.appendChild(el('span', null, 'Next pick'));
+      } else {
+        slot.classList.add('is-empty');
+        slot.appendChild(el('span', null, 'Open'));
+      }
+      strip.appendChild(slot);
+    }
+
+    if (chosen.length < pickerMulti.max - 1) {
+      const skip = el('button', 'icon-btn', `Skip fight ${chosen.length + 1}`);
+      skip.type = 'button';
+      skip.onclick = () => { chosen.push(null); render(filter); };
+      strip.appendChild(skip);
+    }
+    if (chosen.length && chosen[chosen.length - 1] === null) {
+      const undo = el('button', 'icon-btn', 'Undo skip');
+      undo.type = 'button';
+      undo.onclick = () => { chosen.pop(); render(filter); };
+      strip.appendChild(undo);
+    }
+  }
+
+  /**
    * Adds or removes one pick. Order IS the fight number, so removing an earlier one renumbers
    * everything after it, and reaching the cap closes the dialog rather than making the user
    * find the close button for a choice they have finished making.
@@ -681,7 +731,8 @@ $('#picker').addEventListener('close', () => {
   // A multi-select picker COMMITS on close, however it was closed. Escape, the backdrop and the
   // × all mean "done", because stopping at one or two picks is the ordinary case rather than a
   // cancellation. Single-select still resolves null, where closing really is a cancel.
-  pickerResolve?.(pickerMulti ? [...pickerMulti.chosen] : null);
+  // Skips left at the end skip nothing, so they are dropped rather than handed back.
+  pickerResolve?.(pickerMulti ? trimSkips(pickerMulti.chosen) : null);
   pickerResolve = null;
   pickerMulti = null;
 });
@@ -1949,16 +2000,23 @@ function cardAllowedAt(card, at) {
 }
 
 /**
- * A player's picks with any that cannot land where they sit removed, keeping order. Dropping one
- * renumbers the rest, which can strand another, so each is judged at its position AFTER the ones
- * before it have been kept or dropped.
+ * A player's picks with any that cannot land where they sit turned into skips. Position is the
+ * fight, so emptying one keeps every other pick in the fight it was chosen for, where dropping it
+ * would renumber them, and could strand a rare that was legal where it was.
  */
 function legalCardPicks(picks, pool) {
-  const kept = [];
-  for (const slug of picks) {
-    if (cardAllowedAt(pool.find(c => c.slug === slug), kept.length)) kept.push(slug);
-  }
-  return kept;
+  return trimSkips(picks.map((slug, at) =>
+    slug && !cardAllowedAt(pool.find(c => c.slug === slug), at) ? null : slug));
+}
+
+/**
+ * Picks with the trailing skips removed. A skip only means something with a pick after it, and
+ * a list that is nothing but skips is no picks at all.
+ */
+function trimSkips(picks) {
+  const out = [...picks];
+  while (out.length && !out[out.length - 1]) out.pop();
+  return out;
 }
 
 /** The picker's heading for rares, saying where they can go at this ascension. */
@@ -2045,7 +2103,8 @@ function renderCards() {
     pickRow.appendChild(picker);
     box.appendChild(pickRow);
     // Changing character strands whatever was picked for the old one.
-    want.picks = (want.picks ?? []).filter(slug => pool.some(c => c.slug === slug));
+    want.picks = trimSkips((want.picks ?? []).map(slug =>
+      slug && !pool.some(c => c.slug === slug) ? null : slug));
     // So does changing the ascension: from A7 a rare can only sit in fight 3, so a rare picked
     // for fight 2 has nowhere left to land.
     want.picks = legalCardPicks(want.picks, pool);
@@ -2067,6 +2126,8 @@ function renderCards() {
       // of the multi-select: it replaces what used to be a per-fight dropdown on every row.
       const list = el('span', 'picks');
       want.picks.forEach((slug, k) => {
+        // A skipped fight has no chip; the badges on the others say which fights they are.
+        if (!slug) return;
         const card = pool.find(c => c.slug === slug);
         const chip = el('span', 'pick');
         chip.appendChild(el('span', 'fight-badge', String(k + 1)));
@@ -2099,6 +2160,7 @@ function renderCards() {
           initial: want.picks,
           itemFor: slug => pool.find(c => c.slug === slug),
           disableAt: (c, at) => !cardAllowedAt(c, at),
+          skippable: true,
         });
       if (picked) { want.picks = picked; renderCards(); }
     };
@@ -2111,7 +2173,7 @@ function renderCards() {
   // at a time rather than all at once.
   // Only meaningful when a player has picked more than one card: with a single pick there is
   // only one assignment, so the control would claim to change something it cannot.
-  const anyMultiPick = state.cards.some(c => (c?.picks?.length ?? 0) > 1);
+  const anyMultiPick = state.cards.some(c => (c?.picks ?? []).filter(Boolean).length > 1);
   $('#cardOrderRow').hidden = !anyMultiPick;
   if (!anyMultiPick) state.cardOrder = 'exact';
   mount('#cardOrder', [

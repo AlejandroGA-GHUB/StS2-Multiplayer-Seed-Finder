@@ -605,6 +605,15 @@ ask two players for two different cards at once.
   rather than sitting there refusing to open. This panel comes alive a row at a time, unlike
   the act panels, which need every player's character before run generation can run at all.
 - Changing a character clears a pick that its pool no longer contains.
+- **A fight can be skipped** (2026-09-28). The card picker shows a strip of the fights, each
+  labelled with its card, "Skipped", "Next pick" or "Open", with **Skip fight N** and **Undo skip**
+  buttons, so a player can ask for fight 3 alone, or fights 1 and 3, or 2 and 3. A skip is an empty
+  entry in the player's pick list, so position is still the fight and the wire format is unchanged
+  (`card=<p>:<slug>:<fight>`, one per real pick). A pick that becomes impossible (a character
+  change, or an ascension that moves where Rares can land) is emptied in place rather than removed,
+  so the other picks keep their fights. **Any order** lays a player's picks over the fights they
+  name, so fights 1 and 3 in any order means those two fights either way round, not fights 1 and 2;
+  see `SeedSearcher.AnyOrderFights`.
 - The hint points at the options listed in the row above as the ones that shift the result —
   they draw off the same stream first. Everything
   else, Silken Tress included, leaves it alone. It also says the thing users assume wrongly:

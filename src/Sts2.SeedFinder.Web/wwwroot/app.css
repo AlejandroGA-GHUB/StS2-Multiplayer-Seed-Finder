@@ -687,6 +687,19 @@ dialog::backdrop { background: #0009; }
 
 .picker-hint { margin: 0 0 9px; color: var(--text-2); font-size: 11.5px; line-height: 1.45; }
 
+/* One slot per fight above the grid, so what each fight holds (a card, a skip, or the next pick)
+   is stated rather than inferred from the badges. */
+.picker-fights { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 9px; }
+.fight-slot {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 4px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 999px;
+  color: var(--text-1); font-size: 11.5px;
+}
+.fight-slot.is-skip { border-style: dashed; color: var(--text-2); }
+.fight-slot.is-next { border-color: var(--accent-dim); color: var(--text-0); }
+.fight-slot.is-empty { opacity: .55; }
+.picker-fights .icon-btn { font-size: 11.5px; padding: 3px 10px; }
+
 .tile.is-picked { border-color: var(--accent); background: var(--bg-3); }
 .tile:disabled { cursor: default; opacity: .42; }
 .tile:disabled:hover { border-color: var(--border); background: var(--bg-2); }

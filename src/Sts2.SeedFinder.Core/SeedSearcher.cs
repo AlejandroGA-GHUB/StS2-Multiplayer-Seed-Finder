@@ -640,20 +640,22 @@ public static class SeedSearcher
             bool OffersAt(int slot, CardCriterion want, int fight) =>
                 For(slot).Fight(fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
 
-            // AnyPermutation asks whether a player's k picks can be laid across the first k
-            // fights one apiece. That is a bipartite perfect matching, and k is at most
+            // AnyPermutation asks whether a player's k picks can be laid across k fights one
+            // apiece — the fights AnyOrderFights names, which is the first k unless the picks
+            // skip one. That is a bipartite perfect matching, and k is at most
             // MaxPredictableFight, so trying the assignments outright is both correct and
             // cheaper than building a matching algorithm for three elements.
             bool GroupMatches(int slot, List<CardCriterion> group)
             {
                 int k = group.Count;
+                var fights = AnyOrderFights(group);
                 bool Place(int i, int usedFights)
                 {
                     if (i == k) return true;
                     for (int f = 0; f < k; f++)
                     {
                         if ((usedFights & (1 << f)) != 0) continue;
-                        if (!OffersAt(slot, group[i], f + 1)) continue;
+                        if (!OffersAt(slot, group[i], fights[f])) continue;
                         if (Place(i + 1, usedFights | (1 << f))) return true;
                     }
                     return false;
@@ -1674,24 +1676,29 @@ public static class SeedSearcher
         }
         else
         {
-            // Any order lays a player's k picks one per fight over the first k fights, so the
-            // Rares among them need SOME set of those fights that can hold them all at once.
+            // Any order lays a player's picks one per fight over the fights AnyOrderFights
+            // names, so the Rares among them need SOME set of those fights that can hold them
+            // all at once.
             foreach (var group in c.Cards.GroupBy(w => w.Slot))
             {
-                int k = group.Count();
-                var rares = group.Where(w => IsRareCard(c, w.Card)).ToList();
+                var picks = group.ToList();
+                var fights = AnyOrderFights(picks);
+                var rares = picks.Where(w => IsRareCard(c, w.Card)).ToList();
                 if (rares.Count == 0) continue;
 
-                bool fits = Enumerable.Range(0, 1 << k)
+                bool fits = Enumerable.Range(0, 1 << fights.Length)
                     .Where(mask => System.Numerics.BitOperations.PopCount((uint)mask) == rares.Count)
                     .Any(mask => CardRewardGenerator.RaresCanLand(
-                        Enumerable.Range(1, k).Where(f => (mask & (1 << (f - 1))) != 0).ToList(), c.Ascension));
+                        fights.Where((_, i) => (mask & (1 << i)) != 0).ToList(), c.Ascension));
                 if (fits) continue;
 
+                string where = fights.Length == 1
+                    ? $"fight {fights[0]}"
+                    : $"fights {string.Join(", ", fights[..^1])} and {fights[^1]}";
                 throw new ArgumentException(rares.Count == 1
-                    ? RareUnreachable(rares[0].Card, k, c.Ascension, anyOrder: true)
+                    ? RareUnreachable(rares[0].Card, where, c.Ascension)
                     : RaresTogether(group.Key < 0 ? "One player" : $"P{group.Key + 1}",
-                        rares.Select(w => w.Card), c.Ascension, $"across fights 1 to {k}"));
+                        rares.Select(w => w.Card), c.Ascension, $"across {where}"));
             }
         }
     }
@@ -1705,15 +1712,17 @@ public static class SeedSearcher
         return false;
     }
 
+    private static string RareUnreachable(string card, int fight, int ascension) =>
+        RareUnreachable(card, $"fight {fight}", ascension);
+
     /// <summary>
     /// Why a Rare cannot be offered where it was asked for, naming where it CAN be, if anywhere.
-    /// With <paramref name="anyOrder"/>, <paramref name="fight"/> is the last fight the player's
-    /// picks reach rather than a fight the card was pinned to.
+    /// <paramref name="where"/> is the fight it was pinned to, or the fights an any-order pick
+    /// could have landed in.
     /// </summary>
-    private static string RareUnreachable(string card, int fight, int ascension, bool anyOrder = false)
+    private static string RareUnreachable(string card, string where, int ascension)
     {
         var can = CardRewardGenerator.RareFights(ascension);
-        string where = anyOrder ? $"fights 1 to {fight}" : $"fight {fight}";
         string scarcity = ascension >= CardRewardGenerator.Scarcity ? $" at Ascension {ascension}" : "";
         string instead = can.Length == 0
             ? "No predictable fight can offer one here."
@@ -1738,11 +1747,28 @@ public static class SeedSearcher
     }
 
     /// <summary>
+    /// The fights one player's picks are laid across in any order, one pick per fight.
+    ///
+    /// The fights the picks NAME, when they name different ones: the page sends each pick's
+    /// fight, and a player can skip a fight (a card for fights 1 and 3, or for fight 3 alone), so
+    /// "any order" has to mean "these cards in these fights, whichever way round", not "the first
+    /// k fights". When picks share a fight, as the CLI's default of fight 1 makes them, it is the
+    /// first k fights, which is what any order always meant. Without a skip the two agree.
+    ///
+    /// Shared by the search and the validator so they cannot disagree about where a pick can go.
+    /// </summary>
+    public static int[] AnyOrderFights(IReadOnlyList<CardCriterion> picks)
+    {
+        var named = picks.Select(p => p.Fight).Distinct().OrderBy(f => f).ToArray();
+        return named.Length == picks.Count ? named : Enumerable.Range(1, picks.Count).ToArray();
+    }
+
+    /// <summary>
     /// How far each player's Rewards stream has to be walked to answer these card criteria.
     ///
     /// Usually the deepest fight anyone named. Under <see cref="CardOrder.AnyPermutation"/> it is
-    /// also at least the largest number of picks on ONE slot, because that mode lays a slot's k
-    /// picks across the first k fights whatever fight the criteria themselves say.
+    /// also at least the largest number of picks on ONE slot, because when a player's picks share
+    /// a fight that mode lays them across the first k fights (see <see cref="AnyOrderFights"/>).
     ///
     /// That second clause is not a refinement, it is the difference between working and silently
     /// finding nothing. Criteria do not have to carry a fight at all — the CLI defaults every

@@ -529,6 +529,21 @@ public static class GpuDoctor
             },
         }, 200_000);
 
+        // Any order over picks that skip a fight: the page sends fights 1 and 3, and the pair
+        // has to land in THOSE fights either way round, not in fights 1 and 2. The kernel only
+        // checks "anywhere up to the deepest fight", so this is the CPU's placement held to it.
+        yield return ("cards p1 any order, fights 1 and 3, 2p", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            CardOrder = CardOrder.AnyPermutation,
+            Cards = new[]
+            {
+                new CardCriterion(0, CommonOf(Character.Ironclad), 1),
+                new CardCriterion(0, CommonOf(Character.Ironclad, 1), 3),
+            },
+        }, 200_000);
+
         // The payload walk reads the same per-slot pool, and a rare is where the missing cards
         // sit, so this is the shape the shorter pool moves most.
         var p2Rare = p2Pool.First(e => e.Rarity == CardRarity.Rare).TypeName;

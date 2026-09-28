@@ -236,6 +236,9 @@
     <!-- Shown only for a multi-select picker, where clicking does something other than the one
          thing every other picker does. -->
     <p class="picker-hint" id="pickerHint" hidden></p>
+    <!-- The card picker's fights, one slot each, plus the buttons that skip one. Order is the
+         fight, so a skipped fight has to be visible or a card for fight 3 alone reads as fight 1. -->
+    <div class="picker-fights" id="pickerFights" hidden></div>
     <input type="text" id="pickerSearch" placeholder="Search&hellip;">
   </div>
   <div class="picker-body" id="pickerBody"></div>
