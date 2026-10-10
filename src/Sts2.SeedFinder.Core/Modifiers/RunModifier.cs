@@ -75,6 +75,64 @@ public static class RunModifiers
         NeowRewardDraws(modifier) != 0;
 
     /// <summary>
+    /// The seven modifiers that change NOTHING this tool predicts, so one of them being on is
+    /// indistinguishable from all seven being on.
+    ///
+    /// That equivalence is what lets the UI offer them as a single switch rather than seven
+    /// tickboxes, and it rests on three facts rather than on their flavour text. Each spends
+    /// zero draws off the <c>Rewards</c> stream, so they cannot move a card reward and their
+    /// position in the list is irrelevant. None overrides a hook that reaches generation:
+    /// <c>ModifyGeneratedMap</c>, <c>AfterRunCreated</c>, <c>AfterRunLoaded</c>,
+    /// <c>ModifyCardRewardCreationOptions</c> or the room-odds hook. And none sets
+    /// <c>ClearsPlayerDeck</c>, which is the one piece of modifier IDENTITY that generation
+    /// reads (see <see cref="ClearsDeck"/>). So the only thing the finder learns from any of
+    /// them is that the run is Custom and Neow has no offer, which is one bit.
+    ///
+    /// Two that look like they belong here and do not:
+    ///
+    ///   * <b>Vintage</b> also adds no Neow option and spends no draws, but it swaps every
+    ///     Monster-room card reward for a relic reward, and <c>RelicFactory</c> pulls that
+    ///     relic from the player's bag and then deletes it from the SHARED bag, which is what
+    ///     chest prediction reads. Membership here is decided by which hooks a modifier
+    ///     overrides, never by its draw cost.
+    ///   * <b>CursedRun</b> does belong, but for a subtler reason than the other six: it draws
+    ///     a curse per act per player, off <c>RunState.Rng.Niche</c>. <c>RunRngSet</c>
+    ///     documents that generator as "niche one-off RNG stuff that we don't care about
+    ///     interacting, like the CursedRun modifier", and nothing here reads it. It consuming
+    ///     RNG is not a reason to move it out.
+    /// </summary>
+    public static readonly RunModifier[] Inert =
+    [
+        RunModifier.Hoarder,
+        RunModifier.Flight,
+        RunModifier.Midas,
+        RunModifier.Murderous,
+        RunModifier.NightTerrors,
+        RunModifier.Terminal,
+        RunModifier.CursedRun,
+    ];
+
+    /// <summary>Whether this modifier is one of the seven in <see cref="Inert"/>.</summary>
+    public static bool IsInert(RunModifier modifier) => Array.IndexOf(Inert, modifier) >= 0;
+
+    /// <summary>
+    /// Whether this modifier empties every player's starting deck before the run begins
+    /// (<c>ModifierModel.ClearsPlayerDeck</c>, honoured by <c>OnRunCreated</c>).
+    ///
+    /// The only place modifier identity reaches generation. <c>Darv</c> gates Pandora's Box on
+    /// <c>Modifiers.Any(m => m.ClearsPlayerDeck)</c>, so with one of these on that Ancient
+    /// offers a relic it otherwise never would. Everything else keyed off the modifier list is
+    /// a <c>Count &lt;= 0</c> test.
+    /// </summary>
+    public static bool ClearsDeck(RunModifier modifier) => modifier switch
+    {
+        RunModifier.Insanity => true,
+        RunModifier.Draft => true,
+        RunModifier.SealedDeck => true,
+        _ => false,
+    };
+
+    /// <summary>
     /// Whether this modifier's payload is one the finder can predict. Only Specialized, for now:
     /// AllStar and Insanity have countable draws but their contents are five and thirty cards
     /// deep, and AllStar reads the colourless pool, which nothing here models.
