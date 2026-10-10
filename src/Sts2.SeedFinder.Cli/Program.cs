@@ -392,7 +392,11 @@ internal static class Program
             for (int slot = 0; slot < opts.PlayerCount; slot++)
             {
                 var branches = AncientOffers.Branches(
-                    ancient, runSeed, slot, new AncientContext { ActIndex = act });
+                    ancient, runSeed, slot, new AncientContext
+                    {
+                        ActIndex = act,
+                        DeckClearedByModifier = RunModifiers.AnyClearsDeck(opts.Modifiers),
+                    });
 
                 if (branches.Count == 1)
                 {

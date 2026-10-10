@@ -830,7 +830,13 @@ public static class SeedSearcher
                     _ => Array.Empty<int>(),
                 };
 
-                var ctxA = new AncientContext { ActIndex = actIndex };
+                // Darv gates Pandora's Box on a modifier having cleared the deck, which is
+                // the only place modifier identity reaches generation.
+                var ctxA = new AncientContext
+                {
+                    ActIndex = actIndex,
+                    DeckClearedByModifier = RunModifiers.AnyClearsDeck(criteria.Modifiers),
+                };
                 bool ok = rule == SlotRequirement.Any
                     ? Enumerable.Range(0, playerCount).Any(s => SlotOffers(runSeed, s, want, ctxA))
                     : slots.Length > 0 && slots.All(s => SlotOffers(runSeed, s, want, ctxA));

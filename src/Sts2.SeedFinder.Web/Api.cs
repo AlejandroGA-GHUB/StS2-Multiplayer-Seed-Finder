@@ -1050,7 +1050,11 @@ public static class Predictions
             for (int slot = 0; slot < players; slot++)
             {
                 var branches = AncientOffers
-                    .Branches(ancient, runSeed, slot, new AncientContext { ActIndex = act })
+                    .Branches(ancient, runSeed, slot, new AncientContext
+                    {
+                        ActIndex = act,
+                        DeckClearedByModifier = RunModifiers.AnyClearsDeck(modifiers),
+                    })
                     .Select(b => new BranchDto(b.Condition, b.Offer.Options.Select(AncientOffers.Display).ToArray()))
                     .ToArray();
                 slots.Add(new SlotOfferDto(slot, branches));

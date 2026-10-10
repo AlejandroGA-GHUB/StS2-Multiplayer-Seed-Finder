@@ -133,6 +133,15 @@ public static class RunModifiers
     };
 
     /// <summary>
+    /// Whether anything ticked on empties the starting deck, which is what Darv's Pandora's Box
+    /// gate asks. One helper rather than the same <c>Any</c> at each call site, because the
+    /// search path and the two display paths disagreeing about it would show an offer the
+    /// search did not match on.
+    /// </summary>
+    public static bool AnyClearsDeck(IEnumerable<RunModifier>? enabled) =>
+        enabled is not null && enabled.Any(ClearsDeck);
+
+    /// <summary>
     /// Whether this modifier's payload is one the finder can predict. Only Specialized, for now:
     /// AllStar and Insanity have countable draws but their contents are five and thirty cards
     /// deep, and AllStar reads the colourless pool, which nothing here models.
