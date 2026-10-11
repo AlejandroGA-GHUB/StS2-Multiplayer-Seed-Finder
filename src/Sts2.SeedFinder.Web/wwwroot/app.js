@@ -945,6 +945,26 @@ const INFO = {
     ],
   },
 
+  specialized: {
+    title: 'Specialized',
+    body: () => [
+      { lead: 'Specialized gives every player five copies of a single card at the start of the '
+            + 'run, and which card is decided by the seed.' },
+      { h: 'Why it is only one draw' },
+      'It picks one card flat across the player\u2019s own pool and then clones it five times. '
+        + 'There is no rarity roll and no upgrade roll, so a Rare is exactly as likely as a '
+        + 'Common and exactly as easy to search for. That is unusual: everywhere else in this '
+        + 'tool a Rare is the expensive ask.',
+      'The draw comes off the same per-player stream the fight card rewards use, so each player '
+        + 'gets their own card from one seed, and the rewards below are read from after it.',
+      { h: 'What it does not read' },
+      'The player\u2019s own pool, even with another character\u2019s cards added. Specialized builds '
+        + 'its card a different way from a reward, one the added pools are not applied to, so '
+        + 'the two can be on together without the starting card changing.',
+      'Verified against a real custom run, with the saved deck as the oracle.',
+    ],
+  },
+
   draft: {
     title: 'Draft',
     body: () => [
