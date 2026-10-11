@@ -203,6 +203,24 @@ public sealed record SpecializedCriterion(int Slot, string Card)
 }
 
 /// <summary>
+/// A card a player must be able to TAKE from the Draft run modifier.
+///
+/// Different in kind from every other card criterion here, because Draft does not decide what the
+/// player ends up with. The seed fixes ten rewards of three cards; the player then takes one from
+/// each, with no skip. So this is a claim about reachability, and the game's rule is one card per
+/// reward: naming three cards that all sit in the same reward of three can never be satisfied,
+/// however often they appear. <see cref="Modifiers.DraftPayload.CanTakeAll"/> is what holds the
+/// criteria to that rule.
+///
+/// Up to ten a player, since ten is how many cards they come away with.
+/// </summary>
+public sealed record DraftCriterion(int Slot, string Card)
+{
+    public override string ToString() =>
+        $"{(Slot < 0 ? "Any player" : $"P{Slot + 1}")} can draft {CardCatalog.Display(Card)}";
+}
+
+/// <summary>
 /// A card a player must be handed by the AllStar run modifier.
 ///
 /// Per player, like Specialized, and for the same reason: the draws are off that player's own
@@ -373,10 +391,21 @@ public sealed record SearchCriteria
     /// <summary>Cards AllStar must hand a player. Needs AllStar in <see cref="Modifiers"/>.</summary>
     public IReadOnlyList<AllStarCriterion> AllStar { get; init; } = Array.Empty<AllStarCriterion>();
 
+    /// <summary>Cards a player must be able to draft. Needs Draft in <see cref="Modifiers"/>.</summary>
+    public IReadOnlyList<DraftCriterion> Draft { get; init; } = Array.Empty<DraftCriterion>();
+
+    /// <summary>
+    /// Rewards draws already spent when Draft takes its option. Draft is first in the game's
+    /// list, so nothing can sit ahead of it and this is always zero; it is computed the same way
+    /// as the others so that a future list order cannot quietly make it wrong.
+    /// </summary>
+    public int? DraftPriorDraws() =>
+        RunModifiers.PriorRewardDraws(RunModifier.Draft, Modifiers);
+
     /// <summary>
     /// Rewards draws already spent when AllStar takes its option, or null when that cannot be
     /// known. AllStar sits late in the game's list, so Specialized and Insanity both count
-    /// toward this when they are on, and Draft or Sealed Deck ahead of it make it unknowable.
+    /// toward this when they are on, and Sealed Deck ahead of it makes it unknowable.
     /// </summary>
     public int? AllStarPriorDraws() =>
         RunModifiers.PriorRewardDraws(RunModifier.AllStar, Modifiers);
@@ -408,8 +437,8 @@ public sealed record SearchCriteria
 
     /// <summary>
     /// Rewards draws already spent when Specialized takes its option, or null when that cannot
-    /// be known. Null only happens with Draft or SealedDeck, the two Neow-option modifiers that
-    /// sit ahead of Specialized in the game's list and have no fixed draw count.
+    /// be known. Null only happens with SealedDeck, whose rolls move the card rarity counter and
+    /// so cannot be reduced to a number of draws.
     /// </summary>
     public int? SpecializedPriorDraws() =>
         RunModifiers.PriorRewardDraws(RunModifier.Specialized, Modifiers);
@@ -507,7 +536,7 @@ public sealed record SearchCriteria
     /// </summary>
     public bool NeedsCharacters => NeedsRun || Cards.Count > 0 || ShopRelicsWanted.Count > 0
                                    || NeedsNeowPayloads || NeowPicks.Count > 0
-                                   || Specialized.Count > 0;
+                                   || Specialized.Count > 0 || Draft.Count > 0;
 
     /// <summary>
     /// Whether any Neow criterion asks about the cards its relic hands out. Those come off the
@@ -617,7 +646,8 @@ public sealed record SeedHit(
     NeowOffer[] OffersBySlot,
     GeneratedRun? Run = null,
     string?[]? SpecializedCards = null,
-    string[][]? AllStarCards = null)
+    string[][]? AllStarCards = null,
+    string[][][]? DraftRewards = null)
 {
     public IEnumerable<int> MatchingSlots(NeowRelic relic, OfferSlot where) =>
         OffersBySlot.Index()
@@ -834,6 +864,58 @@ public static class SeedSearcher
             return hands;
         }
 
+        // Sixty draws per player, so this is the most expensive card criterion here and it sits
+        // after the cheaper ones. Draft is first in the modifier list, so its own prior is zero.
+        int draftPrior = criteria.Draft.Count > 0
+            ? criteria.DraftPriorDraws() ?? 0
+            : 0;
+
+        // Grouped by slot, because "these cards together" is one question: they have to come out
+        // of DIFFERENT rewards, and that can only be answered about a whole hand at once.
+        var draftBySlot = criteria.Draft
+            .GroupBy(w => w.Slot)
+            .Select(g => (Slot: g.Key, Cards: g.Select(w => w.Card).ToArray()))
+            .ToArray();
+
+        bool DraftMatches(ulong runSeed)
+        {
+            if (draftBySlot.Length == 0) return true;
+
+            bool CanTake(int slot, string[] wanted) => DraftPayload.CanTakeAll(
+                DraftPayload.Predict(
+                    runSeed, slot, criteria.Characters[slot], criteria.UnlocksFor(slot),
+                    criteria.IsMultiplayer, criteria.Ascension, draftPrior,
+                    criteria.AddedCardPoolsFor(slot)),
+                wanted);
+
+            foreach (var (slot, wanted) in draftBySlot)
+            {
+                bool ok = slot >= 0
+                    ? CanTake(slot, wanted)
+                    : Enumerable.Range(0, playerCount).Any(s => CanTake(s, wanted));
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        // The ten rewards each player is offered, for the result card. Only computed for a hit.
+        string[][][]? DraftFor(ulong runSeed)
+        {
+            if (!criteria.Modifiers.Contains(RunModifier.Draft)) return null;
+            if (criteria.Characters.Count < playerCount) return null;
+            if (criteria.DraftPriorDraws() is not { } prior) return null;
+
+            var hands = new string[playerCount][][];
+            for (int slot = 0; slot < playerCount; slot++)
+                hands[slot] = DraftPayload
+                    .Predict(runSeed, slot, criteria.Characters[slot], criteria.UnlocksFor(slot),
+                             criteria.IsMultiplayer, criteria.Ascension, prior,
+                             criteria.AddedCardPoolsFor(slot))
+                    .Select(reward => reward.Select(c => c.TypeName).ToArray())
+                    .ToArray();
+            return hands;
+        }
+
         // Which map each act drew is known from act selection alone, three draws, so a boss or
         // event that map cannot produce rejects the seed before the ~400-draw run generation.
         // Only Act 1 has two candidates, so this only ever bites there — but that is half the
@@ -992,6 +1074,7 @@ public static class SeedSearcher
 
                     if (!SpecializedMatches(runSeed)) return;
                     if (!AllStarMatches(runSeed)) return;
+                    if (!DraftMatches(runSeed)) return;
                     if (!NeowMatches(runSeed)) return;
                     if (!CardsMatch(runSeed)) return;
 
@@ -1007,7 +1090,8 @@ public static class SeedSearcher
                             : NeowGenerator.PredictAllOffers(runSeed, ctx),
                         run,
                         SpecializedFor(runSeed),
-                        AllStarFor(runSeed)), cts.Token);
+                        AllStarFor(runSeed),
+                        DraftFor(runSeed)), cts.Token);
                     if (Interlocked.Increment(ref found) >= maxResults) cts.Cancel();
                 }
 
@@ -1095,7 +1179,8 @@ public static class SeedSearcher
         if (c.NeowCriteria.Count == 0 && c.Act1 is null
             && !c.NeedsRun && c.Cards.Count == 0 && c.ShopRelicsWanted.Count == 0
             && c.Specialized.Count == 0
-            && c.AllStar.Count == 0)
+            && c.AllStar.Count == 0
+            && c.Draft.Count == 0)
             throw new ArgumentException(
                 "Nothing to search for. Set at least one criterion: a Neow relic, the Act 1 map, "
                 + "an Ancient's offer, a boss, an event, a card reward, a shop relic, a "
@@ -1190,6 +1275,53 @@ public static class SeedSearcher
     /// finds nothing.
     /// </summary>
     /// <summary>
+    /// What a Draft search cannot coherently ask for. Ten rewards means at most ten cards a
+    /// player, and unlike AllStar the cards come from the character's own pool, widened by
+    /// CharacterCards exactly as a fight reward is.
+    /// </summary>
+    private static void ValidateDraftCriteria(SearchCriteria c)
+    {
+        if (c.Draft.Count == 0) return;
+
+        if (!c.Modifiers.Contains(RunModifier.Draft))
+            throw new ArgumentException(
+                "Drafting a card needs the Draft modifier ticked on. Enable it, or drop the cards.");
+
+        if (c.Characters.Count != c.PlayerCount)
+            throw new ArgumentException(
+                "Draft needs a character for every player, because it offers cards from that "
+                + "player's own pool.");
+
+        foreach (var want in c.Draft)
+        {
+            if (want.Slot >= c.PlayerCount)
+                throw new ArgumentException(
+                    $"P{want.Slot + 1} is not in a {c.PlayerCount}-player lobby.");
+
+            var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
+            if (slots.Any(s => CardCatalog
+                    .Offerable(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer, c.AddedCardPoolsFor(s))
+                    .Any(e => e.TypeName == want.Card)))
+                continue;
+
+            throw new ArgumentException(
+                $"{CardCatalog.Display(want.Card)} is not in "
+                + (want.Slot < 0 ? "any of the party's pools" : $"the {c.Characters[want.Slot]}'s pool")
+                + ", so Draft cannot offer it.");
+        }
+
+        foreach (var group in c.Draft.GroupBy(w => w.Slot))
+        {
+            if (group.Count() <= DraftPayload.Rewards) continue;
+
+            throw new ArgumentException(
+                $"Draft offers {DraftPayload.Rewards} rewards and one card is taken from each, so "
+                + $"{(group.Key < 0 ? "a player" : $"P{group.Key + 1}")} cannot come away with "
+                + $"{group.Count()} named cards. Ask for ten or fewer.");
+        }
+    }
+
+    /// <summary>
     /// The four ways an AllStar search can be incoherent. The interesting one is the last: five
     /// cards is the whole hand, so a sixth ask can never be met.
     /// </summary>
@@ -1204,9 +1336,9 @@ public static class SeedSearcher
 
         if (c.AllStarPriorDraws() is null)
             throw new ArgumentException(
-                "AllStar cannot be predicted alongside Draft or Sealed Deck. Both take their Neow "
-                + "option first and neither draws a fixed number of cards, so where AllStar lands "
-                + "in the stream is not knowable before the run is played.");
+                "AllStar cannot be predicted alongside Sealed Deck. Sealed Deck takes its Neow "
+                + "option first and its thirty cards move the card rarity counter, so where "
+                + "AllStar lands in the stream is not knowable from the seed alone.");
 
         // The colourless pool, which is the same for everyone: no character to check against,
         // unlike every other card criterion here.
@@ -1256,10 +1388,10 @@ public static class SeedSearcher
         // so a cost we cannot count is a card reward we cannot predict either.
         if (c.Cards.Count > 0 && c.ModifierRewardDraws() is null)
             throw new ArgumentException(
-                "Card rewards cannot be predicted alongside Draft or Sealed Deck. Both hand out "
-                + "cards off the same stream the fight rewards come from, and neither draws a "
-                + "fixed number of them, so every later card in the run moves by an amount the "
-                + "seed does not decide.");
+                "Card rewards cannot be predicted alongside Sealed Deck. It hands out cards off "
+                + "the same stream the fight rewards come from, and its rolls move the card "
+                + "rarity counter as well as the stream position, so every later card shifts by "
+                + "an amount a draw count cannot express.");
 
         // CharacterCards is five tickboxes sharing one enum value, so the two halves of it live
         // in different fields and could disagree. Either disagreement would read a card pool the
@@ -1276,6 +1408,7 @@ public static class SeedSearcher
                 + "added. Name at least one character, or drop the modifier.");
 
         ValidateAllStarCriteria(c);
+        ValidateDraftCriteria(c);
 
         if (c.Specialized.Count == 0) return;
 
@@ -1286,9 +1419,9 @@ public static class SeedSearcher
 
         if (c.SpecializedPriorDraws() is null)
             throw new ArgumentException(
-                "Specialized cannot be predicted alongside Draft or Sealed Deck. Both take their "
-                + "Neow option first and neither has a fixed number of draws, so where "
-                + "Specialized lands in the stream is not knowable before the run is played.");
+                "Specialized cannot be predicted alongside Sealed Deck. It takes its Neow option "
+                + "first and its rolls move the card rarity counter, so where Specialized lands "
+                + "in the stream is not knowable from the seed alone.");
 
         foreach (var want in c.Specialized)
         {

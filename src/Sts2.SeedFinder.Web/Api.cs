@@ -316,7 +316,8 @@ public sealed record NeowPayloadDto(int Slot, string Relic, string[] Cards);
 public sealed record SeedResultDto(
     string Seed, NeowOfferDto[] Neow, ActDto[] Acts, AncientOfferDto[] AncientOffers,
     FirstFightDto[] FirstFight, ShopSequenceDto[] Shops, ChestDto[] Chests,
-    NeowPayloadDto[] NeowPayloads, SpecializedDto[] Specialized, AllStarDto[] AllStar);
+    NeowPayloadDto[] NeowPayloads, SpecializedDto[] Specialized, AllStarDto[] AllStar,
+    DraftDto[] Draft);
 
 /// <summary>
 /// What one player starts five copies of, under the Specialized modifier. Empty unless the
@@ -333,6 +334,16 @@ public sealed record SpecializedDto(int Slot, string Card, string Name, bool Has
 /// same card twice is a real outcome rather than a display artefact.
 /// </param>
 public sealed record AllStarDto(int Slot, string[] Cards, string[] Names, bool[] HasArt);
+
+/// <summary>
+/// The ten three-card rewards Draft offers one player, in the order they are walked through.
+/// Empty unless the lobby has Draft ticked on.
+/// </summary>
+/// <param name="Rewards">
+/// Ten entries of three slugs. Reward order and grouping are both load-bearing: exactly one card
+/// is taken from each, so two wanted cards in the same entry can never both be had.
+/// </param>
+public sealed record DraftDto(int Slot, string[][] Rewards, string[][] Names);
 
 /// <summary>
 /// One run modifier, for the Modifiers picker.
@@ -593,6 +604,7 @@ public static class Query
             CharacterCardPools = CharacterCardPools(q),
             Specialized = ParseSpecialized(q, chars, players),
             AllStar = ParseAllStar(q, players),
+            Draft = ParseDraft(q, chars, players, CharacterCardPools(q)),
             ShopRelicsWanted = ParseShopRelics(q, players),
             ChestRelicsWanted = ParseChestRelics(q),
             ExtraChestPicks = ExtraChestPicks(q),
@@ -848,6 +860,53 @@ public static class Query
     public static IReadOnlyList<RunModifier> Modifiers(IQueryCollection q) => ParseModifiers(q);
 
     /// <summary>
+    /// Repeated ?draft=&lt;player&gt;:&lt;card&gt; — which player must be able to draft which
+    /// card. Up to ten a player, and the same card twice asks to take it twice, which needs it
+    /// in two different rewards.
+    /// </summary>
+    private static IReadOnlyList<DraftCriterion> ParseDraft(
+        IQueryCollection q, IReadOnlyList<Character> chars, int players,
+        IReadOnlyList<Character>? addedPools = null)
+    {
+        var wanted = new List<DraftCriterion>();
+        foreach (var raw in (StringValues)q["draft"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+                throw new ArgumentException($"draft wants <player>:<card>, got '{raw}'");
+
+            int slot = -1;
+            if (parts[0] is not ("any" or ""))
+            {
+                var t = parts[0].StartsWith('p') || parts[0].StartsWith('P') ? parts[0][1..] : parts[0];
+                if (!int.TryParse(t, out var n) || n < 1 || n > players)
+                    throw new ArgumentException($"'{parts[0]}' is not a player in a {players}-player lobby");
+                slot = n - 1;
+            }
+
+            if (chars.Count != players)
+                throw new ArgumentException(
+                    "a drafted card needs a character for every player, because Draft offers "
+                    + "cards from that player's own pool.");
+
+            var lookIn = slot < 0 ? Enumerable.Range(0, players) : [slot];
+            var found = lookIn
+                .Select(s => CardCatalog.Find(
+                    chars[s], parts[1], isMultiplayer: players > 1,
+                    addedCharacters: CharacterCardsModifier.AddedFor(chars[s], addedPools)))
+                .FirstOrDefault(x => x is not null);
+
+            wanted.Add(new DraftCriterion(slot, found
+                ?? throw new ArgumentException(
+                    $"no card called '{parts[1]}' in "
+                    + (slot < 0 ? "any of the party's pools" : $"the {chars[slot]}'s pool"))));
+        }
+        return wanted;
+    }
+
+    /// <summary>
     /// Repeated ?allstar=&lt;player&gt;:&lt;card&gt; — which player AllStar must hand which
     /// card. Up to five a player, and the same card twice asks for it twice.
     ///
@@ -914,6 +973,7 @@ public static class Query
         // disagreeing, which is the error this derivation exists to make unreachable.
         if (CharacterCardPools(q).Count > 0) enabled.Add(RunModifier.CharacterCards);
         if (((StringValues)q["allstar"]).Count > 0) enabled.Add(RunModifier.AllStar);
+        if (((StringValues)q["draft"]).Count > 0) enabled.Add(RunModifier.Draft);
 
         return enabled.Distinct().OrderBy(m => m).ToList();
     }
@@ -1121,7 +1181,8 @@ public static class Predictions
                 // AllStar reads the colourless pool, so it needs no character at all. It is
                 // still left empty here: with nobody picked the panel has no player rows to
                 // put it against, and the lobby is not a described run yet.
-                Array.Empty<AllStarDto>());
+                Array.Empty<AllStarDto>(),
+                Array.Empty<DraftDto>());
 
         if (characters.Count != players)
             throw new ArgumentException(
@@ -1265,9 +1326,33 @@ public static class Predictions
             }
         }
 
+        // Draft's ten rewards, per player. Taken from the hit where the search already walked
+        // them, so the result shows the rewards the match was made against.
+        var draft = new List<DraftDto>();
+        if (modifiers is { Count: > 0 } withDraft && withDraft.Contains(RunModifier.Draft)
+            && RunModifiers.PriorRewardDraws(RunModifier.Draft, withDraft) is { } draftPrior)
+        {
+            for (int slot = 0; slot < players; slot++)
+            {
+                var rewards = hit?.DraftRewards is { } walked && slot < walked.Length
+                    ? walked[slot]
+                    : DraftPayload
+                        .Predict(runSeed, slot, characters[slot], Own(slot), isMultiplayer,
+                                 ascension, draftPrior, AddedPoolsFor(slot))
+                        .Select(r => r.Select(c => c.TypeName).ToArray())
+                        .ToArray();
+
+                if (rewards.Length == 0) continue;
+                draft.Add(new DraftDto(
+                    slot,
+                    rewards.Select(r => r.Select(CardCatalog.Slug).ToArray()).ToArray(),
+                    rewards.Select(r => r.Select(CardCatalog.Display).ToArray()).ToArray()));
+            }
+        }
+
         return new SeedResultDto(
             seed, neow, acts, ancientOffers.ToArray(), firstFight, shops, chests,
-            payloads.ToArray(), specialized.ToArray(), allStar.ToArray());
+            payloads.ToArray(), specialized.ToArray(), allStar.ToArray(), draft.ToArray());
     }
 }
 

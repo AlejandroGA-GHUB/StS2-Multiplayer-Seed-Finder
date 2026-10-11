@@ -505,6 +505,7 @@ internal static class Program
             CharacterCardPools = opts.CharacterCardPools,
             Specialized = opts.Specialized,
             AllStar = opts.AllStar,
+            Draft = opts.Draft,
             ShopRelicsWanted = opts.ShopRelicsWanted,
             ChestRelicsWanted = opts.ChestRelicsWanted,
             ExtraChestPicks = opts.ExtraChestPicks,
@@ -565,6 +566,8 @@ internal static class Program
         }
         foreach (var a in opts.AllStar)
             Console.WriteLine($"  AllStar       : {a}");
+        foreach (var d in opts.Draft)
+            Console.WriteLine($"  Draft         : {d}");
         foreach (var sp in opts.Specialized)
             Console.WriteLine($"  Specialized   : {sp}");
         foreach (var pick in opts.NeowPicks)
@@ -621,6 +624,18 @@ internal static class Program
                 for (int i = 0; i < starting.Length; i++)
                     Console.WriteLine($"      P{i + 1} starts: 5x "
                         + (starting[i] is { } t ? CardCatalog.Display(t) : "nothing"));
+
+            // One line per reward, numbered, because which reward a card sits in is the whole
+            // constraint: one card is taken from each, so two wanted cards in reward 3 cannot
+            // both be had.
+            if (hit.DraftRewards is { } draft)
+                for (int i = 0; i < draft.Length; i++)
+                {
+                    Console.WriteLine($"      P{i + 1} draft:");
+                    for (int r = 0; r < draft[i].Length; r++)
+                        Console.WriteLine($"        {r + 1,2}. "
+                            + string.Join(", ", draft[i][r].Select(CardCatalog.Display)));
+                }
 
             // In draw order, not sorted: a repeat means the same card came up twice, and which
             // draw it was is the only thing distinguishing them.
@@ -975,6 +990,12 @@ internal static class Program
         /// <summary>Cards AllStar must hand a player.</summary>
         public IReadOnlyList<AllStarCriterion> AllStar { get; init; } = Array.Empty<AllStarCriterion>();
 
+        /// <summary>Raw --draft arguments, resolved once --characters is known.</summary>
+        public IReadOnlyList<string> DraftArgs { get; init; } = Array.Empty<string>();
+
+        /// <summary>Cards a player must be able to draft.</summary>
+        public IReadOnlyList<DraftCriterion> Draft { get; init; } = Array.Empty<DraftCriterion>();
+
         public IReadOnlyList<SpecializedCriterion> Specialized { get; init; } =
             Array.Empty<SpecializedCriterion>();
 
@@ -1136,6 +1157,9 @@ internal static class Program
                     case "--all-star":
                         o = o with { AllStarArgs = o.AllStarArgs.Append(Next("--all-star")).ToList() };
                         break;
+                    case "--draft":
+                        o = o with { DraftArgs = o.DraftArgs.Append(Next("--draft")).ToList() };
+                        break;
                     case "--card":
                         o = o with { CardArgs = o.CardArgs.Append(Next("--card")).ToList() };
                         break;
@@ -1225,6 +1249,15 @@ internal static class Program
                     o = o with { Modifiers = o.Modifiers.Append(RunModifier.Specialized).ToList() };
 
                 o = o with { Specialized = o.SpecializedArgs.Select(s => ParseSpecialized(s, o)).ToList() };
+            }
+
+            if (o.DraftArgs.Count > 0)
+            {
+                // Naming a card to draft is itself the statement that Draft is on.
+                if (!o.Modifiers.Contains(RunModifier.Draft))
+                    o = o with { Modifiers = o.Modifiers.Append(RunModifier.Draft).ToList() };
+
+                o = o with { Draft = o.DraftArgs.Select(s => ParseDraft(s, o)).ToList() };
             }
 
             if (o.AllStarArgs.Count > 0)
@@ -1406,6 +1439,40 @@ internal static class Program
             throw new ArgumentException(
                 $"'{parts[1]}' is not a card Specialized can hand {who}. It draws from that "
                 + "player's own pool, and only Common, Uncommon and Rare cards are reachable.");
+        }
+
+        /// <summary>
+        /// "p1:anger" — which player must be able to DRAFT which card.
+        ///
+        /// Reachability rather than possession: Draft offers ten rewards of three and the player
+        /// takes one from each, so naming several cards asks for them in different rewards.
+        /// Repeat the flag for up to ten a player.
+        /// </summary>
+        private static DraftCriterion ParseDraft(string s, Options o)
+        {
+            var parts = s.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+                throw new ArgumentException(
+                    $"--draft wants <player>:<card>, e.g. p1:anger, got '{s}'");
+
+            int slot = ParseSlot(parts[0], o, "--draft");
+
+            if (o.Characters.Count != o.PlayerCount)
+                throw new ArgumentException(
+                    "--draft needs --characters, because Draft offers cards from that player's "
+                    + "own pool.");
+
+            var pools = slot < 0 ? Enumerable.Range(0, o.PlayerCount) : [slot];
+            foreach (var i in pools)
+                if (CardCatalog.Find(
+                        o.Characters[i], parts[1], isMultiplayer: o.PlayerCount > 1,
+                        addedCharacters: CharacterCardsModifier.AddedFor(
+                            o.Characters[i], o.CharacterCardPools)) is { } found)
+                    return new DraftCriterion(slot, found);
+
+            var who = slot < 0 ? "anyone in the party" : $"the {o.Characters[slot]}";
+            throw new ArgumentException(
+                $"'{parts[1]}' is not a card {who} can be offered, so Draft cannot offer it.");
         }
 
         /// <summary>

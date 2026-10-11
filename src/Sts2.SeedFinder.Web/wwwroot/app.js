@@ -74,6 +74,10 @@ function defaultState() {
     // which is possible: each of the five draws sees the whole pool again.
     allStarOn: false,
     allStar: [],
+    // Draft offers ten rewards of three and the player takes one from each, so this is up to ten
+    // wanted slugs per slot, and they have to land in DIFFERENT rewards to all be takeable.
+    draftOn: false,
+    draft: [],
     otherModsOn: false,
     specialized: [],
     // Which CharacterCards tickboxes are on, by character name. Lobby-wide, but what each adds
@@ -936,6 +940,29 @@ const INFO = {
     ],
   },
 
+  draft: {
+    title: 'Draft',
+    body: () => [
+      { lead: 'Draft replaces your starting deck with ten card rewards of three, taken one after '
+            + 'another at the start of the run. You keep one card from each, and you cannot '
+            + 'skip, so you come away with exactly ten.' },
+      { h: 'What the seed decides, and what you do' },
+      'The seed fixes all thirty cards on offer and which reward each sits in. Which ten you '
+        + 'come away with is your choice, so a pick here is a claim about what is REACHABLE '
+        + 'rather than about what you end up holding.',
+      'One card per reward is the rule that bites. Two cards you ask for have to turn up in '
+        + 'different rewards, because taking one closes that reward. Asking for the same card '
+        + 'twice asks for it in two of the ten.',
+      { h: 'Rares behave differently here' },
+      'A fight reward starts with the rare chance pushed below zero, which is why fight 1 can '
+        + 'never offer one. Draft rolls against the plain base odds instead, and never moves that '
+        + 'counter, so a Rare can appear in any of the ten rewards, including the first.',
+      'Because it moves no counter, it also leaves your later fight rewards starting from the '
+        + 'normal odds. It spends sixty draws, so those rewards shift along, and the panel '
+        + 'accounts for that.',
+    ],
+  },
+
   allStar: {
     title: 'All Star',
     body: () => [
@@ -1053,7 +1080,7 @@ function setHint(sel, text) {
 
 /** Whether this lobby is a Custom run at all, from either half of the panel. */
 function anyModifier() {
-  return state.specializedOn === true || state.allStarOn === true
+  return state.specializedOn === true || state.allStarOn === true || state.draftOn === true
     || state.otherModsOn === true || state.charCards.length > 0;
 }
 
@@ -1099,6 +1126,14 @@ function inertModifiers() {
  * that was already there. It is also the honest reading of the switch: the user is saying some of
  * these are on, and which ones cannot change the answer.
  */
+/** The wanted draftable cards, one parameter each. The server derives the modifier. */
+function appendDraft(q) {
+  if (!state.draftOn) return;
+  state.draft.forEach((cards, i) => {
+    for (const slug of cards ?? []) q.append('draft', `${i + 1}:${slug}`);
+  });
+}
+
 /** The wanted AllStar cards, one parameter each. The server derives the modifier from them. */
 function appendAllStar(q) {
   if (!state.allStarOn) return;
@@ -1120,6 +1155,7 @@ function enabledModifiers() {
   return (catalog.modifiers ?? []).filter(m =>
     (state.specializedOn && m.slug === 'specialized')
     || (state.allStarOn && m.slug === 'all_star')
+    || (state.draftOn && m.slug === 'draft')
     || (state.charCards.length > 0 && m.slug === 'character_cards')
     || (state.otherModsOn && m.inert));
 }
@@ -1222,6 +1258,7 @@ function renderModifiers() {
     }
   }
 
+  renderDraft();
   renderAllStar();
   renderCharCards();
 
@@ -1255,6 +1292,93 @@ function renderModifiers() {
     + 'replaces Neow’s three options with one forced option per modifier, so a Custom run '
     + 'has no Neow offer and that panel switches off. Specialized is predicted in full; the '
     + 'seven below are supported because they leave every prediction alone.');
+}
+
+/**
+ * Draft: a toggle, then up to ten cards a player must be able to take.
+ *
+ * The cards come from the player's own pool, widened by any CharacterCards tickbox, because
+ * Draft's rewards are ordinary card rewards. A tenth is the limit, since ten rewards means ten
+ * cards come home.
+ */
+function renderDraft() {
+  const box = $('#draft');
+  box.replaceChildren();
+
+  mount('#draftOn', [
+    { label: 'Off', value: 'off' },
+    { label: 'On', value: 'on' },
+  ], state.draftOn ? 'on' : 'off', v => {
+    state.draftOn = v === 'on';
+    if (!state.draftOn) state.draft = [];
+    renderModifiers();
+    renderNeow();
+    syncNeowAvailability();
+    // Sixty draws off the stream the fight rewards share, so those move a long way.
+    renderCards();
+  });
+
+  if (!state.draftOn) return;
+
+  state.draft.length = state.players;
+
+  for (let i = 0; i < state.players; i++) {
+    const want = state.draft[i] || (state.draft[i] = []);
+    const pool = cardPoolFor(i);
+
+    // A character swap strands cards that belonged to the previous one.
+    for (let at = want.length - 1; at >= 0; at--)
+      if (!pool.some(c => c.slug === want[at])) want.splice(at, 1);
+
+    const row = el('div', 'row');
+    row.appendChild(el('label', null, `P${i + 1} can take`));
+
+    const picks = el('div', 'offer');
+    want.forEach((slug, at) => {
+      const card = pool.find(c => c.slug === slug);
+      const name = card?.name ?? slug;
+      const p = el('span', 'pill is-card');
+      p.appendChild(iconFor(slug, name, 20, 'card'));
+      p.appendChild(el('span', null, name));
+      const clear = el('span', 'clear', '×');
+      clear.title = 'Remove';
+      clear.onclick = () => { want.splice(at, 1); renderDraft(); };
+      p.appendChild(clear);
+      picks.appendChild(withTip(p, slug, name, 'card'));
+    });
+
+    if (want.length < 10) {
+      const add = el('button', 'relic-field card-field');
+      add.type = 'button';
+      add.disabled = pool.length === 0;
+      add.appendChild(anyIcon(22));
+      add.appendChild(el('span', 'name', pool.length
+        ? (want.length === 0 ? 'Any cards' : 'Add another')
+        : 'Pick a character first'));
+      add.onclick = async () => {
+        const picked = await openPicker(
+          `P${i + 1} can take from their draft…`,
+          // Draft rolls rarity with the base odds and no pity offset, so a Rare is reachable in
+          // any of the ten rewards, unlike a fight reward. Nothing is greyed out.
+          ['Common', 'Uncommon', 'Rare'].map(r => ({
+            title: r,
+            items: pool.filter(c => c.rarity === r),
+          })),
+          'card');
+        if (picked) { want.push(picked.slug); renderDraft(); }
+      };
+      picks.appendChild(add);
+    }
+
+    row.appendChild(picks);
+    box.appendChild(row);
+  }
+
+  setHint('#draftHint', state.players > 0
+    ? 'One card is taken from each of the ten rewards, so cards asked for here have to turn up '
+      + 'in different rewards. Asking for the same card twice asks to take it twice, which needs '
+      + 'it offered in two of the ten.'
+    : '');
 }
 
 /**
@@ -3228,6 +3352,28 @@ function renderHit(hit, position = null) {
     act1.appendChild(row);
   }
 
+  // Draft's ten rewards, numbered. Grouping is the whole point: one card comes from each, so
+  // two wanted cards sharing a reward is the case a reader needs to be able to see.
+  for (const dr of hit.draft ?? []) {
+    const wanted = new Set(state.draft[dr.slot] ?? []);
+    const head = el('div', 'slot');
+    head.appendChild(el('div', 'slot-label', `P${dr.slot + 1} draft`));
+    act1.appendChild(head);
+
+    dr.rewards.forEach((reward, r) => {
+      const line = el('div', 'offer');
+      line.appendChild(el('div', 'slot-label', `${r + 1}.`));
+      reward.forEach((slug, i) => {
+        const name = dr.names[r][i];
+        const p = el('span', 'pill is-card' + (wanted.has(slug) ? ' is-match' : ''));
+        p.appendChild(iconFor(slug, name, 20, 'card'));
+        p.appendChild(el('span', null, name));
+        line.appendChild(withTip(p, slug, name, 'card'));
+      });
+      act1.appendChild(line);
+    });
+  }
+
   // All Star's five, in draw order. A repeat is a real outcome, so they are not de-duplicated,
   // and each wanted card lights up once rather than lighting every copy.
   for (const as of hit.allStar ?? []) {
@@ -3394,6 +3540,7 @@ function buildQuery() {
     });
   }
   appendAllStar(q);
+  appendDraft(q);
   appendOtherModifiers(q);
 
   // Only A10 changes anything, but send whatever is set so the answer matches the lobby.
@@ -3900,6 +4047,7 @@ async function inspect() {
   if (state.extraChests > 0) q.set('extraChests', state.extraChests);
   if (state.specializedOn) q.append('modifier', 'specialized');
   appendAllStar(q);
+  appendDraft(q);
   appendOtherModifiers(q);
 
   const out = $('#out');

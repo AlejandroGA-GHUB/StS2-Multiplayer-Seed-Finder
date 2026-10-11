@@ -204,7 +204,7 @@ public static class SaveVerifier
 
         if (RunModifiers.PriorRewardDraws(RunModifier.Specialized, enabled) is not { } prior)
         {
-            Console.WriteLine("[SKIP] Draft or Sealed Deck is also on, so where Specialized lands "
+            Console.WriteLine("[SKIP] Sealed Deck is also on, so where Specialized lands "
                               + "in the Rewards stream is not knowable.");
             return 0;
         }

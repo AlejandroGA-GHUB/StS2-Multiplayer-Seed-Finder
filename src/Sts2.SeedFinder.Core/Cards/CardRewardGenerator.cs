@@ -241,6 +241,99 @@ public static class CardRewardGenerator
     }
 
     /// <summary>
+    /// The ten three-card rewards the Draft modifier walks a player through at Neow.
+    ///
+    /// A real reward chain rather than a payload one-liner, which is why it lives here beside
+    /// <see cref="Hallway"/> instead of in <c>Modifiers/</c>. Three things make it differ from a
+    /// fight reward, and all three come from the options Draft builds:
+    ///
+    /// <list type="bullet">
+    /// <item><b>No pity, in either direction.</b> Draft sets neither <c>ForceRarityOddsChange</c>
+    /// nor an Encounter source, so <c>CardFactory.RollForRarity</c> takes
+    /// <c>RollWithBaseOdds</c>, which reads the base odds with NO offset and does not write the
+    /// counter back. Every one of the thirty cards rolls against the same fixed threshold, so
+    /// unlike a fight reward a Rare is possible from the very first card. It also means the
+    /// hallway rewards afterwards still start from the run's initial offset, which is what lets
+    /// Draft be accounted for as a plain draw count.</item>
+    /// <item><b>No upgrade roll</b>, so a card is two draws rather than three.</item>
+    /// <item><b>One blacklist per reward of three</b>, not across all ten: each
+    /// <c>CardReward.Populate</c> is its own <c>CreateForReward</c> call. So a card can appear in
+    /// several rewards, and only within one are the three distinct.</item>
+    /// </list>
+    ///
+    /// Sixty draws in all, which is <see cref="RunModifiers.NeowRewardDraws"/> for Draft. The
+    /// player picking one card from each reward consumes nothing: generation happens in
+    /// <c>Populate</c>, before the offer, exactly as it does for a fight reward.
+    ///
+    /// The pool is the character's, widened by CharacterCards the same way a fight reward is,
+    /// because <c>CardReward</c>'s constructor adds the <c>IsCardReward</c> flag that hook needs.
+    /// </summary>
+    public static RewardCard[][] DraftRewards(
+        ulong runSeed,
+        int playerSlotIndex,
+        Character character,
+        int ascension = 0,
+        UnlockState? unlocks = null,
+        int priorDraws = 0,
+        bool isMultiplayer = true,
+        IReadOnlyList<Character>? addedCharacters = null)
+    {
+        var rng = RewardsRng(runSeed, playerSlotIndex);
+        Burn(rng, priorDraws);
+
+        var pool = PoolFor(character, unlocks, isMultiplayer, addedCharacters);
+        var index = PoolIndex.For(pool);
+
+        var rewards = new RewardCard[DraftRewardCount][];
+        Span<int> taken = stackalloc int[DraftOptionCount];
+
+        for (int reward = 0; reward < DraftRewardCount; reward++)
+        {
+            var cards = new RewardCard[DraftOptionCount];
+            int takenCount = 0;
+
+            for (int i = 0; i < DraftOptionCount; i++)
+            {
+                var rarity = RollBaseRarity(rng, index, pool, taken[..takenCount], ascension);
+
+                int count = CountAvailable(index, pool, taken[..takenCount], rarity);
+                int picked = NthAvailable(index, pool, taken[..takenCount], rarity, rng.NextInt(0, count));
+
+                cards[i] = new RewardCard(pool[picked].TypeName, pool[picked].Rarity, false);
+                taken[takenCount++] = picked;
+            }
+
+            rewards[reward] = cards;
+        }
+        return rewards;
+    }
+
+    /// <summary>How many three-card rewards Draft offers.</summary>
+    public const int DraftRewardCount = 10;
+
+    /// <summary>How many cards each Draft reward offers, of which the player keeps one.</summary>
+    public const int DraftOptionCount = 3;
+
+    /// <summary>
+    /// <c>CardRarityOdds.RollWithBaseOdds</c>: the base thresholds with no pity offset applied
+    /// and none written back. Separate from <see cref="RollRarity"/> rather than a flag on it,
+    /// because the two differ in both the threshold and the side effect, and a single method
+    /// taking a "use pity" bool is how those get mixed up.
+    /// </summary>
+    private static CardRarity RollBaseRarity(
+        Rng rng, PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken, int ascension)
+    {
+        float roll = rng.NextFloat();
+        float rare = RegularRareOdds(ascension);
+
+        var rarity = roll < rare ? CardRarity.Rare
+                   : roll < RegularUncommonOdds + rare ? CardRarity.Uncommon
+                   : CardRarity.Common;
+
+        return NextAllowedRarity(rarity, index, pool, taken);
+    }
+
+    /// <summary>
     /// Whether a fight this far into a run can offer a Rare at all, at this ascension.
     ///
     /// Fight 1 never can: the pity offset starts at -0.05 and grows by 0.01 a draw, so the rare

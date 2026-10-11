@@ -40,12 +40,19 @@ public enum RunModifier
 /// What each modifier costs a player's <c>Rewards</c> stream at Neow, and what that means for
 /// predicting the ones that draw from it.
 ///
-/// Five modifiers add a forced Neow option, and three of those cost a known, fixed number of
-/// draws because each is a plain uniform pick with no rarity roll and no upgrade roll:
-/// Specialized takes one, AllStar five and Insanity thirty. The other two cannot be counted from
-/// the seed alone. SealedDeck rolls rarities and accumulates a blacklist across thirty draws, and
-/// Draft builds ten three-card rewards the player picks through, so neither has a draw count that
-/// is fixed before the run happens.
+/// Five modifiers add a forced Neow option, and four of those cost a known, fixed number of
+/// draws. Three are plain uniform picks with no rarity roll and no upgrade roll: Specialized
+/// takes one, AllStar five and Insanity thirty. Draft is the fourth and the interesting one: it
+/// rolls rarities, but through <c>RollWithBaseOdds</c>, which applies no pity offset and writes
+/// none back, so its thirty cards cost two draws each for sixty in all and leave the rarity
+/// counter exactly where they found it. The player choosing one card per reward consumes
+/// nothing, because generation happens in Populate before the offer.
+///
+/// SealedDeck is the one that genuinely cannot be reduced to a number. It sets
+/// <c>ForceRarityOddsChange</c>, so its thirty cards roll through <c>Roll</c> and DO move the
+/// pity counter. Its draw count is fixed at sixty, but a later card reward would start from a
+/// moved offset rather than the run's initial one, so a prior-draw count is not enough to
+/// predict anything after it.
 /// </summary>
 public static class RunModifiers
 {
@@ -63,9 +70,13 @@ public static class RunModifiers
         RunModifier.AllStar => 5,
         RunModifier.Insanity => 30,
 
-        // Rarity rolls and a running blacklist, and ten player-driven picks respectively.
+        // Ten rewards of three, two draws a card: a base-odds rarity roll that moves no pity,
+        // then the pick. No upgrade roll, and the player's ten choices cost nothing.
+        RunModifier.Draft => 60,
+
+        // Sixty draws as well, but they roll with ForceRarityOddsChange and so move the rarity
+        // counter. The count is knowable; what comes after it is not, from a count alone.
         RunModifier.SealedDeck => null,
-        RunModifier.Draft => null,
 
         _ => 0,
     };
@@ -142,12 +153,19 @@ public static class RunModifiers
         enabled is not null && enabled.Any(ClearsDeck);
 
     /// <summary>
-    /// Whether this modifier's payload is one the finder can predict. Only Specialized, for now:
-    /// AllStar and Insanity have countable draws but their contents are five and thirty cards
-    /// deep, and AllStar reads the colourless pool, which nothing here models.
+    /// Whether this modifier's payload is one the finder can predict and search on.
+    ///
+    /// Insanity is the odd one out: its draws ARE counted, so it can be ticked on without
+    /// spoiling anything else, but nothing here names its thirty cards yet.
     /// </summary>
-    public static bool IsPredictable(RunModifier modifier) =>
-        modifier == RunModifier.Specialized;
+    public static bool IsPredictable(RunModifier modifier) => modifier switch
+    {
+        RunModifier.Specialized => true,
+        RunModifier.AllStar => true,
+        RunModifier.Draft => true,
+        RunModifier.CharacterCards => true,
+        _ => false,
+    };
 
     /// <summary>
     /// How many Rewards draws are already spent by the time <paramref name="modifier"/> takes its
@@ -155,8 +173,8 @@ public static class RunModifiers
     /// uncountable cost, so nothing after it on that stream can be predicted.
     ///
     /// Only modifiers EARLIER in the list count, which is why the enum order is load-bearing.
-    /// For Specialized that leaves exactly two spoilers, Draft and SealedDeck, and both of them
-    /// only ever appear ahead of it.
+    /// Draft and SealedDeck are the only two that can sit ahead of Specialized, and SealedDeck
+    /// is now the only one of those that makes the answer unknowable.
     /// </summary>
     public static int? PriorRewardDraws(RunModifier modifier, IEnumerable<RunModifier> enabled)
     {
