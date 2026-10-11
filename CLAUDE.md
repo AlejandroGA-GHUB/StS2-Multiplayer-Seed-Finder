@@ -296,11 +296,30 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   it, `cuda`/`opencl`/`cpu` force a backend.
 
   Ported so far, all fused into one pass (`SeedFilter`) and ordered cheapest-first: **acts**,
-  **Neow (both branches)**, **card rewards**, and **run generation** for bosses, events, Ancient
-  identity and shop relics. Measured on a 4070 SUPER against the CPU searcher on the same
-  criteria: Neow curse ~950 M/s, Neow positive 167 M/s (CPU 10 M/s), shop relics 280 M/s (CPU
-  0.88 M/s), run generation 37 M/s worst case and 432 M/s on a multi-criterion search that
-  rejects early (CPU 2.2 M/s).
+  **Neow (both branches)**, **card rewards**, the **three modifier payloads** (Specialized, All
+  Star, Draft) and **run generation** for bosses, events, Ancient identity and shop relics.
+  Measured on a 4070 SUPER against the CPU searcher on the same criteria: Neow curse ~950 M/s,
+  Neow positive 167 M/s (CPU 10 M/s), shop relics 280 M/s (CPU 0.88 M/s), run generation 37 M/s
+  worst case and 432 M/s on a multi-criterion search that rejects early (CPU 2.2 M/s), Draft
+  94 M/s (CPU 6.9 M/s), Specialized 141 M/s (CPU 32 M/s), All Star 140 M/s (CPU 85 M/s).
+
+  **The modifier payloads share the card stage** rather than getting one each, because all three
+  come off the same per-player `Rewards` stream it already walks. `CardCriteriaView.Fight` is the
+  discriminator: positive is a fight, 0 a Neow payload, and -1/-2/-3 Specialized/All Star/Draft.
+  Three things they needed, each worth knowing before touching `GpuCardPools`:
+  a flat **`Offerable`** index per pool, since a uniform pick indexes the non-Basic, non-Ancient
+  entries in POOL order, which is neither one rarity group nor the groups concatenated; the
+  **colourless pool** uploaded once per distinct unlock state, since it has five epoch gates of
+  its own; and **`OfferableOwnCount`**, the prefix of a pool belonging to the player's own
+  character, because Specialized must not follow CharacterCards into the widened pool.
+
+  How exact each payload test is decides whether the kernel may reject. Specialized satisfies
+  EVERY matching criterion (one card, so two asks for it are one question). All Star claims one
+  still-unsatisfied criterion per draw, which is exact because criteria naming the same card are
+  interchangeable. **Draft is deliberately looser**: the game takes one card per reward, so two
+  wanted cards sharing a reward cannot both be had, and the kernel only asks whether enough
+  DISTINCT rewards offer them. Exact per card, over-accepting across different cards, which is
+  free because `SeedSearcher` re-runs the real matching on every candidate.
 
   **The positive branch never materialises the offer.** Building it the CPU's way needs a mutable
   variable-length list per thread. Instead the kernel computes where the wanted relic STARTS and
@@ -365,8 +384,8 @@ None replaces the others, and knowing which to reach for saves time:
   different instruction set, so `sts2.dll` has nothing to say about them. They are held to
   `Core` instead, which the Oracle already vouches for. Needs no GPU (it falls back to ILGPU's
   CPU accelerator) and no run. **Run it after any change to `Core/MegaRandom.cs`, `Core/Rng.cs`,
-  `Core/GameHash.cs`, `Core/SeedCodec.cs`, `Core/Acts/`, `Core/Cards/` or `Gpu/`** — those are
-  the files the kernels mirror. `Core/Acts/` matters most: `RunFilter` reproduces the whole
+  `Core/GameHash.cs`, `Core/SeedCodec.cs`, `Core/Acts/`, `Core/Cards/`, `Core/Modifiers/` or
+  `Gpu/`** — those are the files the kernels mirror. `Core/Acts/` matters most: `RunFilter` reproduces the whole
   UpFront draw order, so a change there that nobody mirrors puts the kernel one draw out and
   every act after that point is quietly wrong.
   It compares hit SETS, not sampled hits, because a kernel that wrongly REJECTS seeds produces
