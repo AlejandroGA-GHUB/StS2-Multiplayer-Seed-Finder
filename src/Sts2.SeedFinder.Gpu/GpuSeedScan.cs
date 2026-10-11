@@ -89,10 +89,12 @@ public sealed class GpuSeedScan : IDisposable
     private NeowPrefilterView EmptyNeow => new(_noInts.View, _noInts.View);
 
     private CardPoolView EmptyPools => new(
-        _noBytes.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View);
+        _noBytes.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View,
+        _noInts.View, _noInts.View, _noInts.View, _noInts.View);
 
     private CardCriteriaView EmptyCriteria => new(
-        _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View);
+        _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View, _noInts.View,
+        _noInts.View);
 
     private RunFilterView EmptyRun => new(
         _noInts.View, _noInts.View, _noInts.View, _noULongs.View,

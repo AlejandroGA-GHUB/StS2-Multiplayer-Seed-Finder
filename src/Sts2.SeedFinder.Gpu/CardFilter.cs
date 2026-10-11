@@ -10,9 +10,22 @@ public readonly struct CardCriteriaView
     public readonly ArrayView<int> Slot;
 
     /// <summary>
-    /// 1-based fight, matching <c>CardCriterion.Fight</c>. ZERO means the criterion is about a
-    /// Neow payload rather than a fight — the rares an Arcane Scroll or Hefty Tablet hands over
-    /// before the run's first room, off the front of the same stream.
+    /// What this criterion is about, and where in the stream to look.
+    ///
+    /// A positive number is a 1-based fight, matching <c>CardCriterion.Fight</c>. Zero and the
+    /// negatives are the other things that come off the same per-player Rewards stream, each
+    /// drawn before any fight:
+    ///
+    /// <list type="bullet">
+    /// <item><b>0</b> — a Neow payload, the rares an Arcane Scroll or Hefty Tablet hands over.</item>
+    /// <item><b>-1</b> — Specialized, the card a player starts five copies of.</item>
+    /// <item><b>-2</b> — All Star, one of the five colourless cards.</item>
+    /// <item><b>-3</b> — Draft, a card the player must be able to take from the ten rewards.</item>
+    /// </list>
+    ///
+    /// One discriminator rather than one array per kind, because every kind answers the same
+    /// question about the same stream for the same slot, and the satisfied-bitmask below does
+    /// not care which produced a match.
     /// </summary>
     public readonly ArrayView<int> Fight;
 
@@ -21,6 +34,13 @@ public readonly struct CardCriteriaView
 
     /// <summary>Which uploaded pool each player slot draws from.</summary>
     public readonly ArrayView<int> PoolOfSlot;
+
+    /// <summary>
+    /// Which uploaded pool holds the colourless cards for each slot. All Star reads this
+    /// instead of the character pool, and it is per slot because the colourless pool carries
+    /// epoch gates of its own.
+    /// </summary>
+    public readonly ArrayView<int> ColorlessOfSlot;
 
     /// <summary>
     /// Draws this slot's assumed Neow pick takes off the Rewards stream before fight 1, indexed
@@ -42,7 +62,8 @@ public readonly struct CardCriteriaView
 
     public CardCriteriaView(
         ArrayView<int> slot, ArrayView<int> fight, ArrayView<int> typeId, ArrayView<int> poolOfSlot,
-        ArrayView<int> priorDraws, ArrayView<int> payloadPicks)
+        ArrayView<int> priorDraws, ArrayView<int> payloadPicks,
+        ArrayView<int> colorlessOfSlot)
     {
         Slot = slot;
         Fight = fight;
@@ -50,6 +71,7 @@ public readonly struct CardCriteriaView
         PoolOfSlot = poolOfSlot;
         PriorDraws = priorDraws;
         PayloadPicks = payloadPicks;
+        ColorlessOfSlot = colorlessOfSlot;
     }
 }
 
@@ -88,6 +110,36 @@ public struct CardFilterParams
     /// the matching here would cost a per-criterion fight mask in registers for no gain.
     /// </summary>
     public int AnyOrder;
+
+    // ---- Custom run modifier payloads ------------------------------------------------------
+    //
+    // Each is drawn at Neow, before any fight, off the same per-player Rewards stream. They sit
+    // on their own copy of that stream rather than sharing the fight walk's, because a
+    // criterion aimed at "any player" names no slot: every slot's payload has to be looked at
+    // while nobody's fight stream is known to have moved. That is exact, since a payload is
+    // drawn before anything else touches the stream.
+    //
+    // The prior counts differ from PriorDraws and from each other, because the game walks the
+    // forced options in list order: Draft is first, then Specialized, then All Star, so each
+    // starts after everything earlier has spent its draws.
+
+    /// <summary>Draws spent before Specialized's single pick, or -1 when it is not asked about.</summary>
+    public int SpecializedPrior;
+
+    /// <summary>Draws spent before All Star's five, or -1 when it is not asked about.</summary>
+    public int AllStarPrior;
+
+    /// <summary>How many cards All Star hands out. Five, mirrored from Core rather than hardcoded.</summary>
+    public int AllStarCards;
+
+    /// <summary>Draws spent before Draft's ten rewards, or -1 when it is not asked about.</summary>
+    public int DraftPrior;
+
+    /// <summary>How many rewards Draft offers.</summary>
+    public int DraftRewards;
+
+    /// <summary>How many cards each Draft reward offers, of which the player keeps one.</summary>
+    public int DraftOptions;
 }
 
 /// <summary>
@@ -243,6 +295,95 @@ public static class CardFilter
                 }
             }
 
+            // Specialized: one uniform pick, off this player's OWN pool.
+            //
+            // Satisfies EVERY matching criterion rather than the first unsatisfied one, unlike
+            // the two below. There is a single card, so two criteria naming it are the same
+            // question asked twice and the CPU answers yes to both; satisfying only one here
+            // would reject a seed the CPU accepts, which is the one direction a pre-filter may
+            // never be wrong in.
+            if (p.SpecializedPrior >= 0 && Asks(slot, Specialized, p, criteria))
+            {
+                int n = pools.OfferableOwnCount[pool];
+                if (n > 0)
+                {
+                    var prng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
+                    prng.Burn(p.SpecializedPrior);
+
+                    int got = pools.Offerable[pools.OfferableStart[pool] + prng.NextInt(0, n)];
+                    int gotType = pools.TypeId[poolBase + got];
+
+                    for (int k = 0; k < p.CriterionCount; k++)
+                    {
+                        if (criteria.Fight[k] != Specialized) continue;
+                        int want = criteria.Slot[k];
+                        if (want >= 0 && want != slot) continue;
+                        if (criteria.TypeId[k] == gotType) satisfied |= 1 << k;
+                    }
+                }
+            }
+
+            // All Star: five uniform picks off the COLOURLESS pool, each with a fresh blacklist,
+            // so the five can repeat.
+            //
+            // Each draw satisfies at most ONE still-unsatisfied criterion, which is what makes
+            // asking for the same card twice mean drawn twice. Criteria naming the same card
+            // are interchangeable, so taking the first unsatisfied one can never strand a
+            // later one: this is exact rather than merely permissive.
+            if (p.AllStarPrior >= 0 && Asks(slot, AllStar, p, criteria))
+            {
+                int cpool = criteria.ColorlessOfSlot[slot];
+                int cbase = pools.PoolBase[cpool];
+                int n = pools.OfferableCount[cpool];
+                if (n > 0)
+                {
+                    var prng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
+                    prng.Burn(p.AllStarPrior);
+
+                    for (int i = 0; i < p.AllStarCards; i++)
+                    {
+                        int got = pools.Offerable[pools.OfferableStart[cpool] + prng.NextInt(0, n)];
+                        satisfied = Claim(pools.TypeId[cbase + got], slot, AllStar, satisfied, p, criteria);
+                    }
+                }
+            }
+
+            // Draft: ten rewards of three, each card a base-odds rarity roll then a pick, with
+            // a blacklist that resets per reward. Sixty draws, the most expensive thing in this
+            // stage, which is why it runs last of the three.
+            //
+            // Deliberately LOOSER than the real criterion. The game takes one card from each
+            // reward, so two wanted cards sharing a reward cannot both be had; this only asks
+            // whether enough distinct rewards offer them. Per card that is exact, because a
+            // reward blacklists by type and so offers a given card at most once. Across
+            // different cards it over-accepts, which is free: SeedSearcher re-checks every
+            // candidate with the real matching.
+            if (p.DraftPrior >= 0 && Asks(slot, Draft, p, criteria))
+            {
+                var prng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
+                prng.Burn(p.DraftPrior);
+
+                for (int r = 0; r < p.DraftRewards; r++)
+                {
+                    int t0 = -1, t1 = -1, taken = 0;
+                    for (int i = 0; i < p.DraftOptions; i++)
+                    {
+                        int rarity = RollBaseRarity(ref prng, p, pools, pool, poolBase, t0, t1, taken);
+                        int avail = CountAvailable(pools, pool, poolBase, rarity, t0, t1, taken);
+                        if (avail <= 0) break;
+
+                        int got = NthAvailable(
+                            pools, pool, poolBase, rarity, prng.NextInt(0, avail), t0, t1, taken);
+                        if (got < 0) break;
+
+                        satisfied = Claim(pools.TypeId[poolBase + got], slot, Draft, satisfied, p, criteria);
+
+                        if (taken == 0) t0 = got; else if (taken == 1) t1 = got;
+                        taken++;
+                    }
+                }
+            }
+
             // The fight walk is the whole cost of this stage, and it is only worth paying for a
             // player some fight criterion can be answered by: one pinned to them, or one asking
             // about anybody. A criterion aimed at P1 used to walk every player in the lobby.
@@ -259,13 +400,72 @@ public static class CardFilter
     }
 
     /// <summary>For <see cref="PinnedSatisfied"/>: every criterion on the slot, whatever its fight.</summary>
-    private const int AnyFight = -1;
+    private const int AnyFight = -99;
+
+    /// <summary>
+    /// The <c>Fight</c> values that mean "not a fight". Each names something drawn at Neow, off
+    /// the front of the same per-player Rewards stream, before any room is entered.
+    /// </summary>
+    private const int Specialized = -1;
+    private const int AllStar = -2;
+    private const int Draft = -3;
+
+    /// <summary>Whether any criterion of this kind can be answered by this slot.</summary>
+    private static bool Asks(int slot, int kind, CardFilterParams p, CardCriteriaView criteria)
+    {
+        for (int c = 0; c < p.CriterionCount; c++)
+            if (criteria.Fight[c] == kind && (criteria.Slot[c] < 0 || criteria.Slot[c] == slot))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Marks ONE still-unsatisfied criterion of this kind as met by a drawn card, and returns
+    /// the new mask.
+    ///
+    /// One rather than all, because asking for the same card twice asks to be handed it twice,
+    /// and letting a single copy light both bits would accept seeds that give only one.
+    /// Criteria naming the same card are interchangeable, so claiming the first unsatisfied one
+    /// never strands a later one.
+    /// </summary>
+    private static int Claim(
+        int gotType, int slot, int kind, int satisfied, CardFilterParams p, CardCriteriaView criteria)
+    {
+        for (int c = 0; c < p.CriterionCount; c++)
+        {
+            if (criteria.Fight[c] != kind) continue;
+            if ((satisfied & (1 << c)) != 0) continue;
+            int want = criteria.Slot[c];
+            if (want >= 0 && want != slot) continue;
+            if (criteria.TypeId[c] != gotType) continue;
+            return satisfied | (1 << c);
+        }
+        return satisfied;
+    }
+
+    /// <summary>
+    /// <c>CardRarityOdds.RollWithBaseOdds</c>: the base thresholds with no pity offset applied
+    /// and none written back, which is what Draft's options select.
+    ///
+    /// Separate from <see cref="RollRarity"/> rather than a flag on it, matching Core, because
+    /// the two differ in both the threshold and the side effect.
+    /// </summary>
+    private static int RollBaseRarity(
+        ref GpuRandom rng, CardFilterParams p, CardPoolView pools, int pool, int poolBase,
+        int t0, int t1, int taken)
+    {
+        float roll = rng.NextFloat();
+        int rarity = roll < p.RareOdds ? Rare
+                   : roll < RegularUncommonOdds + p.RareOdds ? Uncommon
+                   : Common;
+        return NextAllowedRarity(pools, pool, poolBase, rarity, t0, t1, taken);
+    }
 
     /// <summary>Whether any fight criterion can be satisfied by this slot's rewards.</summary>
     private static bool WalksFights(int slot, CardFilterParams p, CardCriteriaView criteria)
     {
         for (int c = 0; c < p.CriterionCount; c++)
-            if (criteria.Fight[c] != 0 && (criteria.Slot[c] < 0 || criteria.Slot[c] == slot)) return true;
+            if (criteria.Fight[c] > 0 && (criteria.Slot[c] < 0 || criteria.Slot[c] == slot)) return true;
         return false;
     }
 

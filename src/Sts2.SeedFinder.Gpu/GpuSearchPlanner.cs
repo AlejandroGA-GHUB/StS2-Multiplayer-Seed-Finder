@@ -1,7 +1,9 @@
 using ILGPU;
 using ILGPU.Runtime;
 using Sts2.SeedFinder.Core;
+using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Modifiers;
 using Sts2.SeedFinder.Core.Neow;
 
 namespace Sts2.SeedFinder.Gpu;
@@ -87,6 +89,15 @@ public sealed class GpuSearchPlanner : IDisposable
     }
 
     /// <summary>Device buffers that live only as long as one search.</summary>
+    /// <summary>
+    /// The <c>Fight</c> values that mark a modifier payload rather than a fight. Must match the
+    /// constants the kernel switches on; they live here too so the two sides are written down
+    /// next to the code that sets and reads them.
+    /// </summary>
+    private const int SpecializedKind = -1;
+    private const int AllStarKind = -2;
+    private const int DraftKind = -3;
+
     private sealed class CardResources : IDisposable
     {
         public required GpuCardPools Pools { get; init; }
@@ -96,9 +107,11 @@ public sealed class GpuSearchPlanner : IDisposable
         public required MemoryBuffer1D<int, Stride1D.Dense> PoolOfSlot { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> PriorDraws { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> PayloadPicks { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> ColorlessOfSlot { get; init; }
 
         public CardCriteriaView View => new(
-            Slot.View, Fight.View, TypeId.View, PoolOfSlot.View, PriorDraws.View, PayloadPicks.View);
+            Slot.View, Fight.View, TypeId.View, PoolOfSlot.View, PriorDraws.View, PayloadPicks.View,
+            ColorlessOfSlot.View);
 
         public void Dispose()
         {
@@ -108,6 +121,7 @@ public sealed class GpuSearchPlanner : IDisposable
             PoolOfSlot.Dispose();
             PriorDraws.Dispose();
             PayloadPicks.Dispose();
+            ColorlessOfSlot.Dispose();
             Pools.Dispose();
         }
     }
@@ -176,9 +190,13 @@ public sealed class GpuSearchPlanner : IDisposable
                 RemovedMask = _engine.Accelerator.Allocate1D(neowRemoved),
             };
 
+        // The card stage now answers the modifier payloads too, all of which come off the same
+        // per-player Rewards stream, so a search made only of those is still worth building it
+        // for. Without this a Draft-only search declined the stage and fell back to the CPU.
         var cards = default(CardFilterParams);
         CardResources? cardResources = null;
-        if (criteria.Cards.Count > 0 || criteria.NeedsNeowPayloads)
+        if (criteria.Cards.Count > 0 || criteria.NeedsNeowPayloads
+            || criteria.Specialized.Count > 0 || criteria.AllStar.Count > 0 || criteria.Draft.Count > 0)
             cardResources = TryBuildCards(criteria, out cards);
 
         var runStage = GpuRunStage.TryCreate(_engine, criteria);
@@ -211,19 +229,52 @@ public sealed class GpuSearchPlanner : IDisposable
     {
         p = default;
         if (_engine is null) return null;
-        if (criteria.Characters.Count != criteria.PlayerCount) return null;
+
+        // All Star is the one card criterion that needs no character, because the colourless
+        // pool is the same for everyone. Every other kind indexes a character's pool, so
+        // without the party there is nothing to build; with only All Star asked, the character
+        // pools are uploaded against a placeholder and never read, since the walks that would
+        // read them are switched off below.
+        bool knowParty = criteria.Characters.Count == criteria.PlayerCount;
+        if (!knowParty)
+        {
+            if (criteria.AllStar.Count == 0) return null;
+            if (criteria.Cards.Count > 0 || criteria.NeedsNeowPayloads
+                || criteria.Specialized.Count > 0 || criteria.Draft.Count > 0) return null;
+        }
+
+        var party = knowParty
+            ? criteria.Characters
+            : Enumerable.Repeat(Character.Ironclad, criteria.PlayerCount).ToArray();
 
         // Payload criteria join a relic to the cards it hands out. The kernel tests only the
         // card half — the Neow stage answers the relic half, and for "any player" the two are
         // not joined at all, so a seed can pass here that the CPU then rejects. That is the
         // direction a pre-filter is allowed to be wrong in.
         var payloads = criteria.NeowCriteria.Where(x => x.Cards.Count > 0).ToList();
-        int n = criteria.Cards.Count + payloads.Sum(x => x.Cards.Count);
+
+        // The three modifier payloads join in here rather than getting a stage each: all three
+        // are drawn at Neow off the same per-player Rewards stream this stage already walks,
+        // and all three answer the same question about the same slot.
+        //
+        // Declined outright when a prior count is unknowable, which is Sealed Deck sitting
+        // ahead of them. The CPU refuses those searches anyway, but a kernel that guessed zero
+        // would read every one of them from the wrong point in the stream.
+        bool wantsSpecialized = criteria.Specialized.Count > 0;
+        bool wantsAllStar = criteria.AllStar.Count > 0;
+        bool wantsDraft = criteria.Draft.Count > 0;
+
+        if (wantsSpecialized && criteria.SpecializedPriorDraws() is null) return null;
+        if (wantsAllStar && criteria.AllStarPriorDraws() is null) return null;
+        if (wantsDraft && criteria.DraftPriorDraws() is null) return null;
+
+        int n = criteria.Cards.Count + payloads.Sum(x => x.Cards.Count)
+              + criteria.Specialized.Count + criteria.AllStar.Count + criteria.Draft.Count;
         if (n > 32) return null;
 
         // Each slot's own unlocks, as CardsMatch and NeowPlan read them, not the run's union.
         var pools = new GpuCardPools(
-            _engine.Accelerator, criteria.Characters, criteria.UnlocksBySlot(), criteria.IsMultiplayer,
+            _engine.Accelerator, party, criteria.UnlocksBySlot(), criteria.IsMultiplayer,
             criteria.CharacterCardPools);
 
         var slot = new int[n];
@@ -277,6 +328,35 @@ public sealed class GpuSearchPlanner : IDisposable
             }
         }
 
+        // The modifier payloads, each on the same footing as a card criterion: a slot, a kind
+        // and a type id. The kind is what sends the kernel to the right walk.
+        foreach (var want in criteria.Specialized)
+        {
+            typeId[next] = pools.TypeIdOf(want.Card);
+            if (typeId[next] < 0) { pools.Dispose(); return null; }
+            slot[next] = want.Slot;
+            fight[next] = SpecializedKind;
+            next++;
+        }
+
+        foreach (var want in criteria.AllStar)
+        {
+            typeId[next] = pools.TypeIdOf(want.Card);
+            if (typeId[next] < 0) { pools.Dispose(); return null; }
+            slot[next] = want.Slot;
+            fight[next] = AllStarKind;
+            next++;
+        }
+
+        foreach (var want in criteria.Draft)
+        {
+            typeId[next] = pools.TypeIdOf(want.Card);
+            if (typeId[next] < 0) { pools.Dispose(); return null; }
+            slot[next] = want.Slot;
+            fight[next] = DraftKind;
+            next++;
+        }
+
         p = new CardFilterParams
         {
             RewardsNameHash = GameHash.Deterministic(GameHash.SnakeCase("Rewards")),
@@ -290,6 +370,15 @@ public sealed class GpuSearchPlanner : IDisposable
             AllMask = n == 32 ? -1 : (1 << n) - 1,
             Active = 1,
             AnyOrder = criteria.CardOrder == CardOrder.AnyPermutation ? 1 : 0,
+
+            // -1 switches a walk off. The counts come from Core so the kernel cannot drift from
+            // the number of cards the game actually hands out.
+            SpecializedPrior = wantsSpecialized ? criteria.SpecializedPriorDraws()!.Value : -1,
+            AllStarPrior = wantsAllStar ? criteria.AllStarPriorDraws()!.Value : -1,
+            AllStarCards = AllStarPayload.Cards,
+            DraftPrior = wantsDraft ? criteria.DraftPriorDraws()!.Value : -1,
+            DraftRewards = DraftPayload.Rewards,
+            DraftOptions = DraftPayload.OptionsPerReward,
         };
 
         var acc = _engine.Accelerator;
@@ -302,6 +391,7 @@ public sealed class GpuSearchPlanner : IDisposable
             PoolOfSlot = acc.Allocate1D(pools.PoolOfSlot),
             PriorDraws = acc.Allocate1D(criteria.RewardPriorDraws()),
             PayloadPicks = acc.Allocate1D(payloadPicks),
+            ColorlessOfSlot = acc.Allocate1D(pools.ColorlessPoolOfSlot),
         };
     }
 

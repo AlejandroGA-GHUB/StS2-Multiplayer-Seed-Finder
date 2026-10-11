@@ -40,9 +40,40 @@ public readonly struct CardPoolView
     /// <summary>Where each pool's entries begin in <see cref="Rarity"/> and <see cref="TypeId"/>.</summary>
     public readonly ArrayView<int> PoolBase;
 
+    /// <summary>
+    /// Pool-local positions of every entry a UNIFORM pick can land on, in pool order: the
+    /// game's "not Basic and not Ancient" filter, which the Uniform branch of
+    /// <c>CardFactory.CreateForReward</c> applies instead of rolling a rarity.
+    ///
+    /// A second index rather than a reuse of <see cref="Group"/>, because the two answer
+    /// different questions. A rarity roll indexes within ONE rarity; a uniform pick indexes
+    /// across three of them in pool order, which is not any one group and is not the
+    /// concatenation of the groups either, since those are ordered by rarity first.
+    /// </summary>
+    public readonly ArrayView<int> Offerable;
+
+    /// <summary>Start of a pool's run within <see cref="Offerable"/>.</summary>
+    public readonly ArrayView<int> OfferableStart;
+
+    /// <summary>How many entries that run holds.</summary>
+    public readonly ArrayView<int> OfferableCount;
+
+    /// <summary>
+    /// How many of them belong to the player's OWN character, which is a prefix of the run.
+    ///
+    /// Specialized reads this rather than <see cref="OfferableCount"/>. Its options never set
+    /// the IsCardReward flag, so the CharacterCards hook declines it and its pool stays the
+    /// character's own, even in a lobby where every reward pool has been widened. The added
+    /// pools are APPENDED, so the own pool is a prefix of the widened one, in the same order,
+    /// and a count is all it takes to stop at the boundary.
+    /// </summary>
+    public readonly ArrayView<int> OfferableOwnCount;
+
     public CardPoolView(
         ArrayView<byte> rarity, ArrayView<int> typeId, ArrayView<int> group,
-        ArrayView<int> groupStart, ArrayView<int> groupCount, ArrayView<int> poolBase)
+        ArrayView<int> groupStart, ArrayView<int> groupCount, ArrayView<int> poolBase,
+        ArrayView<int> offerable, ArrayView<int> offerableStart, ArrayView<int> offerableCount,
+        ArrayView<int> offerableOwnCount)
     {
         Rarity = rarity;
         TypeId = typeId;
@@ -50,6 +81,10 @@ public readonly struct CardPoolView
         GroupStart = groupStart;
         GroupCount = groupCount;
         PoolBase = poolBase;
+        Offerable = offerable;
+        OfferableStart = offerableStart;
+        OfferableCount = offerableCount;
+        OfferableOwnCount = offerableOwnCount;
     }
 }
 
@@ -73,6 +108,10 @@ public sealed class GpuCardPools : IDisposable
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _groupStart;
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _groupCount;
     private readonly MemoryBuffer1D<int, Stride1D.Dense> _poolBase;
+    private readonly MemoryBuffer1D<int, Stride1D.Dense> _offerable;
+    private readonly MemoryBuffer1D<int, Stride1D.Dense> _offerableStart;
+    private readonly MemoryBuffer1D<int, Stride1D.Dense> _offerableCount;
+    private readonly MemoryBuffer1D<int, Stride1D.Dense> _offerableOwnCount;
 
     /// <summary>
     /// Which uploaded pool each player slot uses. Slots with the same character AND the same
@@ -84,7 +123,15 @@ public sealed class GpuCardPools : IDisposable
     private readonly Dictionary<string, int> _typeIds;
 
     public CardPoolView View => new(
-        _rarity.View, _typeId.View, _group.View, _groupStart.View, _groupCount.View, _poolBase.View);
+        _rarity.View, _typeId.View, _group.View, _groupStart.View, _groupCount.View, _poolBase.View,
+        _offerable.View, _offerableStart.View, _offerableCount.View, _offerableOwnCount.View);
+
+    /// <summary>
+    /// Which uploaded pool holds the COLOURLESS cards for each slot, which is what All Star
+    /// draws from. Per slot rather than one for the lobby, because the pool is epoch-gated by
+    /// each player's own unlocks exactly as a character pool is.
+    /// </summary>
+    public int[] ColorlessPoolOfSlot { get; }
 
     /// <param name="unlocksBySlot">
     /// Each slot's OWN unlock state, in lobby order — what <c>SearchCriteria.UnlocksBySlot</c>
@@ -131,6 +178,35 @@ public sealed class GpuCardPools : IDisposable
             PoolOfSlot[slot] = existing;
         }
 
+        // How much of each pool is the player's OWN character, before CharacterCards appended
+        // anything. Specialized stops here; everything else reads the whole pool.
+        var ownLength = new List<int>();
+        for (int i = 0; i < pools.Count; i++)
+        {
+            var (character, unlocks) = keys[i];
+            ownLength.Add(CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer).Length);
+        }
+
+        // The colourless pool, which All Star draws from. One per distinct unlock state rather
+        // than one for the lobby: it carries five epoch gates of its own, so two players whose
+        // accounts differ in those epochs see different pools, exactly as with a character pool.
+        ColorlessPoolOfSlot = new int[characters.Count];
+        var colorlessKeys = new List<(UnlockState? Unlocks, int Pool)>();
+        for (int slot = 0; slot < characters.Count; slot++)
+        {
+            var unlocks = unlocksBySlot[slot];
+            int at = colorlessKeys.FindIndex(k => ReferenceEquals(k.Unlocks, unlocks));
+            if (at < 0)
+            {
+                var colorless = CardRewardGenerator.ColorlessPool(unlocks, isMultiplayer);
+                colorlessKeys.Add((unlocks, pools.Count));
+                at = colorlessKeys.Count - 1;
+                pools.Add(colorless);
+                ownLength.Add(colorless.Length);
+            }
+            ColorlessPoolOfSlot[slot] = colorlessKeys[at].Pool;
+        }
+
         _typeIds = new Dictionary<string, int>(StringComparer.Ordinal);
 
         var rarity = new List<byte>();
@@ -139,6 +215,10 @@ public sealed class GpuCardPools : IDisposable
         var groupStart = new int[pools.Count * RarityCount];
         var groupCount = new int[pools.Count * RarityCount];
         var poolBase = new int[pools.Count];
+        var offerable = new List<int>();
+        var offerableStart = new int[pools.Count];
+        var offerableCount = new int[pools.Count];
+        var offerableOwnCount = new int[pools.Count];
 
         for (int p = 0; p < pools.Count; p++)
         {
@@ -165,6 +245,18 @@ public sealed class GpuCardPools : IDisposable
                     if ((int)pool[i].Rarity == r) group.Add(i);
                 groupCount[p * RarityCount + r] = group.Count - groupStart[p * RarityCount + r];
             }
+
+            // Pool order again, across the three reward rarities at once. Mirrors the game's
+            // own filter, written as the exclusion it is rather than as "the reward rarities",
+            // so a pool that one day grows a fourth reachable rarity keeps matching.
+            offerableStart[p] = offerable.Count;
+            for (int i = 0; i < pool.Length; i++)
+            {
+                if (pool[i].Rarity is CardRarity.Basic or CardRarity.Ancient) continue;
+                offerable.Add(i);
+                if (i < ownLength[p]) offerableOwnCount[p]++;
+            }
+            offerableCount[p] = offerable.Count - offerableStart[p];
         }
 
         _rarity = accelerator.Allocate1D(rarity.ToArray());
@@ -173,6 +265,10 @@ public sealed class GpuCardPools : IDisposable
         _groupStart = accelerator.Allocate1D(groupStart);
         _groupCount = accelerator.Allocate1D(groupCount);
         _poolBase = accelerator.Allocate1D(poolBase);
+        _offerable = accelerator.Allocate1D(offerable.ToArray());
+        _offerableStart = accelerator.Allocate1D(offerableStart);
+        _offerableCount = accelerator.Allocate1D(offerableCount);
+        _offerableOwnCount = accelerator.Allocate1D(offerableOwnCount);
     }
 
     /// <summary>Global id for a card type, or -1 when no pool in this lobby contains it.</summary>
@@ -186,5 +282,9 @@ public sealed class GpuCardPools : IDisposable
         _groupStart.Dispose();
         _groupCount.Dispose();
         _poolBase.Dispose();
+        _offerable.Dispose();
+        _offerableStart.Dispose();
+        _offerableCount.Dispose();
+        _offerableOwnCount.Dispose();
     }
 }

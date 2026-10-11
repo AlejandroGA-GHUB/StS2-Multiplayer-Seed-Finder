@@ -86,6 +86,8 @@ public static class GpuVerifyCards
         using var dPoolOfSlot = acc.Allocate1D(pools.PoolOfSlot);
         using var dPrior = acc.Allocate1D(draws);
         using var dPayload = acc.Allocate1D(new int[characters.Count]);
+        // These checks never exercise All Star, so the colourless mapping only has to be bound.
+        using var dColorless = acc.Allocate1D(pools.ColorlessPoolOfSlot);
         using var dMatched = acc.Allocate1D<int>(samples);
 
         var kernel = acc.LoadAutoGroupedStreamKernel<
@@ -93,7 +95,8 @@ public static class GpuVerifyCards
             CardFilter.ProbeKernel);
 
         var criteriaView = new CardCriteriaView(
-            dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View, dPayload.View);
+            dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View, dPayload.View,
+            dColorless.View);
         kernel(samples, dIndices.View, p, pools.View, criteriaView, dMatched.View);
         acc.Synchronize();
 
@@ -198,6 +201,7 @@ public static class GpuVerifyCards
         using var dPoolOfSlot = acc.Allocate1D(pools.PoolOfSlot);
         using var dPrior = acc.Allocate1D(new int[characters.Count]);
         using var dPayload = acc.Allocate1D(payloadPicks);
+        using var dColorless = acc.Allocate1D(pools.ColorlessPoolOfSlot);
         using var dMatched = acc.Allocate1D<int>(samples);
 
         var kernel = acc.LoadAutoGroupedStreamKernel<
@@ -205,7 +209,8 @@ public static class GpuVerifyCards
             CardFilter.ProbeKernel);
 
         kernel(samples, dIndices.View, p, pools.View,
-            new CardCriteriaView(dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View, dPayload.View),
+            new CardCriteriaView(dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View,
+                                 dPayload.View, dColorless.View),
             dMatched.View);
         acc.Synchronize();
 

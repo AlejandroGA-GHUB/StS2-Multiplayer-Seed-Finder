@@ -43,9 +43,7 @@ public static class SpecializedPayload
     /// </summary>
     public static CardEntry[] Pool(
         Character character, UnlockState? unlocks = null, bool isMultiplayer = true) =>
-        CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer)
-            .Where(c => c.Rarity != CardRarity.Basic && c.Rarity != CardRarity.Ancient)
-            .ToArray();
+        CardRewardGenerator.OfferablePool(character, unlocks, isMultiplayer);
 
     /// <summary>
     /// The card this player starts with five of, or null when the pool is empty.

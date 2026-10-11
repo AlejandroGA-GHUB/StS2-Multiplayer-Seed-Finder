@@ -43,9 +43,7 @@ public static class AllStarPayload
     /// is the exclusion and this should keep matching it if the pool ever grows a Basic.
     /// </summary>
     public static CardEntry[] Pool(UnlockState? unlocks = null, bool isMultiplayer = true) =>
-        CardRewardGenerator.ColorlessPool(unlocks, isMultiplayer)
-            .Where(c => c.Rarity != CardRarity.Basic && c.Rarity != CardRarity.Ancient)
-            .ToArray();
+        CardRewardGenerator.OfferableColorlessPool(unlocks, isMultiplayer);
 
     /// <summary>
     /// The five cards this player starts with, in the order they are drawn. Repeats are

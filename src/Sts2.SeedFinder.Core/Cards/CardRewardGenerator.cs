@@ -619,6 +619,50 @@ public static class CardRewardGenerator
     [ThreadStatic] private static PoolCache?[]? _colorless;
 
     /// <summary>
+    /// The pool a UNIFORM pick sees: everything that is not Basic and not Ancient, in pool
+    /// order. What Specialized and All Star index into.
+    ///
+    /// Cached like the pools themselves, because this is read once per seed per player in a
+    /// search and the filter is otherwise a LINQ pass and an allocation every time. The GPU
+    /// uploads the same thing once as a flat index, which is the same idea in another shape.
+    ///
+    /// Written as the game's exclusion rather than as "the three reward rarities": they are the
+    /// same set today, but the game's rule is the exclusion.
+    /// </summary>
+    public static CardEntry[] OfferablePool(
+        Character character, UnlockState? unlocks = null, bool isMultiplayer = true)
+    {
+        var cache = _offerable ??= new PoolCache?[Enum.GetValues<Character>().Length * 2];
+        int slot = ((int)character * 2) + (isMultiplayer ? 1 : 0);
+
+        if (cache[slot] is { } hit && ReferenceEquals(hit.Unlocks, unlocks)) return hit.Pool;
+
+        var built = Uniform(PoolFor(character, unlocks, isMultiplayer));
+        cache[slot] = new PoolCache(unlocks, built);
+        return built;
+    }
+
+    /// <summary>The same for the colourless pool, which All Star draws from.</summary>
+    public static CardEntry[] OfferableColorlessPool(
+        UnlockState? unlocks = null, bool isMultiplayer = true)
+    {
+        var cache = _offerableColorless ??= new PoolCache?[2];
+        int slot = isMultiplayer ? 1 : 0;
+
+        if (cache[slot] is { } hit && ReferenceEquals(hit.Unlocks, unlocks)) return hit.Pool;
+
+        var built = Uniform(ColorlessPool(unlocks, isMultiplayer));
+        cache[slot] = new PoolCache(unlocks, built);
+        return built;
+    }
+
+    private static CardEntry[] Uniform(CardEntry[] pool) =>
+        pool.Where(c => c.Rarity != CardRarity.Basic && c.Rarity != CardRarity.Ancient).ToArray();
+
+    [ThreadStatic] private static PoolCache?[]? _offerable;
+    [ThreadStatic] private static PoolCache?[]? _offerableColorless;
+
+    /// <summary>
     /// The character's pool as a reward sees it: epoch-gated cards removed, then filtered for
     /// run mode. Multiplayer drops singleplayer-only cards, of which the game currently ships
     /// none; singleplayer drops multiplayer-only ones, of which it ships five per character.

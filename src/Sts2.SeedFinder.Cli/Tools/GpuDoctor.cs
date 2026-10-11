@@ -571,6 +571,120 @@ public static class GpuDoctor
             Cards = new[] { new CardCriterion(1, CommonOf(Character.Ironclad), 1) },
         }, 200_000);
 
+        // ---- Custom run modifier payloads --------------------------------------------------
+        //
+        // All three come off the same per-player Rewards stream as the fight rewards, each
+        // after a different number of spent draws, so the shapes below are chosen for what a
+        // wrong prior or a wrong pool would move.
+
+        var ironCommon = CommonOf(Character.Ironclad);
+        var colorless = AllStarPayload.Pool();
+        var colorlessA = colorless[0].TypeName;
+        var colorlessB = colorless[^1].TypeName;
+
+        // Specialized indexes the whole non-Basic, non-Ancient pool in POOL order, which is not
+        // any one rarity group and is not the groups concatenated either. Its own flat index.
+        yield return ("specialized p1", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.Specialized },
+            Specialized = new[] { new SpecializedCriterion(0, ironCommon) },
+        }, 200_000);
+
+        // The same, in a lobby where CharacterCards has widened every REWARD pool. Specialized
+        // must not follow it there: the kernel has to stop at the own-pool prefix, and a seed
+        // whose pick lands past that boundary is the failure this would show.
+        yield return ("specialized p1, CharacterCards widening the rewards", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.Specialized, RunModifier.CharacterCards },
+            CharacterCardPools = new[] { Character.Defect, Character.Regent },
+            Specialized = new[] { new SpecializedCriterion(0, ironCommon) },
+        }, 200_000);
+
+        // All Star reads the COLOURLESS pool, which no other criterion touches, and which is
+        // uploaded per unlock state of its own.
+        yield return ("all star p1", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.AllStar },
+            AllStar = new[] { new AllStarCriterion(0, colorlessA) },
+        }, 200_000);
+
+        // Two asks for the same card need TWO of the five draws to produce it. A kernel that
+        // lit both bits off one drawn copy would accept seeds that hand it over once.
+        yield return ("all star p1, same card twice", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.AllStar },
+            AllStar = new[] { new AllStarCriterion(0, colorlessA), new AllStarCriterion(0, colorlessA) },
+        }, 400_000);
+
+        // Slot -1 has to be looked for on every player, and All Star needs no character at all,
+        // so this also covers the pools being built without a known party.
+        yield return ("all star any player", new SearchCriteria
+        {
+            Context = new NeowContext { PlayerCount = 3 },
+            Characters = trio,
+            Modifiers = new[] { RunModifier.AllStar },
+            AllStar = new[] { new AllStarCriterion(-1, colorlessB) },
+        }, 200_000);
+
+        // Draft is sixty draws of base-odds rarity rolls with a per-reward blacklist, so it is
+        // the one most likely to drift from Core by a single draw.
+        yield return ("draft p1, three cards", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.Draft },
+            Draft = new[]
+            {
+                new DraftCriterion(0, ironCommon),
+                new DraftCriterion(0, CommonOf(Character.Ironclad, 1)),
+                new DraftCriterion(0, CommonOf(Character.Ironclad, 2)),
+            },
+        }, 200_000);
+
+        // Two asks for one card need two distinct rewards offering it. The kernel's test is
+        // exact for THIS shape, which is why it is worth pinning: it only over-accepts where
+        // two DIFFERENT cards share a reward.
+        yield return ("draft p1, same card twice", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.Draft },
+            Draft = new[] { new DraftCriterion(0, ironCommon), new DraftCriterion(0, ironCommon) },
+        }, 200_000);
+
+        // All three at once, which is the case the prior counts decide: the game walks the
+        // forced options in list order, so Draft spends sixty before Specialized draws its one,
+        // and All Star starts after both. Three separate priors read off one stream.
+        yield return ("draft + specialized + all star, one player", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.Draft, RunModifier.Specialized, RunModifier.AllStar },
+            Draft = new[] { new DraftCriterion(0, ironCommon) },
+            Specialized = new[] { new SpecializedCriterion(0, CommonOf(Character.Ironclad, 1)) },
+            AllStar = new[] { new AllStarCriterion(0, colorlessA) },
+        }, 400_000);
+
+        // The colourless pool is epoch-gated like any other, so a partner missing epochs must
+        // get their own copy of it rather than the lobby's union.
+        yield return ("all star p2, partner missing card epochs", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Unlocks = UnlockState.Union(mixed),
+            PlayerUnlocks = mixed,
+            Modifiers = new[] { RunModifier.AllStar },
+            AllStar = new[] { new AllStarCriterion(1, colorlessA) },
+        }, 400_000);
+
         // The payload walk reads the same per-slot pool, and a rare is where the missing cards
         // sit, so this is the shape the shorter pool moves most.
         var p2Rare = p2Pool.First(e => e.Rarity == CardRarity.Rare).TypeName;
