@@ -61,9 +61,15 @@ function defaultState() {
     // has to be read at the same drain count. See ChestSatisfies.
     chestTolerance: {},
     extraChests: 0,
-    // Custom run modifiers. `specializedOn` makes this a Custom run at all, which is what takes
-    // Neow away; `specialized` is one { card } per player, the card they start five copies of.
+    // Custom run modifiers. Either of these makes it a Custom run, which is what takes Neow
+    // away; `specialized` is one { card } per player, the card they start five copies of.
+    //
+    // `otherModsOn` is a single switch standing for all seven modifiers that change nothing the
+    // finder predicts. It is one switch rather than seven tickboxes because the prediction
+    // cannot tell them apart: each spends no Rewards draws and touches no generation hook, so
+    // the search is sent all seven and reads the same answer any subset would have given.
     specializedOn: false,
+    otherModsOn: false,
     specialized: [],
   };
 }
@@ -973,23 +979,49 @@ function setHint(sel, text) {
 // modifier and no relic offer at all. So this panel does not narrow the Neow panel, it disables
 // it, and the results stop showing a Neow row.
 //
-// Only Specialized is offered here, out of the game's sixteen. It is the one whose payload
-// reduces to a single draw off a stream this tool already models, and, just as importantly, the
-// one that provably leaves everything else alone: a --verify run with it on still matches the
-// game's acts, bosses, Ancients, encounters, events and map. Several of the others do move
-// predictions (BigGameHunter rewrites the generated map, DeadlyEvents changes room odds), so
-// listing them as tickable would invite a search whose other answers were quietly wrong.
+// The panel has two halves, because the game's sixteen modifiers fall into two kinds.
+//
+// Specialized is picked individually: its payload is predictable, so it has its own row of card
+// pickers and its draws shift the card rewards below.
+//
+// The other half is one switch for the seven that change NOTHING here: Hoarder, Flight, Midas,
+// Murderous, Night Terrors, Terminal and Cursed Run. None adds a Neow option, none overrides a
+// generation hook, and none clears the starting deck, so the only thing the finder learns from
+// them is that the run is Custom. One of them on and all seven on give the same answer, which is
+// why asking which is which would be asking for detail the prediction cannot use.
+//
+// Several of the remaining modifiers DO move predictions (BigGameHunter rewrites the generated
+// map, DeadlyEvents edits the relic bags and room odds, Vintage drains the shared bag in play),
+// so they are in neither half: listing them would invite a search whose other answers were
+// quietly wrong.
 
-/** Whether this lobby is a Custom run at all. One modifier today, but the question is general. */
+/** Whether this lobby is a Custom run at all, from either half of the panel. */
 function anyModifier() {
-  return state.specializedOn === true;
+  return state.specializedOn === true || state.otherModsOn === true;
+}
+
+/** The seven catalog rows behind the single switch, in the game's list order. */
+function inertModifiers() {
+  return (catalog.modifiers ?? []).filter(m => m.inert);
+}
+
+/**
+ * Puts the single switch on the wire as the seven modifiers it stands for.
+ *
+ * Sending all seven rather than a sentinel keeps the server's modifier list literally true, so
+ * every `Modifiers.Count > 0` test, the Neow refusal and the zero draw cost all fall out of code
+ * that was already there. It is also the honest reading of the switch: the user is saying some of
+ * these are on, and which ones cannot change the answer.
+ */
+function appendOtherModifiers(q) {
+  if (!state.otherModsOn) return;
+  for (const m of inertModifiers()) q.append('modifier', m.slug);
 }
 
 /** The catalog rows for the modifiers this lobby has ticked on, in the game's list order. */
 function enabledModifiers() {
-  return state.specializedOn
-    ? (catalog.modifiers ?? []).filter(m => m.slug === 'specialized')
-    : [];
+  return (catalog.modifiers ?? []).filter(m =>
+    (state.specializedOn && m.slug === 'specialized') || (state.otherModsOn && m.inert));
 }
 
 /**
@@ -1082,14 +1114,36 @@ function renderModifiers() {
     }
   }
 
+  // The second half: one switch for the seven that change nothing here.
+  mount('#otherModsOn', [
+    { label: 'Off', value: 'off' },
+    { label: 'On', value: 'on' },
+  ], state.otherModsOn ? 'on' : 'off', v => {
+    state.otherModsOn = v === 'on';
+    renderModifiers();
+    renderNeow();
+    syncNeowAvailability();
+    // These spend no draws, so the rewards do not move. The panel is redrawn anyway because its
+    // "took at Neow" row is a statement rather than a choice once the run is Custom.
+    renderCards();
+  });
+
+  const inert = inertModifiers();
+  setHint('#otherModsHint', inert.length
+    ? 'Covers ' + inert.map(m => m.name).join(', ')
+      + '. Flick this on if your lobby has any of them ticked, however many: none of them '
+      + 'changes anything this tool predicts, so one is the same as all seven. Leave it off for '
+      + 'the modifiers not listed here, which do change the answers and are not supported yet.'
+    : '');
+
   // One text either way. It describes what a Custom run IS, which does not change with what
   // happens to be ticked, so switching the wording on the toggle would only make the panel
   // argue with itself. The support status goes last because it is the part that will date.
   setHint('#modifierHint',
     'Slay the Spire 2 Custom runs can be started with modifiers ticked on. Any modifier at all '
     + 'replaces Neow’s three options with one forced option per modifier, so a Custom run '
-    + 'has no Neow offer and that panel switches off. Only Specialized is supported for now, '
-    + 'with more potentially coming.');
+    + 'has no Neow offer and that panel switches off. Specialized is predicted in full; the '
+    + 'seven below are supported because they leave every prediction alone.');
 }
 
 /**
@@ -3077,6 +3131,7 @@ function buildQuery() {
       if (want?.card) q.append('specialized', `${i + 1}:${want.card}`);
     });
   }
+  appendOtherModifiers(q);
 
   // Only A10 changes anything, but send whatever is set so the answer matches the lobby.
   if (state.ascension > 0) q.set('ascension', state.ascension);
@@ -3581,6 +3636,7 @@ async function inspect() {
   state.neowPicks.forEach((slug, i) => { if (slug) q.append('pick', `${i + 1}:${slug}`); });
   if (state.extraChests > 0) q.set('extraChests', state.extraChests);
   if (state.specializedOn) q.append('modifier', 'specialized');
+  appendOtherModifiers(q);
 
   const out = $('#out');
   out.replaceChildren();

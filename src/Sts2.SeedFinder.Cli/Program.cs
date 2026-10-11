@@ -531,8 +531,20 @@ internal static class Program
         foreach (var cr in opts.ChestRelicsWanted)
             Console.WriteLine($"  Chest relic   : {cr}");
         if (opts.Modifiers.Count > 0)
+        {
+            // Two different facts, and the old text ran them together. Any modifier at all
+            // deletes Neow's own offer, but what replaces it depends on which: a modifier with
+            // a forced option gets one screen per modifier, and with none of them ticked
+            // GenerateInitialOptions returns an empty option list, so Neow offers literally
+            // nothing at all.
+            int forced = opts.Modifiers.Count(RunModifiers.HasNeowOption);
+            string neow = forced == 0
+                ? "Custom run, Neow offers nothing at all"
+                : $"Custom run, no Neow relic, {forced} forced "
+                  + (forced == 1 ? "option" : "options") + " instead";
             Console.WriteLine($"  Modifiers     : {string.Join(", ", opts.Modifiers.Select(RunModifiers.Display))}"
-                              + "  (Custom run — Neow offers nothing)");
+                              + $"  ({neow})");
+        }
         foreach (var sp in opts.Specialized)
             Console.WriteLine($"  Specialized   : {sp}");
         foreach (var pick in opts.NeowPicks)

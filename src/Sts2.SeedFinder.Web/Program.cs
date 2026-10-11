@@ -242,7 +242,8 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         Good: m < RunModifier.DeadlyEvents,
         Predictable: RunModifiers.IsPredictable(m),
         BlocksSpecialized: RunModifiers.HasNeowOption(m) && RunModifiers.NeowRewardDraws(m) is null,
-        NeowDraws: RunModifiers.NeowRewardDraws(m)))
+        NeowDraws: RunModifiers.NeowRewardDraws(m),
+        Inert: RunModifiers.IsInert(m)))
         .ToArray();
 
     return Results.Json(new CatalogDto(

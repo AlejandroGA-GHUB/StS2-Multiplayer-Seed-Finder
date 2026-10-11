@@ -340,8 +340,15 @@ public sealed record SpecializedDto(int Slot, string Card, string Name, bool Has
 /// What this modifier's forced Neow option costs a player's Rewards stream, or null when that is
 /// not countable. The UI needs it to say how far the card rewards below have been pushed along.
 /// </param>
+/// <param name="Inert">
+/// Whether this modifier changes nothing the finder predicts, so that any subset of the inert
+/// ones being on is indistinguishable from all of them. The picker groups these behind one
+/// switch instead of a tickbox each. See <see cref="RunModifiers.Inert"/> for why membership is
+/// decided by the hooks a modifier overrides rather than by its draw cost.
+/// </param>
 public sealed record ModifierDto(
-    string Slug, string Name, bool Good, bool Predictable, bool BlocksSpecialized, int? NeowDraws);
+    string Slug, string Name, bool Good, bool Predictable, bool BlocksSpecialized, int? NeowDraws,
+    bool Inert);
 
 // ---- Query parsing ------------------------------------------------------------------------
 
