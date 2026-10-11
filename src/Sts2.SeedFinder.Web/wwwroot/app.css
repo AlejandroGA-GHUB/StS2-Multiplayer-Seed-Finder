@@ -147,6 +147,10 @@ fieldset.disabled { opacity: .5; }
 fieldset.disabled .hint { opacity: 1; }
 
 label { display: block; margin-bottom: 4px; color: var(--text-1); font-size: 12px; }
+/* A row label with a "?" beside it. The button is display:flex and so block-level, which puts
+   it on its own line inside a plain block label; this keeps the two on one line and lets the
+   button's margin-left:auto push it to the right edge, as it does on a legend. */
+label.with-info { display: flex; align-items: center; gap: 6px; }
 .row { margin-bottom: 10px; }
 .row:last-child { margin-bottom: 0; }
 .hint { color: var(--text-2); font-size: 11.5px; margin-top: 4px; line-height: 1.45; }

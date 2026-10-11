@@ -908,16 +908,21 @@ const INFO = {
   modifiers: {
     title: 'Modifiers',
     body: () => [
-      { lead: 'Slay the Spire 2 Custom runs can be started with modifiers ticked on. Specialized '
-            + 'is the one this finder can predict: it gives every player five copies of a single '
-            + 'card, and which card is decided by the seed.' },
-      { h: 'Why it is only one draw' },
-      'Specialized picks one card flat across the player\u2019s own pool and then clones it five '
-        + 'times. There is no rarity roll and no upgrade roll, so a Rare is exactly as likely as '
-        + 'a Common and exactly as easy to search for. That is unusual: everywhere else in this '
-        + 'tool a Rare is the expensive ask.',
-      'The draw comes off the same per-player stream the fight card rewards use, and it is the '
-        + 'first thing on it, so each player gets their own card from one seed.',
+      { lead: 'Slay the Spire 2 Custom runs can be started with modifiers ticked on. This panel '
+            + 'is where you tell the finder which ones, because a Custom run is a different kind '
+            + 'of run rather than another filter on this one.' },
+      { h: 'What is supported' },
+      'Four have their own controls and are predicted in full: Specialized, Draft, All Star, and '
+        + 'adding another character\u2019s cards. Each has its own "?" with the detail. Seven more '
+        + 'sit behind a single switch at the bottom, because they change nothing this tool '
+        + 'predicts and so one of them on is the same as all seven.',
+      'The rest are left out on purpose. They move things already predicted here, so offering '
+        + 'them would mean handing back answers that look right and are not.',
+      { h: 'They combine' },
+      'Tick as many as your lobby has. The ones that hand out cards do it in the game\u2019s own '
+        + 'order, off the same per-player stream the fight card rewards come from, so the rewards '
+        + 'below are read from after them. Specialized spends one draw, All Star five and Draft '
+        + 'sixty, and the card panel accounts for whichever are on.',
       { h: 'What it does to Neow' },
       'A Custom run has no Neow offer at all. The game replaces the three options with one forced '
         + 'option per modifier, so the Neow panel switches off while this is on, and results show '
@@ -1278,20 +1283,19 @@ function renderModifiers() {
 
   const inert = inertModifiers();
   setHint('#otherModsHint', inert.length
-    ? 'Covers ' + inert.map(m => m.name).join(', ')
-      + '. Flick this on if your lobby has any of them ticked, however many: none of them '
-      + 'changes anything this tool predicts, so one is the same as all seven. Leave it off for '
-      + 'the modifiers not listed here, which do change the answers and are not supported yet.'
+    ? inert.map(m => m.name).join(', ')
+      + '. None of these changes the RNG, so it makes no difference how many you have on: flick '
+      + 'this on to tell the finder a modifier is selected. You can ignore it entirely if you '
+      + 'already have one of the modifiers above on.'
     : '');
 
   // One text either way. It describes what a Custom run IS, which does not change with what
   // happens to be ticked, so switching the wording on the toggle would only make the panel
   // argue with itself. The support status goes last because it is the part that will date.
   setHint('#modifierHint',
-    'Slay the Spire 2 Custom runs can be started with modifiers ticked on. Any modifier at all '
-    + 'replaces Neow’s three options with one forced option per modifier, so a Custom run '
-    + 'has no Neow offer and that panel switches off. Specialized is predicted in full; the '
-    + 'seven below are supported because they leave every prediction alone.');
+    'Custom runs can be started with modifiers ticked on. Any modifier at all takes Neow’s offer '
+    + 'away, so that panel switches off. The ones with their own controls are predicted in full; '
+    + 'the rest are either harmless (the switch at the bottom) or not supported yet.');
 }
 
 /**
@@ -1330,48 +1334,20 @@ function renderDraft() {
     for (let at = want.length - 1; at >= 0; at--)
       if (!pool.some(c => c.slug === want[at])) want.splice(at, 1);
 
-    const row = el('div', 'row');
-    row.appendChild(el('label', null, `P${i + 1} can take`));
-
-    const picks = el('div', 'offer');
-    want.forEach((slug, at) => {
-      const card = pool.find(c => c.slug === slug);
-      const name = card?.name ?? slug;
-      const p = el('span', 'pill is-card');
-      p.appendChild(iconFor(slug, name, 20, 'card'));
-      p.appendChild(el('span', null, name));
-      const clear = el('span', 'clear', '×');
-      clear.title = 'Remove';
-      clear.onclick = () => { want.splice(at, 1); renderDraft(); };
-      p.appendChild(clear);
-      picks.appendChild(withTip(p, slug, name, 'card'));
-    });
-
-    if (want.length < 10) {
-      const add = el('button', 'relic-field card-field');
-      add.type = 'button';
-      add.disabled = pool.length === 0;
-      add.appendChild(anyIcon(22));
-      add.appendChild(el('span', 'name', pool.length
-        ? (want.length === 0 ? 'Any cards' : 'Add another')
-        : 'Pick a character first'));
-      add.onclick = async () => {
-        const picked = await openPicker(
-          `P${i + 1} can take from their draft…`,
-          // Draft rolls rarity with the base odds and no pity offset, so a Rare is reachable in
-          // any of the ten rewards, unlike a fight reward. Nothing is greyed out.
-          ['Common', 'Uncommon', 'Rare'].map(r => ({
-            title: r,
-            items: pool.filter(c => c.rarity === r),
-          })),
-          'card');
-        if (picked) { want.push(picked.slug); renderDraft(); }
-      };
-      picks.appendChild(add);
-    }
-
-    row.appendChild(picks);
-    box.appendChild(row);
+    box.appendChild(cardListField({
+      label: `P${i + 1} can take`,
+      chosen: want,
+      pool,
+      max: 10,
+      title: `P${i + 1} can take from their draft…`,
+      // Draft rolls rarity with the base odds and no pity offset, so a Rare is reachable in any
+      // of the ten rewards, unlike a fight reward. Nothing is greyed out.
+      rarities: ['Common', 'Uncommon', 'Rare'],
+      hint: 'Click up to ten cards. Each has to turn up in a different one of the ten rewards, '
+        + 'since you take one card from each, so the order you pick in does not matter. Close '
+        + 'this when you have the ones you want.',
+      onChange: cards => { state.draft[i] = cards; renderDraft(); },
+    }));
   }
 
   setHint('#draftHint', state.players > 0
@@ -1412,44 +1388,69 @@ function renderAllStar() {
 
   for (let i = 0; i < state.players; i++) {
     const want = state.allStar[i] || (state.allStar[i] = []);
-    const row = el('div', 'row');
-    row.appendChild(el('label', null, `P${i + 1} is given`));
-
-    const picks = el('div', 'offer');
-    want.forEach((slug, at) => {
-      const card = pool.find(c => c.slug === slug);
-      const name = card?.name ?? slug;
-      const p = el('span', 'pill is-card');
-      p.appendChild(iconFor(slug, name, 20, 'card'));
-      p.appendChild(el('span', null, name));
-      const clear = el('span', 'clear', '×');
-      clear.title = 'Remove';
-      clear.onclick = () => { want.splice(at, 1); renderAllStar(); };
-      p.appendChild(clear);
-      picks.appendChild(withTip(p, slug, name, 'card'));
-    });
-
-    // Five is the whole hand, so there is nothing a sixth could match.
-    if (want.length < 5) {
-      const add = el('button', 'relic-field card-field');
-      add.type = 'button';
-      add.appendChild(anyIcon(22));
-      add.appendChild(el('span', 'name', want.length === 0 ? 'Any cards' : 'Add another'));
-      add.onclick = async () => {
-        const picked = await openPicker(
-          `P${i + 1} is given, among their five…`,
-          // No Commons exist in the colourless pool, and a uniform pick means a Rare is no
-          // harder to find than an Uncommon, so nothing is greyed out.
-          ['Uncommon', 'Rare'].map(r => ({ title: r, items: pool.filter(c => c.rarity === r) })),
-          'card');
-        if (picked) { want.push(picked.slug); renderAllStar(); }
-      };
-      picks.appendChild(add);
-    }
-
-    row.appendChild(picks);
-    box.appendChild(row);
+    box.appendChild(cardListField({
+      label: `P${i + 1} is given`,
+      chosen: want,
+      pool,
+      max: 5,
+      title: `P${i + 1} is given, among their five…`,
+      // No Commons exist in the colourless pool, and a uniform pick means a Rare is no harder
+      // to find than an Uncommon, so nothing is greyed out.
+      rarities: ['Uncommon', 'Rare'],
+      hint: 'Click up to five cards. They are the five this player is handed, so the order you '
+        + 'pick in does not matter. Close this when you have the ones you want.',
+      onChange: cards => { state.allStar[i] = cards; renderAllStar(); },
+    }));
   }
+}
+
+/**
+ * A row that holds several wanted cards behind one multi-select picker.
+ *
+ * Shared by Draft and All Star, which are the two places a criterion is a SET of cards rather
+ * than one. Both used to be a chip list with an Add button that reopened a single-pick dialog
+ * per card, which made naming four cards four round trips through the same grid.
+ *
+ * The picker's fight strip stays hidden because no `skippable` is passed: neither of these has
+ * anything to do with fights, and the numbered badges here only count the picks.
+ */
+function cardListField({ label, chosen, pool, max, title, rarities, hint, onChange }) {
+  const row = el('div', 'row');
+  row.appendChild(el('label', null, label));
+
+  const field = el('button', 'relic-field card-field');
+  field.type = 'button';
+  field.disabled = pool.length === 0;
+
+  if (chosen.length === 0) {
+    field.appendChild(anyIcon(28));
+    field.appendChild(el('span', 'name', pool.length ? 'Any cards' : 'Pick a character first'));
+  } else {
+    for (const slug of chosen) {
+      const name = pool.find(c => c.slug === slug)?.name ?? slug;
+      const chip = el('span', 'pick');
+      chip.appendChild(iconFor(slug, name, 22, 'card'));
+      chip.appendChild(el('span', null, name));
+      field.appendChild(withTip(chip, slug, name, 'card'));
+    }
+    const clear = el('span', 'clear', '×');
+    clear.dataset.clear = '1';
+    clear.title = 'Clear';
+    field.appendChild(clear);
+  }
+
+  field.onclick = async e => {
+    if (e.target.dataset.clear) { onChange([]); return; }
+    const picked = await openPicker(
+      title,
+      rarities.map(r => ({ title: r, items: pool.filter(c => c.rarity === r) })),
+      'card',
+      { max, initial: chosen, itemFor: slug => pool.find(c => c.slug === slug), hint });
+    if (picked) onChange(picked);
+  };
+
+  row.appendChild(field);
+  return row;
 }
 
 /**
@@ -1508,13 +1509,32 @@ function syncNeowAvailability() {
   const custom = anyModifier();
   const panel = $('#neow').closest('fieldset');
 
+  // Turning a modifier on CLEARS whatever was in this panel, rather than leaving rows that the
+  // search would then refuse. The server rejects the pair outright, so a left-behind Neow row
+  // turned a modifier tick into a red error bar on the next search, with the offending control
+  // greyed out and so not obviously the cause. Dropping the rows is the graceful half of the
+  // same rule: the panel is already dimmed and the hint already says why.
+  let cleared = false;
+  if (custom) {
+    if (state.neow.length) { state.neow = []; cleared = true; }
+    if (state.neowPicks.some(Boolean)) {
+      state.neowPicks = [];
+      state.neowPickSet = [];
+      cleared = true;
+    }
+  }
+  if (cleared) renderNeow();
+
   panel.classList.toggle('disabled', custom);
   $('#addNeow').disabled = custom;
   for (const c of $('#neow').querySelectorAll('button, input')) c.disabled = custom;
 
   setHint('#neowHint', custom
-    ? 'A Custom run has no Neow offer. The game replaces its three options with one forced '
-      + 'option per modifier, so there is nothing here to search for.'
+    ? (cleared
+        ? 'A Custom run has no Neow offer, so what was here has been cleared. The game replaces '
+          + 'the three options with one forced option per modifier.'
+        : 'A Custom run has no Neow offer. The game replaces its three options with one forced '
+          + 'option per modifier, so there is nothing here to search for.')
     : '');
 }
 
