@@ -577,8 +577,9 @@ public static class Query
             Ancients = ancients,
             Bosses = ParseBosses(q),
             Events = ParseEvents(q),
-            Cards = ParseCards(q, chars, players),
+            Cards = ParseCards(q, chars, players, CharacterCardPools(q)),
             Modifiers = ParseModifiers(q),
+            CharacterCardPools = CharacterCardPools(q),
             Specialized = ParseSpecialized(q, chars, players),
             ShopRelicsWanted = ParseShopRelics(q, players),
             ChestRelicsWanted = ParseChestRelics(q),
@@ -769,8 +770,13 @@ public static class Query
     /// Repeated ?card=&lt;slot&gt;:&lt;slug&gt; — e.g. card=1:anger for P1, or card=any:anger for
     /// whoever. The slot is 1-based on the wire, as it is in the UI.
     /// </summary>
+    /// <param name="addedPools">
+    /// The lobby's CharacterCards ticks. A card from an added pool really is offerable, so it
+    /// has to resolve here or the page would refuse a search the finder can answer.
+    /// </param>
     private static IReadOnlyList<CardCriterion> ParseCards(
-        IQueryCollection q, IReadOnlyList<Character> chars, int players)
+        IQueryCollection q, IReadOnlyList<Character> chars, int players,
+        IReadOnlyList<Character>? addedPools = null)
     {
         var cards = new List<CardCriterion>();
         foreach (var raw in (StringValues)q["card"])
@@ -798,7 +804,9 @@ public static class Query
 
             var lookIn = slot < 0 ? Enumerable.Range(0, players) : [slot];
             var found = lookIn
-                .Select(s => CardCatalog.Find(chars[s], parts[1], isMultiplayer: players > 1))
+                .Select(s => CardCatalog.Find(
+                    chars[s], parts[1], isMultiplayer: players > 1,
+                    addedCharacters: CharacterCardsModifier.AddedFor(chars[s], addedPools)))
                 .FirstOrDefault(x => x is not null);
 
             // Which fight, 1-based. Only fight 1 is guaranteed by the map; see CardCriterion.
@@ -827,6 +835,24 @@ public static class Query
     /// <summary>The modifiers on this request, for callers outside the search path.</summary>
     public static IReadOnlyList<RunModifier> Modifiers(IQueryCollection q) => ParseModifiers(q);
 
+    /// <summary>
+    /// Repeated ?charCards=&lt;character&gt; — which CharacterCards tickboxes are on. Separate
+    /// from ?modifier because this one modifier is five tickboxes, each carrying a character.
+    /// Returned in the game's own tickbox order, since that is the order its pools concatenate.
+    /// </summary>
+    public static IReadOnlyList<Character> CharacterCardPools(IQueryCollection q)
+    {
+        var ticked = new List<Character>();
+        foreach (var raw in (StringValues)q["charCards"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            if (!Enum.TryParse<Character>(raw.Trim(), ignoreCase: true, out var c))
+                throw new ArgumentException($"'{raw}' is not a character");
+            ticked.Add(c);
+        }
+        return CharacterCardsModifier.Normalize(ticked);
+    }
+
     private static IReadOnlyList<RunModifier> ParseModifiers(IQueryCollection q)
     {
         var enabled = new List<RunModifier>();
@@ -836,6 +862,12 @@ public static class Query
             enabled.Add(RunModifiers.TryParse(raw)
                 ?? throw new ArgumentException($"'{raw}' is not a run modifier"));
         }
+
+        // Naming whose cards are added IS ticking CharacterCards, so the page does not have to
+        // send both and cannot send one without the other. Validate refuses the halves
+        // disagreeing, which is the error this derivation exists to make unreachable.
+        if (CharacterCardPools(q).Count > 0) enabled.Add(RunModifier.CharacterCards);
+
         return enabled.Distinct().OrderBy(m => m).ToList();
     }
 
@@ -869,6 +901,9 @@ public static class Query
                     "a starting card needs a character for every player, because Specialized "
                     + "draws from that player's own pool.");
 
+            // The player's own pool, with no CharacterCards widening: Specialized never sets
+            // the IsCardReward flag that hook requires, so its card comes from their own pool
+            // however many character tickboxes are on.
             var lookIn = slot < 0 ? Enumerable.Range(0, players) : [slot];
             var found = lookIn
                 .Select(s => CardCatalog.Find(chars[s], parts[1], isMultiplayer: players > 1))
@@ -982,12 +1017,20 @@ public static class Predictions
         string seed, int players, IReadOnlyList<Character> characters, SeedHit? hit = null,
         int ascension = 0, UnlockState? unlocks = null, int extraChestPicks = 0,
         int[]? priorDraws = null, IReadOnlyList<UnlockState>? playerUnlocks = null,
-        IReadOnlyList<RunModifier>? modifiers = null)
+        IReadOnlyList<RunModifier>? modifiers = null,
+        IReadOnlyList<Character>? characterCardPools = null)
     {
         unlocks ??= new UnlockState();
 
         UnlockState Own(int slot) =>
             playerUnlocks is { } own && (uint)slot < (uint)own.Count ? own[slot] : unlocks;
+
+        // Which CharacterCards pools reach THIS slot. Lobby-wide tickboxes, but a player
+        // playing the ticked character gains nothing from it, so this is per slot.
+        IReadOnlyList<Character> AddedPoolsFor(int slot) =>
+            characterCardPools is { Count: > 0 } ticked && (uint)slot < (uint)characters.Count
+                ? CharacterCardsModifier.AddedFor(characters[slot], ticked)
+                : Array.Empty<Character>();
         ulong runSeed = SeedCodec.RunSeed(seed);
 
         // Each player's own unlocks decide whether Kaleidoscope is in their positive pool, the
@@ -1104,7 +1147,7 @@ public static class Predictions
             CardRewardGenerator
                 .Hallway(runSeed, slot, characters[slot],
                          CardRewardGenerator.MaxPredictableFight, ascension, Own(slot),
-                         prior[slot], isMultiplayer)
+                         prior[slot], isMultiplayer, AddedPoolsFor(slot))
                 .Fights
                 .Select((reward, i) => new FirstFightDto(
                     slot, reward.Cards.Select(c => c.Slug).ToArray(), reward.HasPotion, i + 1)))

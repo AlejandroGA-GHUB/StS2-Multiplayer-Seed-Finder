@@ -5,6 +5,7 @@ using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Modifiers;
 using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Core.Saves;
 using Sts2.SeedFinder.Gpu;
@@ -542,6 +543,32 @@ public static class GpuDoctor
                 new CardCriterion(0, CommonOf(Character.Ironclad), 1),
                 new CardCriterion(0, CommonOf(Character.Ironclad, 1), 3),
             },
+        }, 200_000);
+
+        // CharacterCards appends whole pools to the reward pool, so the kernel's pool upload and
+        // the CPU's must agree about both the contents and the ORDER: the pick is an index into
+        // what remains of one rarity, so a pool assembled in the wrong order picks a different
+        // card without any other symptom. Two ticked, to catch a single-pool shortcut, and the
+        // wanted card comes from an added pool rather than the player's own.
+        yield return ("cards p1 with two CharacterCards pools, 2p", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.CharacterCards },
+            CharacterCardPools = new[] { Character.Defect, Character.Regent },
+            Cards = new[] { new CardCriterion(0, CommonOf(Character.Defect), 1) },
+        }, 200_000);
+
+        // The same tickbox does different things to different slots: P1 here plays the ticked
+        // character and so gains nothing, while P2 gains a whole pool. A kernel that applied the
+        // lobby's ticks uniformly would index P1's pool past its end.
+        yield return ("cards p2 with CharacterCards for p1's own character, 2p", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            Modifiers = new[] { RunModifier.CharacterCards },
+            CharacterCardPools = new[] { Character.Ironclad },
+            Cards = new[] { new CardCriterion(1, CommonOf(Character.Ironclad), 1) },
         }, 200_000);
 
         // The payload walk reads the same per-slot pool, and a rare is where the missing cards

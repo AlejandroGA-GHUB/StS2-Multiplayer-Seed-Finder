@@ -147,6 +147,14 @@
         <div id="specializedOn"></div>
       </div>
       <div id="specialized"></div>
+      <!-- CharacterCards is five tickboxes in the game, one per character, any number of which
+           can be on. Each adds that character's whole pool to every card reward. -->
+      <div class="row">
+        <label>Add a character's cards<button type="button" class="info-btn" data-info="charCards"
+                title="How added card pools work" aria-label="How added card pools work">?</button></label>
+        <div class="seg" id="charCards"></div>
+      </div>
+      <p class="hint" id="charCardsHint"></p>
       <!-- The seven modifiers that change nothing we predict, behind one switch. Any subset of
            them on is indistinguishable from all of them, so a tickbox each would ask the user
            for detail the prediction cannot use. -->

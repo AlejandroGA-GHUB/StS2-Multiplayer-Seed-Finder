@@ -1,4 +1,5 @@
 using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Modifiers;
 
 namespace Sts2.SeedFinder.Core.Cards;
 
@@ -136,9 +137,10 @@ public static class CardRewardGenerator
         int ascension = 0,
         UnlockState? unlocks = null,
         int priorDraws = 0,
-        bool isMultiplayer = true) =>
+        bool isMultiplayer = true,
+        IReadOnlyList<Character>? addedCharacters = null) =>
         Hallway(runSeed, playerSlotIndex, character, 1, ascension, unlocks, priorDraws,
-                isMultiplayer).Fights[0];
+                isMultiplayer, addedCharacters).Fights[0];
 
     /// <summary>
     /// The rewards of the first <paramref name="fights"/> consecutive normal fights.
@@ -169,14 +171,18 @@ public static class CardRewardGenerator
         int ascension = 0,
         UnlockState? unlocks = null,
         int priorDraws = 0,
-        bool isMultiplayer = true)
+        bool isMultiplayer = true,
+        IReadOnlyList<Character>? addedCharacters = null)
     {
         var rng = RewardsRng(runSeed, playerSlotIndex);
         Burn(rng, priorDraws);
 
         // Solo and co-op pools differ by the five multiplayer-only cards per character, all of
         // them Uncommon or Rare, so the rarity roll is unaffected but the pick inside it is not.
-        var pool = PoolFor(character, unlocks, isMultiplayer);
+        // A CharacterCards tickbox unions another character's pool into every reward flagged
+        // IsCardReward, and CardReward sets that flag in its own constructor, so these rewards
+        // see the longer pool. The rarity roll is unaffected, but the pick inside it is not.
+        var pool = PoolFor(character, unlocks, isMultiplayer, addedCharacters);
         var index = PoolIndex.For(pool);
         var results = new List<FirstFightReward>(fights);
 
@@ -439,6 +445,12 @@ public static class CardRewardGenerator
     private sealed record PoolCache(UnlockState? Unlocks, CardEntry[] Pool);
 
     /// <summary>
+    /// How many CharacterCards combinations the pool cache keys on: one bit per character in
+    /// <c>CharacterCardsModifier.TickboxOrder</c>.
+    /// </summary>
+    private const int AddedPoolCombinations = 32;
+
+    /// <summary>
     /// Two pools per character, indexed by <c>(character * 2) + (multiplayer ? 1 : 0)</c>. The
     /// second slot exists only for the verifiers: a search is always multiplayer, but a run save
     /// written by a solo game has five fewer cards per character in its pool, and comparing
@@ -450,15 +462,42 @@ public static class CardRewardGenerator
     /// The character's pool as a reward sees it. Callers must treat the result as read-only:
     /// it is shared with every other caller on this thread.
     /// </summary>
+    /// <param name="addedCharacters">
+    /// Characters whose pools the CharacterCards modifier appends, in the game's tickbox order.
+    /// Pass what <see cref="CharacterCardsModifier.AddedFor"/> returns, which has already
+    /// dropped this player's own character: ticking a player's own character adds nothing,
+    /// because the hook unions pool INSTANCES and theirs is already there.
+    /// </param>
     public static CardEntry[] PoolFor(
-        Character character, UnlockState? unlocks = null, bool isMultiplayer = true)
+        Character character, UnlockState? unlocks = null, bool isMultiplayer = true,
+        IReadOnlyList<Character>? addedCharacters = null)
     {
-        var cache = _pools ??= new PoolCache?[Enum.GetValues<Character>().Length * 2];
-        int slot = ((int)character * 2) + (isMultiplayer ? 1 : 0);
+        int added = addedCharacters is { Count: > 0 } a ? CharacterCardsModifier.Mask(a) : 0;
+
+        var cache = _pools ??=
+            new PoolCache?[Enum.GetValues<Character>().Length * 2 * AddedPoolCombinations];
+        int slot = (((int)character * 2) + (isMultiplayer ? 1 : 0)) * AddedPoolCombinations + added;
 
         if (cache[slot] is { } hit && ReferenceEquals(hit.Unlocks, unlocks)) return hit.Pool;
 
         var built = BuildPool(character, unlocks, isMultiplayer);
+
+        // CharacterCards appends whole pools rather than merging them, because the game's
+        // GetPossibleCards is CardPools.SelectMany(p => p.GetUnlockedCards(...)): one pool after
+        // another, each in its own order. So the player's own cards keep the indices they
+        // already had and the added ones sit behind them, which is what makes this safe to do
+        // on top of the single-character pool rather than from scratch.
+        //
+        // Each added pool is filtered by THIS player's unlock state and run mode, not by its own
+        // character's: GetUnlockedCards is handed player.UnlockState either way.
+        if (added != 0)
+        {
+            var parts = new List<CardEntry>(built);
+            foreach (var extra in addedCharacters!)
+                parts.AddRange(BuildPool(extra, unlocks, isMultiplayer));
+            built = parts.ToArray();
+        }
+
         cache[slot] = new PoolCache(unlocks, built);
         return built;
     }

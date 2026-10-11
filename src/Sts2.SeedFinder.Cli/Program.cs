@@ -187,6 +187,7 @@ internal static class Program
             Characters = opts.Characters,
             NeowPicks = opts.NeowPicks,
             Modifiers = opts.Modifiers,
+            CharacterCardPools = opts.CharacterCardPools,
         }.RewardPriorDraws();
 
         for (int slot = 0; slot < opts.PlayerCount; slot++)
@@ -240,7 +241,8 @@ internal static class Program
         var hallway = CardRewardGenerator.Hallway(
             SeedCodec.RunSeed(seed), slot, opts.Characters[slot],
             CardRewardGenerator.MaxPredictableFight, opts.Ascension,
-            new Sts2.SeedFinder.Core.Acts.UnlockState(), prior, opts.PlayerCount > 1);
+            new Sts2.SeedFinder.Core.Acts.UnlockState(), prior, opts.PlayerCount > 1,
+            CharacterCardsModifier.AddedFor(opts.Characters[slot], opts.CharacterCardPools));
 
         for (int i = 0; i < hallway.Fights.Count; i++)
         {
@@ -500,6 +502,7 @@ internal static class Program
             Events = opts.Events,
             Cards = opts.Cards,
             Modifiers = opts.Modifiers,
+            CharacterCardPools = opts.CharacterCardPools,
             Specialized = opts.Specialized,
             ShopRelicsWanted = opts.ShopRelicsWanted,
             ChestRelicsWanted = opts.ChestRelicsWanted,
@@ -544,6 +547,20 @@ internal static class Program
                   + (forced == 1 ? "option" : "options") + " instead";
             Console.WriteLine($"  Modifiers     : {string.Join(", ", opts.Modifiers.Select(RunModifiers.Display))}"
                               + $"  ({neow})");
+        }
+        if (opts.CharacterCardPools.Count > 0)
+        {
+            // Said per slot, because the same tickbox does different things to different
+            // players: it adds nothing to a player already playing that character.
+            Console.WriteLine($"  Added cards   : {string.Join(", ", opts.CharacterCardPools)}");
+            for (int slot = 0; slot < opts.PlayerCount && slot < opts.Characters.Count; slot++)
+            {
+                var added = CharacterCardsModifier.AddedFor(opts.Characters[slot], opts.CharacterCardPools);
+                Console.WriteLine($"                  P{slot + 1} ({opts.Characters[slot]}) draws from "
+                                  + (added.Length == 0
+                                      ? "their own pool only"
+                                      : $"their own pool plus {string.Join(", ", added)}"));
+            }
         }
         foreach (var sp in opts.Specialized)
             Console.WriteLine($"  Specialized   : {sp}");
@@ -930,6 +947,13 @@ internal static class Program
         public IReadOnlyList<RunModifier> Modifiers { get; init; } = Array.Empty<RunModifier>();
 
         /// <summary>
+        /// Which CharacterCards tickboxes are on. Its own list rather than part of
+        /// <see cref="Modifiers"/>, because that one modifier ships as five tickboxes and each
+        /// carries a character.
+        /// </summary>
+        public IReadOnlyList<Character> CharacterCardPools { get; init; } = Array.Empty<Character>();
+
+        /// <summary>
         /// Specialized starting cards from --specialized. Deferred like the card args, for the
         /// same reason: the card only resolves against a character's pool.
         /// </summary>
@@ -1083,6 +1107,13 @@ internal static class Program
                     case "--modifier":
                         o = o with { Modifiers = o.Modifiers.Append(ParseModifier(Next("--modifier"))).ToList() };
                         break;
+                    case "--character-cards":
+                        o = o with
+                        {
+                            CharacterCardPools = o.CharacterCardPools
+                                .Concat(ParseCharacterList(Next("--character-cards"))).ToList(),
+                        };
+                        break;
                     case "--specialized":
                         o = o with { SpecializedArgs = o.SpecializedArgs.Append(Next("--specialized")).ToList() };
                         break;
@@ -1149,6 +1180,18 @@ internal static class Program
             foreach (var s in o.RequiredSlots)
                 if (s < 0 || s >= o.PlayerCount)
                     throw new ArgumentException($"P{s + 1} is not in a {o.PlayerCount}-player lobby");
+
+            if (o.CharacterCardPools.Count > 0)
+            {
+                // Naming whose cards are added is itself the statement that CharacterCards is
+                // on, so ticking it as well would be a second way to say the same thing.
+                if (!o.Modifiers.Contains(RunModifier.CharacterCards))
+                    o = o with { Modifiers = o.Modifiers.Append(RunModifier.CharacterCards).ToList() };
+
+                // Normalized into the game's tickbox order, which is the order its pools
+                // concatenate and is NOT our Character enum's order.
+                o = o with { CharacterCardPools = CharacterCardsModifier.Normalize(o.CharacterCardPools) };
+            }
 
             // Now that --characters is known whatever order it was given in.
             if (o.CardArgs.Count > 0)
@@ -1274,7 +1317,10 @@ internal static class Program
 
             var pools = slot < 0 ? Enumerable.Range(0, o.PlayerCount) : [slot];
             foreach (var i in pools)
-                if (CardCatalog.Find(o.Characters[i], parts[1], isMultiplayer: o.PlayerCount > 1) is { } found)
+                if (CardCatalog.Find(
+                        o.Characters[i], parts[1], isMultiplayer: o.PlayerCount > 1,
+                        addedCharacters: CharacterCardsModifier.AddedFor(
+                            o.Characters[i], o.CharacterCardPools)) is { } found)
                     return new CardCriterion(slot, found, fight);
 
             var who2 = slot < 0 ? "anyone in the party" : $"the {o.Characters[slot]}";
@@ -1283,6 +1329,18 @@ internal static class Program
         }
 
         /// <summary>"specialized", "sealed_deck", or the save's own "MODIFIER.SPECIALIZED".</summary>
+        /// <summary>
+        /// A comma-separated character list, as both --characters and --character-cards take.
+        /// </summary>
+        private static Character[] ParseCharacterList(string csv) =>
+            csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => Enum.TryParse<Character>(s, ignoreCase: true, out var c)
+                    ? c
+                    : throw new ArgumentException(
+                        $"unknown character '{s}'. Valid: " +
+                        string.Join(", ", Enum.GetNames<Character>())))
+                .ToArray();
+
         private static RunModifier ParseModifier(string s) =>
             RunModifiers.TryParse(s)
             ?? throw new ArgumentException(

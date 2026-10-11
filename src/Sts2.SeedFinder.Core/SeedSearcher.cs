@@ -353,6 +353,31 @@ public sealed record SearchCriteria
     public IReadOnlyList<SpecializedCriterion> Specialized { get; init; } = Array.Empty<SpecializedCriterion>();
 
     /// <summary>
+    /// Which characters' pools the CharacterCards tickboxes add, lobby-wide. An input, like
+    /// <see cref="Modifiers"/>, and the only modifier the game parameterises: it ships as five
+    /// independent tickboxes, one per character, any number of which can be on.
+    ///
+    /// Lobby-wide but NOT uniform in effect. The hook unions pool instances, so a player already
+    /// playing the ticked character gains nothing while everyone else gains a whole pool. That
+    /// asymmetry is resolved per slot by <see cref="AddedCardPoolsFor"/>.
+    ///
+    /// <see cref="RunModifier.CharacterCards"/> belongs in <see cref="Modifiers"/> whenever this
+    /// is non-empty; <see cref="Validate"/> keeps the two consistent rather than letting a pool
+    /// be added by a modifier the run does not have.
+    /// </summary>
+    public IReadOnlyList<Character> CharacterCardPools { get; init; } = Array.Empty<Character>();
+
+    /// <summary>
+    /// The pools actually appended to one player's card rewards, in the game's hook order.
+    /// Empty for an ordinary run, and empty for a player whose own character is the only one
+    /// ticked.
+    /// </summary>
+    public IReadOnlyList<Character> AddedCardPoolsFor(int slot) =>
+        CharacterCardPools.Count == 0 || slot < 0 || slot >= Characters.Count
+            ? Array.Empty<Character>()
+            : CharacterCardsModifier.AddedFor(Characters[slot], CharacterCardPools);
+
+    /// <summary>
     /// Rewards draws already spent when Specialized takes its option, or null when that cannot
     /// be known. Null only happens with Draft or SealedDeck, the two Neow-option modifiers that
     /// sit ahead of Specialized in the game's list and have no fixed draw count.
@@ -632,7 +657,8 @@ public static class SeedSearcher
             var offered = new HallwayRewards?[playerCount];
             HallwayRewards For(int slot) => offered[slot] ??= CardRewardGenerator.Hallway(
                 runSeed, slot, criteria.Characters[slot], deepest, criteria.Ascension,
-                criteria.UnlocksFor(slot), priorDraws[slot], criteria.IsMultiplayer);
+                criteria.UnlocksFor(slot), priorDraws[slot], criteria.IsMultiplayer,
+                criteria.AddedCardPoolsFor(slot));
 
             bool Offers(int slot, CardCriterion want) =>
                 For(slot).Fight(want.Fight)?.Cards.Any(c => c.TypeName == want.Card) == true;
@@ -1110,6 +1136,20 @@ public static class SeedSearcher
                 + "fixed number of them, so every later card in the run moves by an amount the "
                 + "seed does not decide.");
 
+        // CharacterCards is five tickboxes sharing one enum value, so the two halves of it live
+        // in different fields and could disagree. Either disagreement would read a card pool the
+        // run does not have, which is worse than a refusal: the search would match on a card
+        // that is never offered.
+        if (c.CharacterCardPools.Count > 0 && !c.Modifiers.Contains(RunModifier.CharacterCards))
+            throw new ArgumentException(
+                "Adding another character's cards is the CharacterCards modifier, so it has to "
+                + "be ticked on. Enable it, or drop the added characters.");
+
+        if (c.Modifiers.Contains(RunModifier.CharacterCards) && c.CharacterCardPools.Count == 0)
+            throw new ArgumentException(
+                "CharacterCards is one tickbox per character, so it needs to say whose cards are "
+                + "added. Name at least one character, or drop the modifier.");
+
         if (c.Specialized.Count == 0) return;
 
         if (!c.Modifiers.Contains(RunModifier.Specialized))
@@ -1201,6 +1241,12 @@ public static class SeedSearcher
 
                 // Split apart because the two are different mistakes: a card from the wrong
                 // character's pool, and a card of the wrong rarity entirely.
+                //
+                // Deliberately the character's OWN pool, with no CharacterCards widening. Two
+                // independent reasons, either of which is enough: a Custom run has no Neow offer
+                // for a scroll to be taken from, and even when one is obtained its
+                // CardCreationOptions never set the IsCardReward flag that CharacterCards
+                // requires, so its payload reads the player's own pool whatever is ticked.
                 bool inSomePool = slots.Any(s => Holds(s, (ch, u) => CardCatalog.Offerable(ch, u, c.IsMultiplayer)));
 
                 throw new ArgumentException(inSomePool && !everySlot
@@ -1609,7 +1655,11 @@ public static class SeedSearcher
 
             // "Any player" only needs SOMEONE who could be offered it.
             var slots = want.Slot < 0 ? Enumerable.Range(0, c.PlayerCount) : [want.Slot];
-            if (slots.Any(s => CardCatalog.Offerable(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer)
+            // A CharacterCards tickbox widens what a reward can offer, so the pool asked here
+            // has to be the one the search will actually draw from. Reading the character's own
+            // pool instead would refuse a card the seed does genuinely hand over.
+            if (slots.Any(s => CardCatalog
+                    .Offerable(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer, c.AddedCardPoolsFor(s))
                     .Any(e => e.TypeName == want.Card)))
                 continue;
 
@@ -1713,7 +1763,8 @@ public static class SeedSearcher
     private static bool IsRareCard(SearchCriteria c, string card)
     {
         for (int s = 0; s < c.PlayerCount && s < c.Characters.Count; s++)
-            foreach (var e in CardRewardGenerator.PoolFor(c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer))
+            foreach (var e in CardRewardGenerator.PoolFor(
+                         c.Characters[s], c.UnlocksFor(s), c.IsMultiplayer, c.AddedCardPoolsFor(s)))
                 if (e.TypeName == card) return e.Rarity == CardRarity.Rare;
         return false;
     }

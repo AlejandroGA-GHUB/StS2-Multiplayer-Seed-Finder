@@ -223,7 +223,8 @@ public sealed class GpuSearchPlanner : IDisposable
 
         // Each slot's own unlocks, as CardsMatch and NeowPlan read them, not the run's union.
         var pools = new GpuCardPools(
-            _engine.Accelerator, criteria.Characters, criteria.UnlocksBySlot(), criteria.IsMultiplayer);
+            _engine.Accelerator, criteria.Characters, criteria.UnlocksBySlot(), criteria.IsMultiplayer,
+            criteria.CharacterCardPools);
 
         var slot = new int[n];
         var fight = new int[n];

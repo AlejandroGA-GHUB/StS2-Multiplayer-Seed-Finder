@@ -3,6 +3,7 @@ using ILGPU.Runtime;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Modifiers;
 
 namespace Sts2.SeedFinder.Gpu;
 
@@ -92,9 +93,15 @@ public sealed class GpuCardPools : IDisposable
     /// the kernel draw from a partner's union-sized pool while the CPU drew from their own, so an
     /// imported friend epoch that differed in card epochs silently dropped real seeds.
     /// </param>
+    /// <param name="characterCardPools">
+    /// The lobby's CharacterCards tickboxes. Lobby-wide, so two slots on the same character and
+    /// unlocks still share one pool, which is why this does not widen the cache key. What it
+    /// adds is per character, since a player playing a ticked character gains nothing.
+    /// </param>
     public GpuCardPools(
         Accelerator accelerator, IReadOnlyList<Character> characters,
-        IReadOnlyList<UnlockState?> unlocksBySlot, bool isMultiplayer = true)
+        IReadOnlyList<UnlockState?> unlocksBySlot, bool isMultiplayer = true,
+        IReadOnlyList<Character>? characterCardPools = null)
     {
         if (unlocksBySlot.Count != characters.Count)
             throw new ArgumentException(
@@ -117,7 +124,9 @@ public sealed class GpuCardPools : IDisposable
             {
                 existing = pools.Count;
                 keys.Add((character, unlocks));
-                pools.Add(CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer));
+                pools.Add(CardRewardGenerator.PoolFor(
+                    character, unlocks, isMultiplayer,
+                    CharacterCardsModifier.AddedFor(character, characterCardPools)));
             }
             PoolOfSlot[slot] = existing;
         }

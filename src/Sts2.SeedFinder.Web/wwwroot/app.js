@@ -71,6 +71,10 @@ function defaultState() {
     specializedOn: false,
     otherModsOn: false,
     specialized: [],
+    // Which CharacterCards tickboxes are on, by character name. Lobby-wide, but what each adds
+    // is per player: the game's hook unions pool INSTANCES, so a player already playing a ticked
+    // character gains nothing from it while everyone else gains a whole pool.
+    charCards: [],
   };
 }
 
@@ -912,12 +916,38 @@ const INFO = {
       'Everything else still holds. The acts, bosses, Ancients, encounters, events and the map '
         + 'are all unaffected, and a run with Specialized on has been checked against the game '
         + 'to confirm it.',
-      { h: 'The other fifteen' },
-      'More are being looked at. Each one has to be read out of the game before it can be '
-        + 'offered, because several move things this tool already predicts: Big Game Hunter '
-        + 'rewrites the generated map, and Deadly Events changes the room odds. Listing one '
-        + 'before it is modelled would let a search return answers that look right and are not, '
-        + 'so they arrive one at a time as each is checked.',
+      { h: 'The seven behind one switch' },
+      'Hoarder, Flight, Midas, Murderous, Night Terrors, Terminal and Cursed Run change nothing '
+        + 'this tool predicts. None of them adds a Neow option, so none moves a card reward, and '
+        + 'none touches the acts, the bags or the map. One of them being on is therefore the same '
+        + 'as all seven, which is why they share a single switch instead of a tickbox each: the '
+        + 'only thing the finder learns from it is that the run is Custom.',
+      { h: 'The ones still missing' },
+      'Each one has to be read out of the game before it can be offered, because several move '
+        + 'things this tool already predicts. Big Game Hunter rewrites the generated map, Deadly '
+        + 'Events edits the relic bags and the room odds, and Vintage swaps card rewards for '
+        + 'relics and drains the shared bag as you play. Listing one before it is modelled would '
+        + 'let a search return answers that look right and are not.',
+    ],
+  },
+
+  charCards: {
+    title: 'Adding a character’s cards',
+    body: () => [
+      { lead: 'In the game this is one modifier with a tickbox per character, and any number of '
+            + 'them can be on. Each adds that character’s whole card pool to every fight '
+            + 'card reward in the run, so the pickers above offer those cards as well.' },
+      { h: 'It does not affect everyone equally' },
+      'A player already playing a ticked character gains nothing from it. The game adds the pool '
+        + 'by identity and theirs is already there, so "Ironclad cards" doubles a Silent '
+        + 'player’s pool and does nothing at all for an Ironclad one, in the same lobby, '
+        + 'off the same tickbox. The note under the tickboxes says which case each player is in.',
+      { h: 'What it does not reach' },
+      'Specialized still draws from the player’s own pool. It builds its card a different '
+        + 'way, one the added pools are not applied to, so the two can be on together without '
+        + 'the starting card changing.',
+      'Only the five characters in the game are offered. A modded character would add a pool that '
+        + 'does not exist in the game files, so nothing about that lobby could be predicted.',
     ],
   },
 
@@ -997,7 +1027,30 @@ function setHint(sel, text) {
 
 /** Whether this lobby is a Custom run at all, from either half of the panel. */
 function anyModifier() {
-  return state.specializedOn === true || state.otherModsOn === true;
+  return state.specializedOn === true || state.otherModsOn === true || state.charCards.length > 0;
+}
+
+/**
+ * The characters whose pools are actually added to this slot's card rewards.
+ *
+ * Mirrors CharacterCardsModifier.AddedFor: a ticked character the player is already playing adds
+ * nothing, because the game unions pool instances and theirs is already in the list.
+ */
+function addedPoolsFor(slot) {
+  if (state.charCards.length === 0) return [];
+  const own = state.characters[slot];
+  return charCardOrder().filter(c => state.charCards.includes(c) && c !== own);
+}
+
+/**
+ * The game's own tickbox order, which is ModelDb.AllCharacters and NOT the order the catalog
+ * lists characters in. It decides the order added pools concatenate, so the server is sent this
+ * order and the picker shows it the same way.
+ */
+function charCardOrder() {
+  const wanted = ['Ironclad', 'Silent', 'Regent', 'Necrobinder', 'Defect'];
+  const known = (catalog.cardPools ?? []).map(p => p.character);
+  return wanted.filter(c => known.includes(c));
 }
 
 /** The seven catalog rows behind the single switch, in the game's list order. */
@@ -1014,8 +1067,11 @@ function inertModifiers() {
  * these are on, and which ones cannot change the answer.
  */
 function appendOtherModifiers(q) {
-  if (!state.otherModsOn) return;
-  for (const m of inertModifiers()) q.append('modifier', m.slug);
+  if (state.otherModsOn) for (const m of inertModifiers()) q.append('modifier', m.slug);
+
+  // Its own parameter rather than ?modifier, because this one modifier is five tickboxes and
+  // each carries a character. The server derives the modifier itself from a non-empty list.
+  for (const c of charCardOrder()) if (state.charCards.includes(c)) q.append('charCards', c);
 }
 
 /** The catalog rows for the modifiers this lobby has ticked on, in the game's list order. */
@@ -1038,9 +1094,17 @@ function modifierDraws() {
     : rows.reduce((n, m) => n + m.neowDraws, 0);
 }
 
-/** Cards Specialized could hand this slot: their whole pool, since it ignores rarity. */
+/**
+ * Cards Specialized could hand this slot: their whole pool, since it ignores rarity.
+ *
+ * Their OWN pool, even with CharacterCards ticked. Specialized builds its options through
+ * ForNonCombatWithUniformOdds and never sets the IsCardReward flag, and the CharacterCards hook
+ * returns early without it, so the added pools reach the fight rewards and not this.
+ */
 function specializedPoolFor(slot) {
-  return cardPoolFor(slot);
+  const c = state.characters[slot];
+  const cards = (c && catalog.cardPools.find(p => p.character === c)?.cards) || [];
+  return state.players === 1 ? cards.filter(card => !card.multiplayerOnly) : cards;
 }
 
 function renderModifiers() {
@@ -1114,6 +1178,8 @@ function renderModifiers() {
     }
   }
 
+  renderCharCards();
+
   // The second half: one switch for the seven that change nothing here.
   mount('#otherModsOn', [
     { label: 'Off', value: 'off' },
@@ -1144,6 +1210,54 @@ function renderModifiers() {
     + 'replaces Neow’s three options with one forced option per modifier, so a Custom run '
     + 'has no Neow offer and that panel switches off. Specialized is predicted in full; the '
     + 'seven below are supported because they leave every prediction alone.');
+}
+
+/**
+ * The five CharacterCards tickboxes, in the game's own order.
+ *
+ * One toggle each rather than a single switch, unlike the seven inert ones, because these are
+ * not interchangeable: each adds a different pool, and whether a given tickbox does anything at
+ * all depends on who the player is.
+ */
+function renderCharCards() {
+  const box = $('#charCards');
+  box.replaceChildren();
+
+  for (const name of charCardOrder()) {
+    const on = state.charCards.includes(name);
+    const b = el('button', null, name);
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(on));
+    b.onclick = () => {
+      state.charCards = on
+        ? state.charCards.filter(c => c !== name)
+        : state.charCards.concat(name);
+      renderModifiers();
+      // Turning one on takes Neow away, and the card pickers below grow by a whole pool.
+      renderNeow();
+      syncNeowAvailability();
+      renderCards();
+    };
+    box.appendChild(b);
+  }
+
+  if (state.charCards.length === 0) {
+    setHint('#charCardsHint', '');
+    return;
+  }
+
+  // Said per player, because the same tickbox does different things to different slots. A
+  // player already playing a ticked character is the case that surprises people.
+  const lines = [];
+  for (let i = 0; i < state.players; i++) {
+    const added = addedPoolsFor(i);
+    lines.push(`P${i + 1} (${state.characters[i] || 'no character'}): `
+      + (added.length === 0 ? 'own cards only' : `own cards plus ${added.join(', ')}`));
+  }
+  setHint('#charCardsHint',
+    'Each one adds that character’s whole pool to every fight card reward, so the pickers '
+    + 'above offer those cards too. Ticking a character somebody is already playing adds nothing '
+    + 'for them, since they already draw from it. ' + lines.join('. ') + '.');
 }
 
 /**
@@ -1989,7 +2103,18 @@ function cardPoolFor(slot) {
   const cards = (c && catalog.cardPools.find(p => p.character === c)?.cards) || [];
   // A solo run strips the five multiplayer-only cards per character, so none of them can be asked
   // for, and none can turn up in a reward or as a Specialized pick.
-  return state.players === 1 ? cards.filter(card => !card.multiplayerOnly) : cards;
+  const own = state.players === 1 ? cards.filter(card => !card.multiplayerOnly) : cards;
+
+  // Specialized is deliberately NOT widened by this: its CardCreationOptions never set the
+  // IsCardReward flag the CharacterCards hook requires, so it always draws from the player's own
+  // pool. Only rewards are widened, which is what specializedPoolFor exists to keep separate.
+  const added = addedPoolsFor(slot);
+  if (added.length === 0) return own;
+
+  return own.concat(...added.map(name => {
+    const extra = catalog.cardPools.find(p => p.character === name)?.cards || [];
+    return state.players === 1 ? extra.filter(card => !card.multiplayerOnly) : extra;
+  }));
 }
 
 /**

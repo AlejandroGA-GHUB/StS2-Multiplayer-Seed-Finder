@@ -56,17 +56,25 @@ public static class CardCatalog
     /// dropped: a rarity roll only ever yields Common, Uncommon or Rare, so nothing else is
     /// reachable even though it sits in the pool.
     /// </summary>
+    /// <param name="addedCharacters">
+    /// Pools the CharacterCards modifier appends for this player, from
+    /// <c>CharacterCardsModifier.AddedFor</c>. A card reward sets the IsCardReward flag the hook
+    /// looks for, so these cards really are offerable and a picker that left them out would
+    /// refuse a criterion the search can satisfy.
+    /// </param>
     public static IEnumerable<CardEntry> Offerable(
-        Character character, UnlockState? unlocks = null, bool isMultiplayer = true) =>
-        CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer)
+        Character character, UnlockState? unlocks = null, bool isMultiplayer = true,
+        IReadOnlyList<Character>? addedCharacters = null) =>
+        CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer, addedCharacters)
             .Where(c => RewardRarities.Contains(c.Rarity));
 
     /// <summary>Resolve a user-typed name or slug against one character's offerable cards.</summary>
     public static string? Find(
-        Character character, string nameOrSlug, UnlockState? unlocks = null, bool isMultiplayer = true)
+        Character character, string nameOrSlug, UnlockState? unlocks = null, bool isMultiplayer = true,
+        IReadOnlyList<Character>? addedCharacters = null)
     {
         var wanted = Normalize(nameOrSlug);
-        return Offerable(character, unlocks, isMultiplayer)
+        return Offerable(character, unlocks, isMultiplayer, addedCharacters)
             .Select(c => c.TypeName)
             .FirstOrDefault(t => Normalize(Slug(t)) == wanted || Normalize(t) == wanted);
     }
