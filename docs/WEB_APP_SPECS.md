@@ -756,16 +756,44 @@ A repeatable block: `[Act ▾]` with a remove button, the act's event list below
 Last in the criteria column, and deliberately so: a modifier is not another filter to stack on the
 ones above it, it changes what kind of run this is.
 
-Only **Specialized** is offered, out of the game's sixteen. It is the one whose payload is a single
-draw off a stream already modelled, and the one confirmed not to disturb anything else. Several of
-the others do move predictions (Big Game Hunter rewrites the generated map, Deadly Events changes
-the room odds), so listing them as tickable would invite a search whose other answers were quietly
-wrong. The panel says more are being looked at rather than implying they cannot be done.
+The panel has two kinds of control, because the game's sixteen modifier classes fall into two
+kinds.
 
-Turning it on **disables the Neow panel** and greys it, with a line saying why. That is a hard game
+**Four have their own controls and are predicted in full.** Specialized and All Star take cards per
+player; Draft takes up to ten cards a player and means "can TAKE", since it offers ten rewards of
+three and the player picks one from each; "add a character's cards" is five independent tickboxes,
+because that is literally how the game ships it (`CharacterCards` carries a character, and the
+custom run screen expands it per `ModelDb.AllCharacters`, which is why a clean install shows 20
+tickboxes for 16 classes).
+
+**Seven share a single on/off switch.** Hoarder, Flight, Midas, Murderous, Night Terrors, Terminal
+and Cursed Run change nothing the finder predicts, so one of them being on is indistinguishable
+from all seven. Offering a tickbox each would ask the user for detail the prediction cannot use.
+The switch is sent as all seven slugs, which keeps every `Modifiers.Count > 0` test on the server
+literally true without new plumbing.
+
+**Five are deliberately absent**, because they move things already predicted: Sealed Deck, Vintage,
+Deadly Events, Big Game Hunter and Insanity. Listing them would invite a search whose other answers
+were quietly wrong. The "?" says which and why, rather than implying they cannot be done.
+
+Turning any of them on **disables the Neow panel**, greys it, and CLEARS whatever was in it, with
+a line saying so. That is a hard game
 rule and not a tool limitation: `Neow.GenerateInitialOptions` skips its whole offer when any
 modifier is on. Results drop the Neow row too rather than printing an offer that will never happen.
 This is the only panel that switches another one off, which is why it is worth stating twice.
+
+Clearing rather than merely disabling is the part that was got wrong first. The server refuses the
+pair outright, so a Neow row left behind turned a modifier tick into a red error bar on the next
+search, pointing at a control that was already greyed out and so did not look like the cause.
+
+`Add a character's cards` is the one control whose effect is **not uniform across the lobby**: the
+game adds a pool by identity, so a player already playing the ticked character gains nothing while
+everyone else gains a whole pool. The hint under it says which case each player is in, per slot,
+because nothing else on screen would reveal it.
+
+Draft and All Star open the **multi-select** picker, not the single-pick one, since both criteria
+are sets rather than one card. Its fight strip stays hidden: neither has anything to do with
+fights, and the numbered badges only count the picks.
 
 Per player, like a card reward, since the draw reads that player's own pool. Every rarity is equally
 likely here, unlike everywhere else in the app, so the picker greys nothing out: a Rare costs no
@@ -846,9 +874,18 @@ server sorts them into the game's own list order rather than the order they arri
 order decides how much of the Rewards stream is spent before each forced option runs.
 
 `specialized` is `?specialized=<slot>:<slug>`, slot 1-based like `card`, naming what a player must
-start five copies of. Both `/api/search` and `/api/explain` take `modifier`, so an inspected seed
-and a searched one answer the same question the same way. Inspect that omits it would report card
-rewards read from the wrong point in the stream.
+start five copies of. `allstar` and `draft` take the same shape and are repeatable, up to five and
+ten per slot. `charCards` is `?charCards=<Character>`, repeatable, and the server returns them in
+the game's tickbox order, which is the order their pools concatenate.
+
+Those three derive their own modifier: sending `allstar`, `draft` or `charCards` is itself the
+statement that the modifier is on, so the page never has to send both and cannot send one without
+the other. `SeedSearcher.Validate` refuses the halves disagreeing, which that derivation makes
+unreachable from the UI.
+
+Both `/api/search` and `/api/explain` take all of them, so an inspected seed and a searched one
+answer the same question the same way. An inspect that omitted them would report card rewards read
+from the wrong point in the stream: Specialized spends 1 draw, All Star 5 and Draft 60.
 
 `shop` is `?shop=<slot>:<slug>[:<visit>]`, both numbers 1-based on the wire. Shop relics reuse
 the relic art and text routes and needed no new asset endpoint: they are the same relics,

@@ -831,6 +831,41 @@ internal static class Program
             prediction assumes you took none of them unless --neow-pick says otherwise.
             Every other Neow option, Silken Tress included, leaves it alone.
 
+          CUSTOM RUN MODIFIERS
+            --modifier <name>             Tick a modifier on. Repeatable. Any modifier at
+                                          all removes Neow's offer, so a --relic and a
+                                          --modifier can never both be satisfied.
+            --specialized <who>:<card>    The card that player starts five copies of.
+                                          Needs --characters. Implies the modifier.
+            --all-star <who>:<card>       A card All Star hands that player, up to five.
+                                          Repeatable. Needs no --characters: it draws from
+                                          the colourless pool, the same for everyone.
+            --draft <who>:<card>          A card that player can TAKE from Draft, up to
+                                          ten. Repeatable, needs --characters.
+            --character-cards <chars>     Add these characters' card pools to every fight
+                                          card reward, comma separated. One tickbox per
+                                          character in the game, any number of them on.
+
+            Seven modifiers change nothing predicted here, so tick any of them freely and
+            the answers stand: hoarder, flight, midas, murderous, night_terrors, terminal,
+            cursed_run. One of them on is the same as all seven.
+
+            Five are not supported and are refused where they would matter: sealed_deck
+            (its rolls move the card rarity counter), vintage (swaps monster-room card
+            rewards for relics, draining the shared bag chests read from), deadly_events
+            (edits the relic bags and room odds), big_game_hunter (rebuilds the map with
+            2.5x elites) and insanity (counted, so safe to tick, but its 30 cards are not
+            named yet).
+
+            What a modifier COSTS matters even when you are not searching for its cards:
+            its forced Neow option draws off the same stream the fight rewards use, so
+            those move. Specialized spends 1 draw, All Star 5, Insanity 30 and Draft 60,
+            and --card accounts for whichever are on.
+
+            Draft is reachability, not possession: it offers ten rewards of three and you
+            take one from each, so cards named for one player must land in DIFFERENT
+            rewards. Asking for the same card twice asks for it in two of the ten.
+
           ACT 2/3 ANCIENTS (repeatable; both need --characters)
             --ancient <name>              Require this Ancient to appear, whatever it
                                           offers. e.g. --ancient vakuu

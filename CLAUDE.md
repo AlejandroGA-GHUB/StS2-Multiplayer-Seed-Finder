@@ -90,25 +90,40 @@ the Neow criterion itself so relic and cards stay one question about one player)
 (per act, and negatable), **event** (per act, "within the first n"), **Ancient** (optionally
 offering a given relic), **card rewards for fights 1 to 3** (per player, in pick order or in any
 permutation), the **shop's third
-relic slot** (per player, per shop visit), and each act's **treasure chest** (per act), plus the card the **Specialized** run modifier
-hands each player (per player, Custom runs only).
+relic slot** (per player, per shop visit), and each act's **treasure chest** (per act), plus what
+the **Specialized**, **All Star** and **Draft** run modifiers hand each player (per player,
+Custom runs only).
 **Ascension 10** adds the final act's second boss, which two boss criteria can pin as a pair —
 and from fight 2 ascension also affects card rarity, via Scarcity at A7+.
 
-**Custom run modifiers: Specialized is SEARCHABLE, the other fifteen are not** (2026-09-05).
-`Core/Modifiers/`. Specialized gives every player five copies of one card, and that card is a
-single `NextInt` off the player's own `Rewards` stream, so it is searchable per player and every
-rarity is equally likely. Verified against a real custom run (`QHU3PZ4H3CF7`, Ironclad, A0) and
-covered by `--verify`, which uses the saved deck as its oracle.
+**Custom run modifiers: four SEARCHABLE, seven inert, five still out** (2026-10-10).
+`Core/Modifiers/`. Searchable: **Specialized** (five copies of one card), **AllStar** (five
+colourless cards), **Draft** (ten rewards of three, one taken from each) and **CharacterCards**
+(another character's pool added to every card reward). Seven more are INERT, meaning they change
+nothing predicted here, so any subset of them is indistinguishable from all seven and the UI
+offers them as one switch: Hoarder, Flight, Midas, Murderous, NightTerrors, Terminal, CursedRun.
 
-Two consequences that are easy to get wrong, both enforced in `SeedSearcher.Validate`:
-**any modifier at all deletes Neow's offer** (`Neow.GenerateInitialOptions` only builds it when
-`Modifiers.Count <= 0`), so a Neow criterion and a modifier can never both be satisfied; and the
-forced option **draws off the same stream the fight card rewards use**, so it shifts fights 1 to 3.
-That second one is why `SearchCriteria.RewardPriorDraws` is the ONLY place prior draws are counted:
-an earlier version had the CLI deriving its own and the two disagreed, so the search matched on one
-number and printed rewards read from another. Read the modifier section of `docs/GAME_MECHANICS.md`
-before touching `Core/Modifiers/`.
+Still out, each for a reason worth not re-deriving: **SealedDeck** moves the card rarity pity
+counter, so a draw count cannot express what follows it; **Vintage** swaps monster-room card
+rewards for relics and drains the SHARED bag chests read from; **DeadlyEvents** edits the relic
+bags and room odds; **BigGameHunter** rebuilds the map with 2.5x elites; **Insanity** is counted
+(30 draws) so it is safe to tick, but its cards are not named yet.
+
+Four things that are easy to get wrong:
+- **Any modifier at all deletes Neow's offer** (`Neow.GenerateInitialOptions` only builds it when
+  `Modifiers.Count <= 0`), so a Neow criterion and a modifier can never both be satisfied.
+  `SeedSearcher.Validate` refuses the pair and the web panel clears itself rather than building it.
+- A forced option **draws off the same stream the fight card rewards use**, so it shifts fights 1
+  to 3. That is why `SearchCriteria.RewardPriorDraws` is the ONLY place prior draws are counted:
+  an earlier version had the CLI deriving its own and the two disagreed, so the search matched on
+  one number and printed rewards read from another.
+- **CharacterCards is five tickboxes, not one** (the game expands it per `ModelDb.AllCharacters`,
+  which is why a clean install shows 20 tickboxes for 16 classes). Its order is the game's, NOT
+  our `Character` enum's, and it adds nothing to a player already playing that character.
+- `Darv` gates Pandora's Box on `Modifiers.Any(m => m.ClearsPlayerDeck)`, the one place modifier
+  IDENTITY reaches generation. True for Insanity, Draft and SealedDeck only.
+
+Read the modifier section of `docs/GAME_MECHANICS.md` before touching `Core/Modifiers/`.
 
 **Act maps are drawn, not searched** (2026-09-04). `Map Visual`, beside Copy on any result, swaps
 the results for all three act maps side by side. It is display-only and sits off the search path
@@ -144,6 +159,10 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --neow-pick p1:massive_scroll --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --specialized p1:claw --characters defect,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --all-star p1:prowess --players 2   # no --characters needed
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --draft p1:anger --draft p1:offering --characters ironclad,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:claw --character-cards defect --characters ironclad,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --modifier midas --modifier hoarder --boss 3:queen --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 0BUJY7ZRE8TP --players 2
 # act maps are web-only (Map Visual on a result); the CLI checks them via --verify
 dotnet run -c Release --project src\Sts2.SeedFinder.Oracle              # differential test vs sts2.dll

@@ -35,7 +35,7 @@ need rather than reading through.
 - [Shops: the third relic slot IS predictable, the rest is not](#shops-the-third-relic-slot-is-predictable-the-rest-is-not)
 - [Treasure chests — IMPLEMENTED and confirmed against a real co-op run](#treasure-chests-implemented-and-confirmed-against-a-real-co-op-run)
 - [Act maps — IMPLEMENTED and verified node-for-node against a run save](#act-maps-implemented-and-verified-node-for-node-against-a-run-save)
-- [Custom run modifiers: Specialized IMPLEMENTED, the rest are read but not modelled](#custom-run-modifiers-specialized-implemented-the-rest-are-read-but-not-modelled)
+- [Custom run modifiers: four are searchable, seven are inert, five are still out](#custom-run-modifiers-four-are-searchable-seven-are-inert-five-are-still-out)
 - [Run saves are the Act 2/3 oracle](#run-saves-are-the-act-23-oracle)
 - [Ancients' offers — IMPLEMENTED and oracle-verified](#ancients-offers-implemented-and-oracle-verified)
 - [Confounders: what must be set, and what genuinely does not matter](#confounders-what-must-be-set-and-what-genuinely-does-not-matter)
@@ -765,31 +765,151 @@ already oracle-verified and confirmed against a real co-op run.
 **What this unblocks.** The map graph is the route input that elite relics and shop relic slots 1 and
 2 were both deferred on, and `UnknownMapPointOdds` is what `--extra-chests` currently asks the user
 to count by hand. None of that is built; the dependency is simply no longer missing.
+### Custom run modifiers: four are searchable, seven are inert, five are still out
 
-### Custom run modifiers: Specialized IMPLEMENTED, the rest are read but not modelled
-
-A Custom run can tick on any of **sixteen** modifiers (`Core/Models/Modifiers/`, plus a
+A Custom run can tick on any of **sixteen** modifier classes (`Core/Models/Modifiers/`, plus a
 `DeprecatedModifier` placeholder that is in neither list). They are lobby state, not seed state:
 `NCustomRunScreen` takes a seed AND a modifier list, and both `StartNewSingleplayerRun` and
 `StartNewMultiplayerRun` carry them, so a Custom run works the same way in either mode.
 
+**Sixteen classes, twenty tickboxes.** `NCustomRunModifiersList.GetAllModifiers()` walks
+`GoodModifiers.Concat(BadModifiers)` and, on reaching `CharacterCards`, yields one mutable copy
+per entry of `ModelDb.AllCharacters` rather than one tickbox. So a clean install shows 20, and an
+install with modded characters shows more, because `AllCharacters` is what the list expands over.
+This matters when a user reports a count: 23 on screen is 20 vanilla plus 3 modded characters.
+
 **The one thing to read before anything else here: any modifier at all deletes Neow's offer.**
 `Neow.GenerateInitialOptions` opens with `if (RunState.Modifiers.Count <= 0)` and only inside that
-branch builds the curse option, the positive pool and the coin flips. Otherwise the player is given
-one **forced** option per modifier, in sequence, with no skip
+branch builds the curse option, the positive pool and the coin flips. Otherwise the player is
+given one **forced** option per modifier that wants one, in sequence, with no skip
 (`OnModifierOptionSelected` chains to `index + 1`). So a Custom run has no Neow relic, and a Neow
 criterion and a modifier can never both be satisfied. `SeedSearcher.Validate` refuses the pair
-rather than searching for something no seed can produce.
+rather than searching for something no seed can produce, and the web panel clears itself rather
+than letting a user build that search.
+
+A detail that follows and is easy to miss: with only modifiers that add NO forced option, the
+loop fills nothing and the method returns `Array.Empty<EventOption>()`. Neow then offers
+*literally nothing* rather than one screen per modifier.
 
 **Order is load-bearing.** `NCustomRunModifiersList` builds its tickboxes from
 `GoodModifiers.Concat(BadModifiers)` and `GetModifiersTickedOn` returns them in that same order,
-which becomes `RunState.Modifiers` and therefore the order Neow walks. `Core/Modifiers/RunModifier.cs`
-mirrors it exactly, and reordering that enum would silently move every prediction below.
+which becomes `RunState.Modifiers` and therefore both the order Neow walks and the order hooks
+run in. `Core/Modifiers/RunModifier.cs` mirrors it exactly, and reordering that enum would
+silently move every prediction below. Re-confirmed unchanged at v0.111.0.
 
 ```
 Good: Draft, SealedDeck, Hoarder, Specialized, Insanity, AllStar, Flight, Vintage, CharacterCards
 Bad:  DeadlyEvents, CursedRun, BigGameHunter, Midas, Murderous, NightTerrors, Terminal
 ```
+
+#### Only three reads of the modifier list reach anything we predict
+
+Checked exhaustively at v0.111.0, because this is what decides whether a modifier can be offered
+at all:
+
+| Where | What it asks |
+|---|---|
+| `Neow.cs:219` | `Modifiers.Count <= 0` — whether to build an offer |
+| `Neow.cs:41` | `Modifiers.Count <= 0` — which dialogue line Neow says |
+| `Darv.cs:186` | `Modifiers.Any(m => m.ClearsPlayerDeck)` — gates Pandora's Box |
+
+Everything else is UI (`NTopBar` visibility, the daily-run screens) or a different `Modifiers`
+list entirely (`CombatState`, `CardEnergyCost`). Two of the three are boolean tests on the COUNT,
+which is why modifiers that spend no draws and touch no hook are indistinguishable from one
+another.
+
+The Darv one is the only place modifier IDENTITY reaches generation. Pandora's Box is offered
+only while NO modifier has cleared the deck, which makes sense since the relic transforms your
+starting cards. `ClearsPlayerDeck => true` in exactly three files: `Insanity`, `Draft`,
+`SealedDeck`. `AncientContext.DeckClearedByModifier` carries it and was never set until
+2026-10-10, so under those three we offered a relic that Ancient never shows. Removing it from
+the candidate set shifts Darv's whole offer, not just that one entry.
+
+#### The seven inert ones, and why they share a single switch
+
+`Hoarder`, `Flight`, `Midas`, `Murderous`, `NightTerrors`, `Terminal` and `CursedRun` change
+nothing this tool predicts. None adds a Neow option, so each spends zero `Rewards` draws and its
+position in the list is irrelevant; none overrides `ModifyGeneratedMap`, `AfterRunCreated`,
+`AfterRunLoaded`, `ModifyCardRewardCreationOptions` or the room-odds hook; and none sets
+`ClearsPlayerDeck`. So any subset on is indistinguishable from all seven, and the UI offers them
+as one switch (`RunModifiers.Inert`, sent as all seven slugs so every existing `Count > 0` test
+keeps working without new plumbing).
+
+Two that need stating because they look like they belong and do not:
+
+- **CursedRun does belong**, but for a subtler reason than the other six. It draws a curse per
+  act per player off `RunState.Rng.Niche`, and `RunRngSet` documents that generator as "niche
+  one-off RNG stuff that we don't care about interacting, like the CursedRun modifier". Nothing
+  here reads that stream, so it consuming RNG is not a reason to move it out.
+- **Vintage does NOT belong**, despite also adding no Neow option and spending no draws. It
+  replaces every Monster-room `CardReward` with a `RelicReward`, and
+  `RelicFactory.PullNextRelicFromFront` pulls from the player's bag and then **removes that relic
+  from the SHARED bag**, which is what chest prediction reads. So it deletes the fight card
+  rewards outright and drains the bag before the Act 1 chest. Membership is decided by which
+  hooks a modifier overrides, never by its draw cost.
+
+#### Four modifiers edit the relic grab bags
+
+Not recorded before 2026-10-10 and not yet modelled, so each of these shifts chest and shop
+relics:
+
+- **DeadlyEvents** removes `JuzuBracelet` from every player's bag and the shared bag, in
+  `AfterRunCreated`. It also sets `UnknownMapPoint` elite odds to 0.1 and doubles the treasure
+  odds increase, which only touches `?` room resolution, unpredicted anyway.
+- **Insanity**, **Draft** and **SealedDeck** each remove `PandorasBox` from every player's bag
+  and the shared bag, at the end of their forced Neow option.
+
+All four removals are deterministic, so they are cheap to model, and all four are silently wrong
+for chests and shops until someone does.
+
+#### What each Neow-option modifier costs the Rewards stream
+
+`PlayerRng.Rewards` is the same generator the hallway rewards come off, and the forced Neow
+options run first. **So every modifier that takes a Neow option shifts that player's fight 1 to 3
+predictions**, exactly as Arcane Scroll and Hefty Tablet do. Each player is walked through the
+same options on their own stream, so the whole lobby shifts by the same amount.
+
+| Modifier | Rewards draws | Pool | Searchable |
+|---|---|---|---|
+| Specialized | 1 | the character's own | yes, one uniform pick cloned 5x |
+| AllStar | 5 | **colourless** | yes, five independent uniform picks |
+| Insanity | 30 | the character's own | draws counted, contents not named yet |
+| Draft | **60** | the character's own | yes, ten rewards of three |
+| SealedDeck | 60, but see below | the character's own | **no** |
+| the other eleven | 0 | — | they add no Neow option |
+
+`SearchCriteria.RewardPriorDraws` is the single place this is accounted for, and the GPU card
+kernel and both display paths read it rather than deriving their own. That centralisation is not
+tidiness: an earlier version had the CLI computing its own prior from the Neow pick alone, and the
+two disagreed the moment modifiers started drawing off the stream, so the search matched on one
+number and printed rewards read from the other.
+
+`SealedDeck` and `Draft` are mutually exclusive with `Insanity` in
+`ModelDb.MutuallyExclusiveModifiers`, which is the only such set. They are **not** exclusive with
+Specialized, AllStar or CharacterCards, so those combinations are reachable and have to work.
+
+#### Why Draft IS countable and SealedDeck is not
+
+Both hand out thirty cards in one burst and both cost sixty draws. The difference is one flag.
+
+`CardFactory.RollForRarity` takes the pity-moving `CardRarityOdds.Roll` only when
+`ForceRarityOddsChange` is set OR the source is `Encounter`; otherwise it takes
+`RollWithBaseOdds`, which reads the base thresholds with **no offset applied and nothing written
+back**.
+
+- **Draft** sets neither, so all thirty cards roll against the same fixed threshold and the pity
+  counter is left exactly where it was found. Two draws a card (rarity, then pick; `NoUpgradeRoll`
+  removes the third), sixty in all, and the hallway rewards afterwards still start from the run's
+  initial `-0.05`. A plain prior-draw count is therefore enough, which is why it is now
+  searchable. The player choosing one card per reward consumes nothing: generation happens in
+  `Populate`, before the offer.
+- **SealedDeck** sets `ForceRarityOddsChange`, so its thirty cards move the counter. Its count is
+  also sixty, but a later reward would start from a moved offset, which a number of draws cannot
+  express. That is the real blocker, not the "no fixed draw count" the earlier notes blamed.
+
+A consequence worth knowing for Draft: a fight reward can never offer a Rare on its first card,
+because the offset starts below zero, but Draft has no offset, so a Rare is reachable in any of
+the ten rewards including the first.
 
 #### Specialized is one draw
 
@@ -805,9 +925,9 @@ collapse the draw to one `NextInt`:
   `options.RngOverride ?? player.PlayerRng.Rewards`, and nothing sets an override.
 
 So it is `pool[rng.NextInt(0, pool.Length)]` on the player's own `Rewards` stream, where the pool is
-the character's, epoch-filtered, player-count-filtered, minus Basic and Ancient. That is exactly
-`CardCatalog.Offerable`. Every rarity is equally likely, which makes a Rare no harder to search for
-than a Common, the opposite of every other card criterion in this tool.
+the character's, epoch-filtered, player-count-filtered, minus Basic and Ancient. Every rarity is
+equally likely, which makes a Rare no harder to search for than a Common, the opposite of every
+other card criterion in this tool.
 
 **Immune to the two pool-modifying modifiers**, which is worth knowing because it looks like it
 should not be. `CreateForReward` runs `Hook.ModifyCardRewardCreationOptions` first, and both
@@ -818,52 +938,67 @@ and `CharacterCards` requires the `IsCardReward` flag (this does not set it).
 Yet, and the save's deck holds five copies of Not Yet. `--verify` checks this on any run save whose
 `modifiers` list contains it, using the deck as the oracle rather than an RNG counter.
 
-#### It shares the stream with the fight card rewards
+#### AllStar is five, off the colourless pool
 
-`PlayerRng.Rewards` is the same generator the hallway rewards come off, and the forced Neow options
-run first. **So every modifier that takes a Neow option shifts that player's fight 1 to 3
-predictions**, exactly as Arcane Scroll and Hefty Tablet do. On one measured seed the difference was
-all nine cards across the three fights, not a near miss.
+`AllStar.ObtainCards` loops five times, and each iteration builds its own options and makes its
+own `CreateForReward(player, 1, options)` call, so the blacklist is **fresh each time** and the
+five cards can repeat. Same Uniform branch as Specialized, so one draw apiece.
 
-`SearchCriteria.RewardPriorDraws` is the single place that accounts for this, and the GPU card
-kernel and both display paths read it rather than deriving their own. That centralisation is not
-tidiness: an earlier version had the CLI computing its own prior from the Neow pick alone, and the
-two disagreed the moment modifiers started drawing off the stream, so the search matched on one
-number and printed rewards read from the other.
+The pool is `ModelDb.CardPool<ColorlessCardPool>()`, which nothing else here reads. `--refresh`
+now emits it as `CardPoolData.Colorless`: **65 cards, 40 Uncommon and 25 Rare, with no Commons at
+all**, plus five epoch gates of its own. A uniform pick over that is roughly 25-in-65 to be a
+Rare, which makes Rares cheaper here than anywhere else in the tool.
 
-| Modifier | Rewards draws at Neow | Countable? |
-|---|---|---|
-| Specialized | 1 | yes, one uniform pick |
-| AllStar | 5 | yes, five uniform picks off the colourless pool |
-| Insanity | 30 | yes, thirty uniform picks |
-| SealedDeck | 30 plus rarity rolls, with a running blacklist | **no** |
-| Draft | 10 rewards of 3, with rarity rolls and player choice | **no** |
-| the other eleven | 0 | they add no Neow option |
+Two properties fall out. It needs no character, since the colourless pool is the same for
+everyone, making it the only card criterion that works with nobody picked. And it sets
+`NoCardPoolModifications`, so CharacterCards declines it.
 
-`SealedDeck` and `Draft` are mutually exclusive with `Insanity` in `ModelDb.MutuallyExclusiveModifiers`
-but **not** with Specialized, so both combinations are reachable and both are refused: with either on,
-where Specialized lands in the stream depends on how the run was played rather than on the seed.
+#### CharacterCards is five tickboxes, and three traps
 
-#### What is not modelled, and why it is not "impossible"
+The only modifier the game parameterises: a `[SavedProperty] ModelId CharacterModel`, expanded
+into one tickbox per character. Any number can be on, since `MutuallyExclusiveModifiers` does not
+mention them and `IsEquivalent` compares the character.
 
-Only Specialized's payload is predicted. The blocker on the rest is per-modifier work, not a
-structural one:
+`ModifyCardRewardCreationOptions` unions that character's pool into the options of any reward
+flagged `IsCardReward`, and `CardReward`'s own constructor adds that flag, so it reaches the
+hallway fight rewards and Draft's ten rewards. `GetPossibleCards` is
+`CardPools.SelectMany(p => p.GetUnlockedCards(...))`, i.e. one pool after another in list order,
+each filtered by THIS player's unlock state.
 
-- **AllStar** and **Insanity** have exact draw counts, so their *cost* is already handled. Their
-  contents are five and thirty cards deep, and AllStar reads the colourless pool, which nothing here
-  models yet.
-- **BigGameHunter** overrides `ModifyGeneratedMap` and **DeadlyEvents** overrides `AfterRunCreated`
-  and the room-odds hook, so both move things this tool already predicts. Either would need
-  modelling before it could be offered, or a search would return other answers that look right and
-  are not.
-- `Hoarder`, `Flight`, `Vintage`, `Midas`, `Murderous`, `NightTerrors`, `Terminal` and `CursedRun`
-  touch combat, rest sites or merchants rather than generation, so they are the likeliest to be
-  safe to allow next. None has been checked line by line, which is the only reason they are not
-  offered.
+1. **The tickbox order is `ModelDb.AllCharacters`** (Ironclad, Silent, Regent, Necrobinder,
+   Defect), which is NOT our `Character` enum's order. Pools concatenate in hook order and a pick
+   is an index into one rarity's entries, so sorting by our enum would quietly return different
+   cards.
+2. **A player playing a ticked character gains nothing.** The hook unions pool INSTANCES and
+   theirs is already in the list, so `Union` drops it. One tickbox doubles one player's pool and
+   does nothing for another, in the same lobby, off the same box.
+3. **Modded characters are unsupportable**, not merely unverified: their pool does not exist in
+   `sts2.dll`. Only the five vanilla characters are offered.
+
+It adds no Neow option, so it costs zero draws, which is why it is carried in
+`SearchCriteria.CharacterCardPools` rather than squeezed into the order-sensitive enum.
+
+Arcane Scroll and Hefty Tablet are untouched by it, for two independent reasons: a Custom run has
+no Neow offer to take them from, and their own `CardCreationOptions` never set `IsCardReward`.
+
+#### What is still out, and why
+
+- **BigGameHunter** overrides `ModifyGeneratedMap`: it rebuilds the act map from a fresh
+  `Rng(seed, "act_{N}_map")` with `NumOfElites` multiplied by 2.5 and elites exempt from placement
+  rules. Same stream name we already use, so it is modellable, but note it keys off
+  `runState.CurrentActIndex + 1` rather than its own `actIndex` parameter, which looks like a game
+  bug a port would have to mirror. The real risk is not the drawn map (display-only) but an elite
+  landing in the first three combats and breaking the fight 1 to 3 assumption. It also turns elite
+  card rewards into uniform Rares, which we do not predict.
+- **DeadlyEvents** and **Vintage**: the bag edit and the bag drain, both above.
+- **SealedDeck**: the moved pity counter, above.
+- **Insanity**: its draws ARE counted, so it is safe to have ticked, but its thirty cards are not
+  named. It is Specialized thirty times over on the character's own pool, with a fresh blacklist
+  each iteration, so naming them is a small job rather than a research one.
 
 A run with Specialized alone was checked end to end: `--verify` matched the acts, bosses, Ancients,
-encounter order, event order and the Act 1 map node-for-node, which is the evidence that this
-modifier does not disturb the UpFront stream.
+encounter order, event order and the Act 1 map node-for-node, which is the evidence that a
+Neow-option modifier does not disturb the UpFront stream.
 
 ### Run saves are the Act 2/3 oracle
 `%APPDATA%\SlayTheSpire2\steam\<steamId>\profile<N>\saves\` — plain `System.Text.Json`,
@@ -970,7 +1105,7 @@ seed, so all of them are explicit inputs.
 - **Ascension**, at exactly two levels. See "Ascension 10" and the Scarcity note under card rewards.
 - **Everyone's unlock state**, not just yours. The bags are shuffled one per player off one stream,
   so a partner missing epochs moves the draws for the whole party.
-- **Run modifiers.** Only Specialized is modelled; see "Custom run modifiers" above.
+- **Run modifiers.** Specialized, Draft, AllStar and CharacterCards are modelled, and seven more are inert; see "Custom run modifiers" above.
 
 **Mods that ADD CONTENT invalidate act generation.** Relics, cards, events, encounters or a
 character all resize the pools a shuffle draws from, and every draw after that lands somewhere

@@ -211,6 +211,15 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic silken_tress 
 # Custom run with the Specialized modifier: P1 starts with five Claws
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --specialized p1:claw     --characters defect,silent
 
+# All Star: P1 is handed Prowess among their five colourless cards (no characters needed)
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --all-star p1:prowess --players 2
+
+# Draft: P1 can take both of these, which means they fall in different rewards
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --draft p1:anger --draft p1:offering     --characters ironclad,silent
+
+# Defect cards added to the lobby, so the Ironclad can be offered Claw in fight 1
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:claw --character-cards defect     --characters ironclad,silent
+
 # What does this seed give us?
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --explain 1EMQY13NZN03 \
     --players 2 --characters ironclad,silent
@@ -272,7 +281,10 @@ Two things that surprise people:
 | Arcane Scroll's rare and Hefty Tablet's three | Verified against the game's own RNG |
 | What's inside Small Capsule, Large Capsule or Neow's Bones | Not supported yet |
 | The card the **Specialized** custom modifier gives you 5 of | Verified against a real custom run |
-| What the other fifteen custom modifiers hand out | Not supported yet |
+| The five colourless cards **All Star** hands out | Verified against the game's own card pool |
+| The ten rewards of three **Draft** offers | Verified against the game's own RNG |
+| Fight rewards with another character's cards added | Verified against the game's own RNG |
+| What **Sealed Deck**, **Insanity** or the rest hand out | Not supported yet |
 
 Five independent checks back this up:
 

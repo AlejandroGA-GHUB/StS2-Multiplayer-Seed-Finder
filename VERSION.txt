@@ -1,31 +1,33 @@
-v1.5.2
+v1.6.0
 
-Release Date: 9/28/2026
+Release Date: 10/10/2026
 
 v0.111.0 beta steam release
 
 # CHANGELOG
 
-1. Fight card rewards can now skip fights. In the card picker you can skip fight 1 and/or fight 2,
-so you can ask for a card in fight 3 alone, or in fights 1 and 3, or fights 2 and 3. "Any order"
-works with skipped fights too.
+1. Custom run modifiers are properly supported. Before this only Specialized was, and ticking
+anything else was not possible. Now twelve of the game's modifiers can be set: four are predicted
+in full and searchable, and seven more can be flicked on without changing a single answer.
 
-2. Much faster fight card reward searches on the GPU, around 50% faster in general and over twice
-as fast in 3 and 4 player lobbies where only some players have cards picked. Neow curse relic
-searches are also around 50% faster.
+2. Three new modifiers you can search on. All Star: the five colourless cards it hands each
+player, picked from the full colourless pool. Draft: the ten rewards of three it offers, where you
+can name up to ten cards you want to be able to take, and the finder respects that you only take
+one card per reward. Specialized still works as before.
 
-3. More Neow picks are supported in "Took at Neow": Lead Paperweight, Lost Coffer, Kaleidoscope,
-Small Capsule and Large Capsule. Taking one of these at Neow changes your first card rewards, so
-before this the predicted rewards were wrong if you took one.
+3. Adding another character's cards is supported, all five tickboxes. Each one adds that
+character's whole pool to every fight card reward, so the fight 1 to 3 pickers now offer those
+cards too. Worth knowing: a player already playing the ticked character gains nothing from it,
+which the panel now tells you per player.
 
-4. Rare cards at Ascension 7 and above. From A7, a Rare can only show up as the last card of
-fight 3, so the picker no longer lets you ask for a Rare in fight 1 or 2 there, and a search that
-could never be found is stopped with an explanation instead of running forever. The "?" on Fight
-card rewards explains how Rares work.
+4. One switch for the seven harmless modifiers: Hoarder, Flight, Midas, Murderous, Night Terrors,
+Terminal and Cursed Run. None of them changes anything this tool predicts, so it makes no
+difference how many you have on. Flick it on to tell the finder your run is a Custom one.
 
-5. Kaleidoscope is now handled correctly for players who have not unlocked every character. Neow
-never offers it to them, which also changes their other two Neow options, so their offers are now
-predicted correctly. Friend unlock codes now include unlocked characters; older codes still work.
+5. Modifiers stack. Tick as many as your lobby has, and the card rewards are read from after
+whatever those modifiers spend: Specialized costs one draw, All Star five, Draft sixty. Searching
+for a Neow relic no longer fails when you turn a modifier on, since the Neow panel now clears
+itself instead.
 
-6. Fixed GPU searches occasionally missing valid seeds when a friend's unlocks were imported and
-you were searching for fight card rewards or Arcane Scroll / Hefty Tablet cards.
+6. Fixed Darv offering Pandora's Box under modifiers that empty your starting deck. The game
+never offers it there, and getting that wrong also shifted the other two relics Darv offered.
