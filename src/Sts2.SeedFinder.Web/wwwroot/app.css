@@ -279,7 +279,10 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
 .stepper .step:hover:not(:disabled) { background: var(--accent-dim); color: var(--text-0); }
 .stepper .step:disabled { color: var(--text-2); cursor: default; }
 
-.seg { display: flex; gap: 4px; }
+/* Wraps because one group of these is a tickbox per character, and five of them do not fit the
+   criteria column. A toggle cannot be hidden behind an ellipsis the way a summary chip can:
+   every one of them has to stay reachable. */
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
 .seg button {
   flex: 1; padding: 7px 0; background: var(--bg-2); border: 1px solid var(--border);
   border-radius: var(--radius); cursor: pointer; color: var(--text-1);
@@ -741,6 +744,17 @@ dialog::backdrop { background: #0009; }
   font-size: 12px;
 }
 .card-field .pick .fight-badge { width: 15px; height: 15px; font-size: 9.5px; }
+
+/* A summary that must not widen the column. Draft holds up to ten cards and All Star five, so
+   the row names the first couple and then says "…" rather than running past the panel edge or
+   wrapping into a second and third line. The picker shows the full set. */
+.picks.is-tight { flex-wrap: nowrap; overflow: hidden; }
+.picks.is-tight .pick { flex: none; max-width: 120px; }
+/* The card name itself, which is the part that must give way rather than the icon or badge. */
+.picks.is-tight .pick > span:not(.fight-badge) {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pick.is-more { color: var(--text-2); padding: 2px 7px; }
 
 /* A Neow payload is a set, not an order: all of its cards are shown at once and you keep one.
    So its tiles carry a tick where a fight pick carries the number of the fight it means. */

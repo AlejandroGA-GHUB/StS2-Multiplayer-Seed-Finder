@@ -1043,9 +1043,8 @@ const INFO = {
       'The seed fixes all thirty cards on offer and which reward each sits in. Which ten you '
         + 'come away with is your choice, so a pick here is a claim about what is REACHABLE '
         + 'rather than about what you end up holding.',
-      'One card per reward is the rule that bites. Two cards you ask for have to turn up in '
-        + 'different rewards, because taking one closes that reward. Asking for the same card '
-        + 'twice asks for it in two of the ten.',
+      'Two cards you ask for have to turn up in different rewards, because taking one closes '
+        + 'that reward. Asking for the same card twice asks for it in two of the ten.',
       { h: 'Rares behave differently here' },
       'A fight reward starts with the rare chance pushed below zero, which is why fight 1 can '
         + 'never offer one. Draft rolls against the plain base odds instead, and never moves that '
@@ -1502,6 +1501,12 @@ function renderAllStar() {
  * The picker's fight strip stays hidden because no `skippable` is passed: neither of these has
  * anything to do with fights, and the numbered badges here only count the picks.
  */
+/**
+ * How many cards a summary field names before it gives up and says "…". Two fits the criteria
+ * column at its narrowest without the row stretching, and the picker is one click away.
+ */
+const FieldChips = 2;
+
 function cardListField({ label, chosen, pool, max, title, rarities, hint, onChange }) {
   const row = el('div', 'row');
   row.appendChild(el('label', null, label));
@@ -1520,14 +1525,31 @@ function cardListField({ label, chosen, pool, max, title, rarities, hint, onChan
     const counts = new Map();
     for (const slug of chosen) counts.set(slug, (counts.get(slug) ?? 0) + 1);
 
-    for (const [slug, n] of counts) {
+    // Only the first few, then an ellipsis. These fields can hold five or ten cards and the
+    // criteria column is narrow, so showing them all either pushes the panel out past its
+    // edge or grows the row downwards; neither is worth it for a summary you can open in
+    // full with one click. The ellipsis carries the rest in its tooltip.
+    const shown = [...counts].slice(0, FieldChips);
+    const rest = [...counts].slice(FieldChips);
+
+    const picks = el('span', 'picks is-tight');
+    for (const [slug, n] of shown) {
       const name = pool.find(c => c.slug === slug)?.name ?? slug;
       const chip = el('span', 'pick');
       chip.appendChild(iconFor(slug, name, 22, 'card'));
       chip.appendChild(el('span', null, name));
       if (n > 1) chip.appendChild(el('span', 'fight-badge', `×${n}`));
-      field.appendChild(withTip(chip, slug, name, 'card'));
+      picks.appendChild(withTip(chip, slug, name, 'card'));
     }
+    if (rest.length) {
+      const more = el('span', 'pick is-more', '…');
+      more.title = rest
+        .map(([slug, n]) => (pool.find(c => c.slug === slug)?.name ?? slug) + (n > 1 ? ` x${n}` : ''))
+        .join(', ');
+      picks.appendChild(more);
+    }
+    field.appendChild(picks);
+
     const clear = el('span', 'clear', '×');
     clear.dataset.clear = '1';
     clear.title = 'Clear';

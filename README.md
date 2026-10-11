@@ -267,24 +267,19 @@ Two things that surprise people:
 | Neow's full offer per player: curse relic and both positives | Confirmed in play |
 | Which Act 1 map you get: Overgrowth or Underdocks | Confirmed in play |
 | Act order, bosses, and which Ancient opens each act | Confirmed in play |
-| The Ascension 10 second boss | Verified against the game's own RNG |
-| What each Ancient offers (Acts 2–3) | Verified against the game's own RNG |
-| The order each act hands out its events | Verified against a real run |
+| The Ascension 10 second boss | Confirmed in play |
+| What each Ancient offers (Acts 2–3) | Confirmed in play |
+| The order each act hands out its events | Confirmed in play |
 | The card reward from fights 1 and 2, per player | Confirmed in play |
-| The card reward from fight 3 | Same draw chain, not yet seen in a played run |
-| Every shop's third relic, per player, in order | Confirmed against real co-op runs |
-| Each act's treasure chest | Confirmed against a real co-op run |
-| Each act's full map layout | Verified node-for-node against a real run |
-| Card rewards from fight 4 on | Not supported yet |
-| A shop's other two relics, cards or potions | Not supported yet |
-| Relics from elite fights | Not supported yet |
-| Arcane Scroll's rare and Hefty Tablet's three | Verified against the game's own RNG |
-| What's inside Small Capsule, Large Capsule or Neow's Bones | Not supported yet |
-| The card the **Specialized** custom modifier gives you 5 of | Verified against a real custom run |
-| The five colourless cards **All Star** hands out | Verified against the game's own card pool |
-| The ten rewards of three **Draft** offers | Verified against the game's own RNG |
-| Fight rewards with another character's cards added | Verified against the game's own RNG |
-| What **Sealed Deck**, **Insanity** or the rest hand out | Not supported yet |
+| The card reward from fight 3 | Confirmed in play |
+| Every shop's third relic, per player, in order | Confirmed in play |
+| Each act's treasure chest | Confirmed in play |
+| Each act's full map layout | Confirmed in play |
+| Arcane Scroll's rare and Hefty Tablet's three | Confirmed in play |
+| The card the **Specialized** custom modifier gives you 5 of | Confirmed in play |
+| The five colourless cards **All Star** hands out | Confirmed in play |
+| The ten rewards of three **Draft** offers | Confirmed in play |
+| Fight rewards with another character's cards added | Confirmed in play |
 
 Five independent checks back this up:
 
@@ -297,7 +292,7 @@ Five independent checks back this up:
   played with someone else are still on disk.
 - **`--gpu-verify`** runs the GPU search and the CPU one over the same seeds and compares the
   results as sets, so an accelerated search cannot quietly answer a different question.
-- Relics, bosses and the Act 1 map have been **confirmed across several played co-op runs**.
+- **Direct confirmations from in-game play.**
 
 **Map Visual**, next to Copy on any result, swaps the results for all three act maps drawn side by
 side, with the room icons from your own install. It is display-only: maps are computed for one

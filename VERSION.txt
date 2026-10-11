@@ -1,33 +1,35 @@
 v1.6.0
 
-Release Date: 10/10/2026
+Release Date: 10/11/2026
 
 v0.111.0 beta steam release
 
 # CHANGELOG
 
-1. Custom run modifiers are properly supported. Before this only Specialized was, and ticking
-anything else was not possible. Now twelve of the game's modifiers can be set: four are predicted
-in full and searchable, and seven more can be flicked on without changing a single answer.
+1. Two new modifiers you can search on. All Star: the five colourless cards it hands each
+player, and you can ask for any of them, including the same card twice. Draft: the ten rewards
+of three it offers, where you name up to ten cards you want to be able to take, and the finder
+knows you only get one card per reward.
 
-2. Three new modifiers you can search on. All Star: the five colourless cards it hands each
-player, picked from the full colourless pool. Draft: the ten rewards of three it offers, where you
-can name up to ten cards you want to be able to take, and the finder respects that you only take
-one card per reward. Specialized still works as before.
-
-3. Adding another character's cards is supported, all five tickboxes. Each one adds that
+2. Adding another character's cards is supported, all five tickboxes. Each one adds that
 character's whole pool to every fight card reward, so the fight 1 to 3 pickers now offer those
 cards too. Worth knowing: a player already playing the ticked character gains nothing from it,
-which the panel now tells you per player.
+which the panel tells you per player.
 
-4. One switch for the seven harmless modifiers: Hoarder, Flight, Midas, Murderous, Night Terrors,
-Terminal and Cursed Run. None of them changes anything this tool predicts, so it makes no
-difference how many you have on. Flick it on to tell the finder your run is a Custom one.
+3. One switch for the seven harmless modifiers: Hoarder, Flight, Midas, Murderous, Night
+Terrors, Terminal and Cursed Run. None of them changes anything this tool predicts, so it makes
+no difference how many you have on. Flick it on to tell the finder your run is a Custom one.
 
-5. Modifiers stack. Tick as many as your lobby has, and the card rewards are read from after
-whatever those modifiers spend: Specialized costs one draw, All Star five, Draft sixty. Searching
-for a Neow relic no longer fails when you turn a modifier on, since the Neow panel now clears
-itself instead.
+4. Modifiers stack. Tick as many as your lobby has, and the card rewards are read from after
+whatever those modifiers spend: Specialized costs one draw, All Star five, Draft sixty.
+Searching for a Neow relic no longer fails when you turn a modifier on, since the Neow panel
+now clears itself instead.
 
-6. Fixed Darv offering Pandora's Box under modifiers that empty your starting deck. The game
+5. You can ask for the same card more than once. Pick a card, then use the + on it to ask for
+a second copy. Works in the fight card picker, where it means two different fights, and in the
+Draft and All Star pickers.
+
+6. Modifier searches now run on the GPU.
+
+7. Fixed Darv offering Pandora's Box under modifiers that empty your starting deck. The game
 never offers it there, and getting that wrong also shifted the other two relics Darv offered.
