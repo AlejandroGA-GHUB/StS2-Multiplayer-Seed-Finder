@@ -69,6 +69,11 @@ function defaultState() {
     // cannot tell them apart: each spends no Rewards draws and touches no generation hook, so
     // the search is sent all seven and reads the same answer any subset would have given.
     specializedOn: false,
+    // AllStar hands every player five colourless cards and keeps them all, so this is up to five
+    // wanted slugs per slot rather than one. The same slug twice asks for it to be drawn twice,
+    // which is possible: each of the five draws sees the whole pool again.
+    allStarOn: false,
+    allStar: [],
     otherModsOn: false,
     specialized: [],
     // Which CharacterCards tickboxes are on, by character name. Lobby-wide, but what each adds
@@ -931,6 +936,27 @@ const INFO = {
     ],
   },
 
+  allStar: {
+    title: 'All Star',
+    body: () => [
+      { lead: 'All Star hands every player five colourless cards at the start of the run, and '
+            + 'they keep all five. Which five is decided by the seed, off the same per-player '
+            + 'stream the fight card rewards come from.' },
+      { h: 'Rares are cheap here' },
+      'The colourless pool holds 65 cards, 40 Uncommon and 25 Rare, with no Commons at all. Each '
+        + 'of the five is a flat pick across that pool with no rarity roll, so about two in five '
+        + 'draws is a Rare. Everywhere else in this tool a Rare is the expensive ask.',
+      'The five draws are independent, so the same card can come up more than once. Naming a '
+        + 'card twice asks for exactly that.',
+      { h: 'What it costs the card rewards' },
+      'Five draws, taken before any fight. The fight card rewards below are read from after '
+        + 'them, so they move, and the panel accounts for it. Specialized can be on at the same '
+        + 'time: its one draw comes first, then these five.',
+      'Your character does not matter here. The colourless pool is the same for everyone, which '
+        + 'makes this the only card criterion in the tool that needs no character picked.',
+    ],
+  },
+
   charCards: {
     title: 'Adding a character’s cards',
     body: () => [
@@ -1027,7 +1053,14 @@ function setHint(sel, text) {
 
 /** Whether this lobby is a Custom run at all, from either half of the panel. */
 function anyModifier() {
-  return state.specializedOn === true || state.otherModsOn === true || state.charCards.length > 0;
+  return state.specializedOn === true || state.allStarOn === true
+    || state.otherModsOn === true || state.charCards.length > 0;
+}
+
+/** The colourless pool, which AllStar draws from. The same for every player. */
+function colorlessPool() {
+  const cards = catalog.colorlessPool ?? [];
+  return state.players === 1 ? cards.filter(c => !c.multiplayerOnly) : cards;
 }
 
 /**
@@ -1066,6 +1099,14 @@ function inertModifiers() {
  * that was already there. It is also the honest reading of the switch: the user is saying some of
  * these are on, and which ones cannot change the answer.
  */
+/** The wanted AllStar cards, one parameter each. The server derives the modifier from them. */
+function appendAllStar(q) {
+  if (!state.allStarOn) return;
+  state.allStar.forEach((cards, i) => {
+    for (const slug of cards ?? []) q.append('allstar', `${i + 1}:${slug}`);
+  });
+}
+
 function appendOtherModifiers(q) {
   if (state.otherModsOn) for (const m of inertModifiers()) q.append('modifier', m.slug);
 
@@ -1077,7 +1118,10 @@ function appendOtherModifiers(q) {
 /** The catalog rows for the modifiers this lobby has ticked on, in the game's list order. */
 function enabledModifiers() {
   return (catalog.modifiers ?? []).filter(m =>
-    (state.specializedOn && m.slug === 'specialized') || (state.otherModsOn && m.inert));
+    (state.specializedOn && m.slug === 'specialized')
+    || (state.allStarOn && m.slug === 'all_star')
+    || (state.charCards.length > 0 && m.slug === 'character_cards')
+    || (state.otherModsOn && m.inert));
 }
 
 /**
@@ -1178,6 +1222,7 @@ function renderModifiers() {
     }
   }
 
+  renderAllStar();
   renderCharCards();
 
   // The second half: one switch for the seven that change nothing here.
@@ -1210,6 +1255,77 @@ function renderModifiers() {
     + 'replaces Neow’s three options with one forced option per modifier, so a Custom run '
     + 'has no Neow offer and that panel switches off. Specialized is predicted in full; the '
     + 'seven below are supported because they leave every prediction alone.');
+}
+
+/**
+ * All Star: a toggle, then up to five wanted cards a player.
+ *
+ * Unlike Specialized this is a LIST per player, because AllStar hands out five cards and the
+ * player keeps all of them. A sixth ask can never be met, so the Add button disappears at five
+ * rather than letting a search be built that no seed answers.
+ */
+function renderAllStar() {
+  const box = $('#allStar');
+  box.replaceChildren();
+
+  mount('#allStarOn', [
+    { label: 'Off', value: 'off' },
+    { label: 'On', value: 'on' },
+  ], state.allStarOn ? 'on' : 'off', v => {
+    state.allStarOn = v === 'on';
+    if (!state.allStarOn) state.allStar = [];
+    renderModifiers();
+    renderNeow();
+    syncNeowAvailability();
+    // Five draws off the same stream the fight rewards use, so the rewards below move.
+    renderCards();
+  });
+
+  if (!state.allStarOn) return;
+
+  state.allStar.length = state.players;
+  const pool = colorlessPool();
+
+  for (let i = 0; i < state.players; i++) {
+    const want = state.allStar[i] || (state.allStar[i] = []);
+    const row = el('div', 'row');
+    row.appendChild(el('label', null, `P${i + 1} is given`));
+
+    const picks = el('div', 'offer');
+    want.forEach((slug, at) => {
+      const card = pool.find(c => c.slug === slug);
+      const name = card?.name ?? slug;
+      const p = el('span', 'pill is-card');
+      p.appendChild(iconFor(slug, name, 20, 'card'));
+      p.appendChild(el('span', null, name));
+      const clear = el('span', 'clear', '×');
+      clear.title = 'Remove';
+      clear.onclick = () => { want.splice(at, 1); renderAllStar(); };
+      p.appendChild(clear);
+      picks.appendChild(withTip(p, slug, name, 'card'));
+    });
+
+    // Five is the whole hand, so there is nothing a sixth could match.
+    if (want.length < 5) {
+      const add = el('button', 'relic-field card-field');
+      add.type = 'button';
+      add.appendChild(anyIcon(22));
+      add.appendChild(el('span', 'name', want.length === 0 ? 'Any cards' : 'Add another'));
+      add.onclick = async () => {
+        const picked = await openPicker(
+          `P${i + 1} is given, among their five…`,
+          // No Commons exist in the colourless pool, and a uniform pick means a Rare is no
+          // harder to find than an Uncommon, so nothing is greyed out.
+          ['Uncommon', 'Rare'].map(r => ({ title: r, items: pool.filter(c => c.rarity === r) })),
+          'card');
+        if (picked) { want.push(picked.slug); renderAllStar(); }
+      };
+      picks.appendChild(add);
+    }
+
+    row.appendChild(picks);
+    box.appendChild(row);
+  }
 }
 
 /**
@@ -3112,6 +3228,27 @@ function renderHit(hit, position = null) {
     act1.appendChild(row);
   }
 
+  // All Star's five, in draw order. A repeat is a real outcome, so they are not de-duplicated,
+  // and each wanted card lights up once rather than lighting every copy.
+  for (const as of hit.allStar ?? []) {
+    const row = el('div', 'slot');
+    row.appendChild(el('div', 'slot-label', `P${as.slot + 1} is given`));
+    const offer = el('div', 'offer');
+    const outstanding = [...(state.allStar[as.slot] ?? [])];
+    as.cards.forEach((slug, i) => {
+      const at = outstanding.indexOf(slug);
+      if (at >= 0) outstanding.splice(at, 1);
+      const name = as.names[i];
+      const p = el('span', 'pill is-card' + (at >= 0 ? ' is-match' : ''));
+      p.appendChild(el('span', 'ord', String(i + 1)));
+      p.appendChild(iconFor(slug, name, 20, 'card'));
+      p.appendChild(el('span', null, name));
+      offer.appendChild(withTip(p, slug, name, 'card'));
+    });
+    row.appendChild(offer);
+    act1.appendChild(row);
+  }
+
   // The first fight sits in Act 1 because that is where it happens, and after Neow because the
   // Neow pick is what can shift it.
   const first = firstFightBlock(hit.firstFight);
@@ -3256,6 +3393,7 @@ function buildQuery() {
       if (want?.card) q.append('specialized', `${i + 1}:${want.card}`);
     });
   }
+  appendAllStar(q);
   appendOtherModifiers(q);
 
   // Only A10 changes anything, but send whatever is set so the answer matches the lobby.
@@ -3761,6 +3899,7 @@ async function inspect() {
   state.neowPicks.forEach((slug, i) => { if (slug) q.append('pick', `${i + 1}:${slug}`); });
   if (state.extraChests > 0) q.set('extraChests', state.extraChests);
   if (state.specializedOn) q.append('modifier', 'specialized');
+  appendAllStar(q);
   appendOtherModifiers(q);
 
   const out = $('#out');

@@ -504,6 +504,7 @@ internal static class Program
             Modifiers = opts.Modifiers,
             CharacterCardPools = opts.CharacterCardPools,
             Specialized = opts.Specialized,
+            AllStar = opts.AllStar,
             ShopRelicsWanted = opts.ShopRelicsWanted,
             ChestRelicsWanted = opts.ChestRelicsWanted,
             ExtraChestPicks = opts.ExtraChestPicks,
@@ -562,6 +563,8 @@ internal static class Program
                                       : $"their own pool plus {string.Join(", ", added)}"));
             }
         }
+        foreach (var a in opts.AllStar)
+            Console.WriteLine($"  AllStar       : {a}");
         foreach (var sp in opts.Specialized)
             Console.WriteLine($"  Specialized   : {sp}");
         foreach (var pick in opts.NeowPicks)
@@ -618,6 +621,13 @@ internal static class Program
                 for (int i = 0; i < starting.Length; i++)
                     Console.WriteLine($"      P{i + 1} starts: 5x "
                         + (starting[i] is { } t ? CardCatalog.Display(t) : "nothing"));
+
+            // In draw order, not sorted: a repeat means the same card came up twice, and which
+            // draw it was is the only thing distinguishing them.
+            if (hit.AllStarCards is { } allStar)
+                for (int i = 0; i < allStar.Length; i++)
+                    Console.WriteLine($"      P{i + 1} AllStar: "
+                        + string.Join(", ", allStar[i].Select(CardCatalog.Display)));
 
             // Only when asked for. It costs a per-player generation pass, and on a boss or
             // relic search it would be noise.
@@ -959,6 +969,12 @@ internal static class Program
         /// </summary>
         public IReadOnlyList<string> SpecializedArgs { get; init; } = Array.Empty<string>();
 
+        /// <summary>Raw --all-star arguments, resolved once --players is known.</summary>
+        public IReadOnlyList<string> AllStarArgs { get; init; } = Array.Empty<string>();
+
+        /// <summary>Cards AllStar must hand a player.</summary>
+        public IReadOnlyList<AllStarCriterion> AllStar { get; init; } = Array.Empty<AllStarCriterion>();
+
         public IReadOnlyList<SpecializedCriterion> Specialized { get; init; } =
             Array.Empty<SpecializedCriterion>();
 
@@ -1117,6 +1133,9 @@ internal static class Program
                     case "--specialized":
                         o = o with { SpecializedArgs = o.SpecializedArgs.Append(Next("--specialized")).ToList() };
                         break;
+                    case "--all-star":
+                        o = o with { AllStarArgs = o.AllStarArgs.Append(Next("--all-star")).ToList() };
+                        break;
                     case "--card":
                         o = o with { CardArgs = o.CardArgs.Append(Next("--card")).ToList() };
                         break;
@@ -1206,6 +1225,15 @@ internal static class Program
                     o = o with { Modifiers = o.Modifiers.Append(RunModifier.Specialized).ToList() };
 
                 o = o with { Specialized = o.SpecializedArgs.Select(s => ParseSpecialized(s, o)).ToList() };
+            }
+
+            if (o.AllStarArgs.Count > 0)
+            {
+                // Naming a card AllStar hands over is itself the statement that it is on.
+                if (!o.Modifiers.Contains(RunModifier.AllStar))
+                    o = o with { Modifiers = o.Modifiers.Append(RunModifier.AllStar).ToList() };
+
+                o = o with { AllStar = o.AllStarArgs.Select(s => ParseAllStar(s, o)).ToList() };
             }
 
             // The game applies them in its own list order regardless of the order they are
@@ -1378,6 +1406,30 @@ internal static class Program
             throw new ArgumentException(
                 $"'{parts[1]}' is not a card Specialized can hand {who}. It draws from that "
                 + "player's own pool, and only Common, Uncommon and Rare cards are reachable.");
+        }
+
+        /// <summary>
+        /// "p1:prowess" — which player AllStar must hand which card.
+        ///
+        /// No --characters needed, unlike --specialized: AllStar draws from the colourless pool,
+        /// which is the same whoever is playing. Repeat the flag for up to five cards a player,
+        /// and name the same card twice to ask for it twice.
+        /// </summary>
+        private static AllStarCriterion ParseAllStar(string s, Options o)
+        {
+            var parts = s.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+                throw new ArgumentException(
+                    $"--all-star wants <player>:<card>, e.g. p1:prowess, got '{s}'");
+
+            int slot = ParseSlot(parts[0], o, "--all-star");
+
+            if (CardCatalog.FindColorless(parts[1], null, o.PlayerCount > 1) is { } found)
+                return new AllStarCriterion(slot, found);
+
+            throw new ArgumentException(
+                $"'{parts[1]}' is not a colourless card. AllStar draws from the colourless pool "
+                + "only, whoever is playing.");
         }
 
         /// <summary>

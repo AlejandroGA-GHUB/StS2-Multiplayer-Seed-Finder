@@ -49,7 +49,17 @@ public static class CardPools
                 .ToList();
         }
 
-        var pools = characters.Select(c => (Key: c, Cards: Read(c))).ToList();
+        // The colourless pool, alongside the five character ones. Not a character, so it is
+        // absent from the Character enum and from the For() switch below; it is read because
+        // the AllStar modifier draws its five cards from it and nothing else here does.
+        const string colorless = "Colorless";
+        if (!poolTypes.ContainsKey(colorless))
+            throw new StructuralChangeException(
+                "this build has no ColorlessCardPool, which AllStar draws from");
+
+        var pools = characters.Select(c => (Key: c, Cards: Read(c)))
+            .Append((Key: colorless, Cards: Read(colorless)))
+            .ToList();
 
         // Rarities and constraints must be nameable by our enums, or the emitted file will not
         // compile — better to say which value is new than to write something broken.

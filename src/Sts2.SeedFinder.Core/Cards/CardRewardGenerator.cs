@@ -503,18 +503,51 @@ public static class CardRewardGenerator
     }
 
     /// <summary>
+    /// The colourless pool, gated and mode-filtered the same way a character's is.
+    ///
+    /// Not a character pool and not reachable from <see cref="PoolFor"/>: nothing indexes it by
+    /// <see cref="Character"/>, and no card reward draws from it. The AllStar modifier is the
+    /// only thing here that does. Cached per thread like the others, since the only thing it
+    /// varies on is the unlock state.
+    /// </summary>
+    public static CardEntry[] ColorlessPool(
+        UnlockState? unlocks = null, bool isMultiplayer = true)
+    {
+        var cache = _colorless ??= new PoolCache?[2];
+        int slot = isMultiplayer ? 1 : 0;
+
+        if (cache[slot] is { } hit && ReferenceEquals(hit.Unlocks, unlocks)) return hit.Pool;
+
+        var built = BuildPool(CardPoolData.Colorless, "Colorless", unlocks, isMultiplayer);
+        cache[slot] = new PoolCache(unlocks, built);
+        return built;
+    }
+
+    [ThreadStatic] private static PoolCache?[]? _colorless;
+
+    /// <summary>
     /// The character's pool as a reward sees it: epoch-gated cards removed, then filtered for
     /// run mode. Multiplayer drops singleplayer-only cards, of which the game currently ships
     /// none; singleplayer drops multiplayer-only ones, of which it ships five per character.
     /// Both directions are what <c>CardFactory.FilterForPlayerCount</c> does.
     /// </summary>
     private static CardEntry[] BuildPool(
-        Character character, UnlockState? unlocks, bool isMultiplayer)
+        Character character, UnlockState? unlocks, bool isMultiplayer) =>
+        BuildPool(CardPoolData.For(character), character.ToString(), unlocks, isMultiplayer);
+
+    /// <summary>
+    /// The same filtering for any named pool, so the colourless one cannot drift from the
+    /// character ones. <paramref name="gateKey"/> is the key into
+    /// <see cref="CardPoolData.EpochGates"/>, which is the pool's own name rather than a
+    /// character: the colourless pool has five epoch gates of its own.
+    /// </summary>
+    private static CardEntry[] BuildPool(
+        CardEntry[] source, string gateKey, UnlockState? unlocks, bool isMultiplayer)
     {
-        var pool = CardPoolData.For(character).AsEnumerable();
+        var pool = source.AsEnumerable();
 
         if (unlocks is not null &&
-            CardPoolData.EpochGates.TryGetValue(character.ToString(), out var gates))
+            CardPoolData.EpochGates.TryGetValue(gateKey, out var gates))
         {
             var locked = new HashSet<string>();
             foreach (var (epoch, cards) in gates)

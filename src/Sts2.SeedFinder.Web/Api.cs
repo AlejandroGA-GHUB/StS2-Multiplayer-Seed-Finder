@@ -124,7 +124,8 @@ public sealed record CatalogDto(
     AncientDto[] Ancients, CharacterDto[] Characters, string[] Act1Maps, ActContentDto[] ActContent,
     CardPoolDto[] CardPools, ShopRelicDto[] ShopRelics, ChestRelicDto[] ChestRelics,
     string[] AncientArtSlugs, string[] EventArtSlugs, string[] BossArtSlugs,
-    NeowCardRelicDto[] NeowCardRelics, ModifierDto[] Modifiers, int[][] RareFights);
+    NeowCardRelicDto[] NeowCardRelics, ModifierDto[] Modifiers, int[][] RareFights,
+    CardDto[] ColorlessPool);
 
 /// <summary>
 /// What the local game install knows about this player, for the "sync from my save" button.
@@ -315,13 +316,23 @@ public sealed record NeowPayloadDto(int Slot, string Relic, string[] Cards);
 public sealed record SeedResultDto(
     string Seed, NeowOfferDto[] Neow, ActDto[] Acts, AncientOfferDto[] AncientOffers,
     FirstFightDto[] FirstFight, ShopSequenceDto[] Shops, ChestDto[] Chests,
-    NeowPayloadDto[] NeowPayloads, SpecializedDto[] Specialized);
+    NeowPayloadDto[] NeowPayloads, SpecializedDto[] Specialized, AllStarDto[] AllStar);
 
 /// <summary>
 /// What one player starts five copies of, under the Specialized modifier. Empty unless the
 /// lobby has it ticked on.
 /// </summary>
 public sealed record SpecializedDto(int Slot, string Card, string Name, bool HasArt);
+
+/// <summary>
+/// The five colourless cards AllStar hands one player, in draw order. Empty unless the lobby
+/// has AllStar ticked on.
+/// </summary>
+/// <param name="Cards">
+/// Draw order, and repeats are kept. Each of the five draws sees the whole pool again, so the
+/// same card twice is a real outcome rather than a display artefact.
+/// </param>
+public sealed record AllStarDto(int Slot, string[] Cards, string[] Names, bool[] HasArt);
 
 /// <summary>
 /// One run modifier, for the Modifiers picker.
@@ -581,6 +592,7 @@ public static class Query
             Modifiers = ParseModifiers(q),
             CharacterCardPools = CharacterCardPools(q),
             Specialized = ParseSpecialized(q, chars, players),
+            AllStar = ParseAllStar(q, players),
             ShopRelicsWanted = ParseShopRelics(q, players),
             ChestRelicsWanted = ParseChestRelics(q),
             ExtraChestPicks = ExtraChestPicks(q),
@@ -836,6 +848,40 @@ public static class Query
     public static IReadOnlyList<RunModifier> Modifiers(IQueryCollection q) => ParseModifiers(q);
 
     /// <summary>
+    /// Repeated ?allstar=&lt;player&gt;:&lt;card&gt; — which player AllStar must hand which
+    /// card. Up to five a player, and the same card twice asks for it twice.
+    ///
+    /// No character needed, unlike ?specialized: the colourless pool is the same for everyone.
+    /// </summary>
+    private static IReadOnlyList<AllStarCriterion> ParseAllStar(IQueryCollection q, int players)
+    {
+        var wanted = new List<AllStarCriterion>();
+        foreach (var raw in (StringValues)q["allstar"])
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+
+            var parts = raw.Split(':', 2, StringSplitOptions.TrimEntries);
+            if (parts.Length < 2)
+                throw new ArgumentException($"allstar wants <player>:<card>, got '{raw}'");
+
+            int slot = -1;
+            if (parts[0] is not ("any" or ""))
+            {
+                var t = parts[0].StartsWith('p') || parts[0].StartsWith('P') ? parts[0][1..] : parts[0];
+                if (!int.TryParse(t, out var n) || n < 1 || n > players)
+                    throw new ArgumentException($"'{parts[0]}' is not a player in a {players}-player lobby");
+                slot = n - 1;
+            }
+
+            wanted.Add(new AllStarCriterion(slot, CardCatalog.FindColorless(parts[1], null, players > 1)
+                ?? throw new ArgumentException(
+                    $"no colourless card called '{parts[1]}'. AllStar draws from the colourless "
+                    + "pool only.")));
+        }
+        return wanted;
+    }
+
+    /// <summary>
     /// Repeated ?charCards=&lt;character&gt; — which CharacterCards tickboxes are on. Separate
     /// from ?modifier because this one modifier is five tickboxes, each carrying a character.
     /// Returned in the game's own tickbox order, since that is the order its pools concatenate.
@@ -867,6 +913,7 @@ public static class Query
         // send both and cannot send one without the other. Validate refuses the halves
         // disagreeing, which is the error this derivation exists to make unreachable.
         if (CharacterCardPools(q).Count > 0) enabled.Add(RunModifier.CharacterCards);
+        if (((StringValues)q["allstar"]).Count > 0) enabled.Add(RunModifier.AllStar);
 
         return enabled.Distinct().OrderBy(m => m).ToList();
     }
@@ -1070,7 +1117,11 @@ public static class Predictions
                 // A payload is drawn from the character's own rare pool, so with nobody picked
                 // there is nothing to say — unlike the offer itself, which is party-independent.
                 Array.Empty<NeowPayloadDto>(),
-                Array.Empty<SpecializedDto>());
+                Array.Empty<SpecializedDto>(),
+                // AllStar reads the colourless pool, so it needs no character at all. It is
+                // still left empty here: with nobody picked the panel has no player rows to
+                // put it against, and the lobby is not a described run yet.
+                Array.Empty<AllStarDto>());
 
         if (characters.Count != players)
             throw new ArgumentException(
@@ -1191,9 +1242,32 @@ public static class Predictions
             }
         }
 
+        // AllStar's five, per player. Taken from the hit when the search already drew them, so
+        // the result shows the same hand the match was made on.
+        var allStar = new List<AllStarDto>();
+        if (modifiers is { Count: > 0 } withAllStar && withAllStar.Contains(RunModifier.AllStar)
+            && RunModifiers.PriorRewardDraws(RunModifier.AllStar, withAllStar) is { } allStarPrior)
+        {
+            for (int slot = 0; slot < players; slot++)
+            {
+                var names = hit?.AllStarCards is { } drawn && slot < drawn.Length
+                    ? drawn[slot]
+                    : AllStarPayload
+                        .Predict(runSeed, slot, Own(slot), isMultiplayer, allStarPrior)
+                        .Select(c => c.TypeName).ToArray();
+
+                if (names.Length == 0) continue;
+                allStar.Add(new AllStarDto(
+                    slot,
+                    names.Select(CardCatalog.Slug).ToArray(),
+                    names.Select(CardCatalog.Display).ToArray(),
+                    names.Select(_ => true).ToArray()));
+            }
+        }
+
         return new SeedResultDto(
             seed, neow, acts, ancientOffers.ToArray(), firstFight, shops, chests,
-            payloads.ToArray(), specialized.ToArray());
+            payloads.ToArray(), specialized.ToArray(), allStar.ToArray());
     }
 }
 

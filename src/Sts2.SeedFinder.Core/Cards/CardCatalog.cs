@@ -79,6 +79,25 @@ public static class CardCatalog
             .FirstOrDefault(t => Normalize(Slug(t)) == wanted || Normalize(t) == wanted);
     }
 
+    /// <summary>
+    /// Every colourless card AllStar can hand out, in pool order. No character, because the
+    /// colourless pool is the same whoever is playing.
+    /// </summary>
+    public static IEnumerable<CardEntry> Colorless(
+        UnlockState? unlocks = null, bool isMultiplayer = true) =>
+        CardRewardGenerator.ColorlessPool(unlocks, isMultiplayer)
+            .Where(c => RewardRarities.Contains(c.Rarity));
+
+    /// <summary>Resolve a user-typed name or slug against the colourless pool.</summary>
+    public static string? FindColorless(
+        string nameOrSlug, UnlockState? unlocks = null, bool isMultiplayer = true)
+    {
+        var wanted = Normalize(nameOrSlug);
+        return Colorless(unlocks, isMultiplayer)
+            .Select(c => c.TypeName)
+            .FirstOrDefault(t => Normalize(Slug(t)) == wanted || Normalize(t) == wanted);
+    }
+
     private static string Normalize(string s)
     {
         var sb = new StringBuilder(s.Length);

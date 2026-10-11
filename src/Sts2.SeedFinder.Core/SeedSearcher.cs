@@ -203,6 +203,24 @@ public sealed record SpecializedCriterion(int Slot, string Card)
 }
 
 /// <summary>
+/// A card a player must be handed by the AllStar run modifier.
+///
+/// Per player, like Specialized, and for the same reason: the draws are off that player's own
+/// Rewards stream. Unlike Specialized a player can be given several, because AllStar hands out
+/// five cards and keeps them all, so a slot may carry up to five of these. Naming the same card
+/// twice asks for it to be drawn twice, which is possible: each of the five draws sees the whole
+/// pool again.
+///
+/// The pool is the colourless one, so this is the only card criterion in the tool that does not
+/// depend on the player's character. See <see cref="Modifiers.AllStarPayload"/>.
+/// </summary>
+public sealed record AllStarCriterion(int Slot, string Card)
+{
+    public override string ToString() =>
+        $"{(Slot < 0 ? "Any player" : $"P{Slot + 1}")} is given {CardCatalog.Display(Card)} by AllStar";
+}
+
+/// <summary>
 /// A Neow option a player is ASSUMED to take, which is a different claim from any criterion
 /// here: nothing about the seed decides it, the player does.
 ///
@@ -351,6 +369,17 @@ public sealed record SearchCriteria
 
     /// <summary>Cards a player must start five copies of. Needs Specialized in <see cref="Modifiers"/>.</summary>
     public IReadOnlyList<SpecializedCriterion> Specialized { get; init; } = Array.Empty<SpecializedCriterion>();
+
+    /// <summary>Cards AllStar must hand a player. Needs AllStar in <see cref="Modifiers"/>.</summary>
+    public IReadOnlyList<AllStarCriterion> AllStar { get; init; } = Array.Empty<AllStarCriterion>();
+
+    /// <summary>
+    /// Rewards draws already spent when AllStar takes its option, or null when that cannot be
+    /// known. AllStar sits late in the game's list, so Specialized and Insanity both count
+    /// toward this when they are on, and Draft or Sealed Deck ahead of it make it unknowable.
+    /// </summary>
+    public int? AllStarPriorDraws() =>
+        RunModifiers.PriorRewardDraws(RunModifier.AllStar, Modifiers);
 
     /// <summary>
     /// Which characters' pools the CharacterCards tickboxes add, lobby-wide. An input, like
@@ -587,7 +616,8 @@ public sealed record SeedHit(
     string Seed,
     NeowOffer[] OffersBySlot,
     GeneratedRun? Run = null,
-    string?[]? SpecializedCards = null)
+    string?[]? SpecializedCards = null,
+    string[][]? AllStarCards = null)
 {
     public IEnumerable<int> MatchingSlots(NeowRelic relic, OfferSlot where) =>
         OffersBySlot.Index()
@@ -757,6 +787,53 @@ public static class SeedSearcher
             return cards;
         }
 
+        // Five draws per player, and no character pool to read: AllStar takes the colourless
+        // pool, so this is the one card criterion that does not need the party's characters.
+        int allStarPrior = criteria.AllStar.Count > 0
+            ? criteria.AllStarPriorDraws() ?? 0
+            : 0;
+
+        // Grouped by slot so a player's five cards are drawn once however many are asked for,
+        // and so "these two cards together" is one question about one hand rather than two
+        // independent ones. Built per search, not per seed.
+        var allStarBySlot = criteria.AllStar
+            .GroupBy(w => w.Slot)
+            .Select(g => (Slot: g.Key, Cards: g.Select(w => w.Card).ToArray()))
+            .ToArray();
+
+        bool AllStarMatches(ulong runSeed)
+        {
+            if (allStarBySlot.Length == 0) return true;
+
+            bool Given(int slot, string[] wanted) => AllStarPayload.Covers(
+                AllStarPayload.Predict(
+                    runSeed, slot, criteria.UnlocksFor(slot), criteria.IsMultiplayer, allStarPrior),
+                wanted);
+
+            foreach (var (slot, wanted) in allStarBySlot)
+            {
+                bool ok = slot >= 0
+                    ? Given(slot, wanted)
+                    : Enumerable.Range(0, playerCount).Any(s => Given(s, wanted));
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        // The five cards each player is handed, for the result card. Only computed for a hit.
+        string[][]? AllStarFor(ulong runSeed)
+        {
+            if (!criteria.Modifiers.Contains(RunModifier.AllStar)) return null;
+            if (criteria.AllStarPriorDraws() is not { } prior) return null;
+
+            var hands = new string[playerCount][];
+            for (int slot = 0; slot < playerCount; slot++)
+                hands[slot] = AllStarPayload
+                    .Predict(runSeed, slot, criteria.UnlocksFor(slot), criteria.IsMultiplayer, prior)
+                    .Select(c => c.TypeName).ToArray();
+            return hands;
+        }
+
         // Which map each act drew is known from act selection alone, three draws, so a boss or
         // event that map cannot produce rejects the seed before the ~400-draw run generation.
         // Only Act 1 has two candidates, so this only ever bites there — but that is half the
@@ -914,6 +991,7 @@ public static class SeedSearcher
                     }
 
                     if (!SpecializedMatches(runSeed)) return;
+                    if (!AllStarMatches(runSeed)) return;
                     if (!NeowMatches(runSeed)) return;
                     if (!CardsMatch(runSeed)) return;
 
@@ -928,7 +1006,8 @@ public static class SeedSearcher
                             ? Array.Empty<NeowOffer>()
                             : NeowGenerator.PredictAllOffers(runSeed, ctx),
                         run,
-                        SpecializedFor(runSeed)), cts.Token);
+                        SpecializedFor(runSeed),
+                        AllStarFor(runSeed)), cts.Token);
                     if (Interlocked.Increment(ref found) >= maxResults) cts.Cancel();
                 }
 
@@ -1015,7 +1094,8 @@ public static class SeedSearcher
         // then match everything.
         if (c.NeowCriteria.Count == 0 && c.Act1 is null
             && !c.NeedsRun && c.Cards.Count == 0 && c.ShopRelicsWanted.Count == 0
-            && c.Specialized.Count == 0)
+            && c.Specialized.Count == 0
+            && c.AllStar.Count == 0)
             throw new ArgumentException(
                 "Nothing to search for. Set at least one criterion: a Neow relic, the Act 1 map, "
                 + "an Ancient's offer, a boss, an event, a card reward, a shop relic, a "
@@ -1110,6 +1190,51 @@ public static class SeedSearcher
     /// finds nothing.
     /// </summary>
     /// <summary>
+    /// The four ways an AllStar search can be incoherent. The interesting one is the last: five
+    /// cards is the whole hand, so a sixth ask can never be met.
+    /// </summary>
+    private static void ValidateAllStarCriteria(SearchCriteria c)
+    {
+        if (c.AllStar.Count == 0) return;
+
+        if (!c.Modifiers.Contains(RunModifier.AllStar))
+            throw new ArgumentException(
+                "Cards from AllStar only exist with that modifier ticked on. Enable it, or drop "
+                + "the cards.");
+
+        if (c.AllStarPriorDraws() is null)
+            throw new ArgumentException(
+                "AllStar cannot be predicted alongside Draft or Sealed Deck. Both take their Neow "
+                + "option first and neither draws a fixed number of cards, so where AllStar lands "
+                + "in the stream is not knowable before the run is played.");
+
+        // The colourless pool, which is the same for everyone: no character to check against,
+        // unlike every other card criterion here.
+        var pool = AllStarPayload.Pool(c.Unlocks, c.IsMultiplayer);
+        foreach (var want in c.AllStar)
+        {
+            if (want.Slot >= c.PlayerCount)
+                throw new ArgumentException(
+                    $"P{want.Slot + 1} is not in a {c.PlayerCount}-player lobby.");
+
+            if (!pool.Any(e => e.TypeName == want.Card))
+                throw new ArgumentException(
+                    $"{CardCatalog.Display(want.Card)} is not in the colourless pool, which is "
+                    + "where AllStar draws from. It gives colourless cards only, whoever is playing.");
+        }
+
+        foreach (var group in c.AllStar.GroupBy(w => w.Slot))
+        {
+            if (group.Count() <= AllStarPayload.Cards) continue;
+
+            throw new ArgumentException(
+                $"AllStar hands out {AllStarPayload.Cards} cards, so it cannot give "
+                + $"{(group.Key < 0 ? "a player" : $"P{group.Key + 1}")} {group.Count()} named "
+                + "ones. Ask for five or fewer.");
+        }
+    }
+
+    /// <summary>
     /// The three ways a Specialized search can be incoherent, each said as the thing the user
     /// has to change rather than as a rule number.
     /// </summary>
@@ -1149,6 +1274,8 @@ public static class SeedSearcher
             throw new ArgumentException(
                 "CharacterCards is one tickbox per character, so it needs to say whose cards are "
                 + "added. Name at least one character, or drop the modifier.");
+
+        ValidateAllStarCriteria(c);
 
         if (c.Specialized.Count == 0) return;
 

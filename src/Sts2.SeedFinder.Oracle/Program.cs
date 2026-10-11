@@ -460,10 +460,17 @@ internal static class Program
         var bad = new List<string>();
         int checkedCount = 0;
 
-        // The five pools overlap heavily, so check each distinct card once.
+        // The five pools overlap heavily, so check each distinct card once. The colourless
+        // pool is checked with them rather than separately: AllStar indexes into it exactly the
+        // way a reward indexes into a character pool, so a misread rarity there is the same
+        // class of silent error.
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var character in Sts2.SeedFinder.Core.Cards.CardCatalog.Characters)
-        foreach (var entry in Sts2.SeedFinder.Core.Cards.CardPoolData.For(character))
+        var everyPool = Sts2.SeedFinder.Core.Cards.CardCatalog.Characters
+            .Select(Sts2.SeedFinder.Core.Cards.CardPoolData.For)
+            .Append(Sts2.SeedFinder.Core.Cards.CardPoolData.Colorless);
+
+        foreach (var pool in everyPool)
+        foreach (var entry in pool)
         {
             if (!seen.Add(entry.TypeName)) continue;
 
@@ -493,7 +500,7 @@ internal static class Program
 
         return Check("Card pool rarities + MP constraints vs assembly", bad.Count == 0,
             bad.Count == 0
-                ? $"{checkedCount} distinct cards across 5 characters matched"
+                ? $"{checkedCount} distinct cards across 5 characters and colourless matched"
                 : string.Join(" | ", bad));
     }
 

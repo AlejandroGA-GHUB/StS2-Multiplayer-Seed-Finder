@@ -177,6 +177,21 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
     // feature was the first fight, which can never roll one — but fight 2 can, so hiding them
     // here would make a reachable search unexpressible. The picker greys them out while the row
     // is still on fight 1, which is the same information without the dead end.
+    // The colourless pool, which AllStar draws from. Its own list, not a sixth CardPools entry:
+    // it belongs to no character and the page looks CardPools up by character name.
+    var colorlessPool = CardCatalog.Colorless().Select(card =>
+    {
+        var slug = CardCatalog.Slug(card.TypeName);
+        var text = assets.TryGetCardText(slug);
+        return new CardDto(
+            slug,
+            text?.Title ?? CardCatalog.Display(card.TypeName),
+            card.Rarity.ToString(),
+            assets.AvailableCardSlugs.Contains(slug),
+            text?.Description,
+            card.Mode == CardMode.MultiplayerOnly);
+    }).ToArray();
+
     var cardPools = CardCatalog.Characters.Select(c => new CardPoolDto(
         c.ToString(),
         CardCatalog.Offerable(c).Select(card =>
@@ -278,7 +293,8 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         modifiers,
         // Which fights can offer a Rare, per ascension, from the same pity arithmetic the search
         // validates against. The picker greys rares by this rather than keeping its own rule.
-        Enumerable.Range(0, AscensionLevels.Max + 1).Select(CardRewardGenerator.RareFights).ToArray()), json);
+        Enumerable.Range(0, AscensionLevels.Max + 1).Select(CardRewardGenerator.RareFights).ToArray(),
+        colorlessPool), json);
 });
 
 // ---- The player's own profile --------------------------------------------------------------
