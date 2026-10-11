@@ -648,20 +648,58 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
         tile.appendChild(label);
 
         if (pickerMulti) {
-          const at = pickerMulti.chosen.indexOf(r.slug);
-          if (at >= 0) {
-            tile.classList.add('is-picked');
-            // Numbered only where the order MEANS something. A Neow payload shows all its
-            // cards at once and you keep one, so a badge reading "2" there would invent an
-            // ordering the search does not have.
-            tile.appendChild(pickerMulti.ordered === false
-              ? el('span', 'fight-badge is-tick', '✓')
-              : el('span', 'fight-badge', String(at + 1)));
-          }
+          // Every position this card holds, not just the first. A card can be asked for more
+          // than once: twice in a fight picker means two different fights, and in a set picker
+          // it means drawn or offered twice.
+          const held = [];
+          for (let i = 0; i < pickerMulti.chosen.length; i++)
+            if (pickerMulti.chosen[i] === r.slug) held.push(i);
+
+          const full = pickerMulti.chosen.length >= pickerMulti.max;
           // Judged at the position the NEXT pick would take, which is the fight it would name.
           // The same card can be illegal as fight 1 and legal as fight 3.
-          tile.disabled = at < 0 && (pickerMulti.disableAt?.(r, pickerMulti.chosen.length) ?? false);
-          tile.onclick = () => toggle(r, filter);
+          const blocked = pickerMulti.disableAt?.(r, pickerMulti.chosen.length) ?? false;
+
+          if (held.length > 0) {
+            tile.classList.add('is-picked');
+
+            // Numbered only where the order MEANS something. A Neow payload shows all its
+            // cards at once and you keep one, so a badge reading "2" there would invent an
+            // ordering the search does not have; a count does not, so a repeat reads "x2".
+            tile.appendChild(pickerMulti.ordered === false
+              ? el('span', 'fight-badge is-tick', held.length > 1 ? `×${held.length}` : '✓')
+              : el('span', 'fight-badge', held.map(i => i + 1).join('·')));
+
+            // The stepper, which is the only way to ask for a second copy. It appears once a
+            // card is picked rather than always, so the common case of picking one card is
+            // exactly as it was: click to pick, click again to clear.
+            const step = el('span', 'step');
+            if (held.length > 1) {
+              const minus = el('span', 'step-btn', '−');
+              minus.dataset.step = 'down';
+              minus.title = 'Ask for one fewer';
+              step.appendChild(minus);
+            }
+            const plus = el('span', 'step-btn' + (full || blocked ? ' is-off' : ''));
+            plus.textContent = '+';
+            plus.dataset.step = full || blocked ? 'none' : 'up';
+            plus.title = full
+              ? 'That is as many as this can hold'
+              : blocked
+                ? 'Another copy cannot land where it would have to'
+                : 'Ask for another copy';
+            step.appendChild(plus);
+            tile.appendChild(step);
+          }
+
+          tile.disabled = held.length === 0 && blocked;
+          tile.onclick = e => {
+            const step = e.target.dataset?.step;
+            if (step === 'none') return;
+            if (step === 'up') addOne(r, filter);
+            else if (step === 'down') removeOne(r, filter);
+            else toggle(r, filter);
+          };
         } else {
           tile.onclick = () => { $('#picker').close(); pickerResolve?.(r); pickerResolve = null; };
         }
@@ -719,20 +757,50 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
   }
 
   /**
-   * Adds or removes one pick. Order IS the fight number, so removing an earlier one renumbers
-   * everything after it, and reaching the cap closes the dialog rather than making the user
-   * find the close button for a choice they have finished making.
+   * Picks a card, or clears it entirely. Clicking a picked tile removes EVERY copy, which keeps
+   * the one-card case behaving exactly as it always has: click to pick, click again to undo.
+   * A second copy is only ever added through the stepper, so it cannot happen by accident.
    */
   function toggle(item, filter) {
     const chosen = pickerMulti.chosen;
-    const at = chosen.indexOf(item.slug);
+    if (chosen.includes(item.slug)) {
+      for (let i = chosen.length - 1; i >= 0; i--)
+        if (chosen[i] === item.slug) chosen.splice(i, 1);
+      settle(filter);
+      return;
+    }
+    addOne(item, filter);
+  }
 
-    if (at >= 0) chosen.splice(at, 1);
-    else if (chosen.length < pickerMulti.max) chosen.push(item.slug);
+  /** One more copy, if there is room for it. */
+  function addOne(item, filter) {
+    if (pickerMulti.chosen.length >= pickerMulti.max) return;
+    pickerMulti.chosen.push(item.slug);
+    settle(filter);
+  }
 
-    // Renumbering can push a card into a fight that cannot roll it: a rare from fight 2 into
-    // fight 1, or at A7+ from fight 3 into fight 2. Dropping it is the only consistent answer:
-    // the alternative is refusing a removal for a reason that happens two rows further down.
+  /** One fewer copy: the LAST one, so earlier positions keep the fights they already name. */
+  function removeOne(item, filter) {
+    const chosen = pickerMulti.chosen;
+    const at = chosen.lastIndexOf(item.slug);
+    if (at < 0) return;
+    chosen.splice(at, 1);
+    settle(filter);
+  }
+
+  /**
+   * Re-checks the picks after any change, then redraws or closes.
+   *
+   * Order IS the fight number, so removing an earlier pick renumbers everything after it, and
+   * that can push a card into a fight that cannot roll it: a rare from fight 2 into fight 1, or
+   * at A7+ from fight 3 into fight 2. Dropping it is the only consistent answer; the alternative
+   * is refusing a removal for a reason that happens two rows further down.
+   *
+   * Reaching the cap closes the dialog rather than making the user find the close button for a
+   * choice they have finished making.
+   */
+  function settle(filter) {
+    const chosen = pickerMulti.chosen;
     for (let i = 0; i < chosen.length;) {
       if (pickerMulti.disableAt?.(pickerMulti.itemFor?.(chosen[i]), i)) chosen.splice(i, 1);
       else i++;
@@ -1446,11 +1514,18 @@ function cardListField({ label, chosen, pool, max, title, rarities, hint, onChan
     field.appendChild(anyIcon(28));
     field.appendChild(el('span', 'name', pool.length ? 'Any cards' : 'Pick a character first'));
   } else {
-    for (const slug of chosen) {
+    // Repeats are collapsed to one chip with a count. Two identical chips side by side in a
+    // narrow column reads as a rendering fault rather than as "this card twice", which is what
+    // it means: drawn twice by All Star, or takeable from two different Draft rewards.
+    const counts = new Map();
+    for (const slug of chosen) counts.set(slug, (counts.get(slug) ?? 0) + 1);
+
+    for (const [slug, n] of counts) {
       const name = pool.find(c => c.slug === slug)?.name ?? slug;
       const chip = el('span', 'pick');
       chip.appendChild(iconFor(slug, name, 22, 'card'));
       chip.appendChild(el('span', null, name));
+      if (n > 1) chip.appendChild(el('span', 'fight-badge', `×${n}`));
       field.appendChild(withTip(chip, slug, name, 'card'));
     }
     const clear = el('span', 'clear', '×');
@@ -4130,6 +4205,11 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
   // than once. Cheaper than de-duplicating, and the last write is identical to the first.
   for (const pool of catalog.cardPools)
     for (const c of pool.cards) { note(c, 'card'); cardNames.set(c.slug, c.name); }
+
+  // The colourless pool is its own list rather than a sixth entry of cardPools, because it
+  // belongs to no character, so it needs registering too or All Star's picker falls back to
+  // monograms for every card while the server was serving art all along.
+  for (const c of catalog.colorlessPool ?? []) { note(c, 'card'); cardNames.set(c.slug, c.name); }
 
   for (const c of catalog.characters) note(c, 'character');
 

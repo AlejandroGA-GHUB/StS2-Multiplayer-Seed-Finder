@@ -745,6 +745,24 @@ dialog::backdrop { background: #0009; }
 /* A Neow payload is a set, not an order: all of its cards are shown at once and you keep one.
    So its tiles carry a tick where a fight pick carries the number of the fight it means. */
 .fight-badge.is-tick { font-size: 11px; }
+/* A card can be asked for twice, so the badge holds either several fight numbers or a count,
+   and has to stop being a circle when it does. */
+.fight-badge { min-width: 17px; width: auto; padding: 0 5px; border-radius: 999px; }
+
+/* The stepper, shown only on a picked tile. Asking for a second copy is a deliberate act, so
+   it has its own control rather than being what a second click on the tile does: that click
+   still means "undo", which is what it has always meant. */
+.tile .step { flex: none; display: inline-flex; align-items: center; gap: 3px; }
+.tile .step-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 19px; height: 19px; border-radius: 50%;
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1);
+  font-size: 13px; font-weight: 600; line-height: 1;
+}
+.tile .step-btn:hover { border-color: var(--accent); color: var(--text-0); }
+/* Still drawn when it cannot be used, so the row does not reflow as the cap is reached. */
+.tile .step-btn.is-off { opacity: .35; }
+.tile .step-btn.is-off:hover { border-color: var(--border); color: var(--text-1); }
 /* Taller than a single-pick field, and only when it holds chips, so an empty row keeps the same
    height as the Neow and shop fields above it. */
 .card-field { align-items: center; min-height: 44px; }
