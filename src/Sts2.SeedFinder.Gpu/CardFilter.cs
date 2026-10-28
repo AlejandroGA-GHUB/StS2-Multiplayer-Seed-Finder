@@ -173,12 +173,47 @@ public static class CardFilter
         : r == Rare ? Common
         : None;
 
+    /// <summary>
+    /// Pool positions already drawn, which later draws must skip.
+    ///
+    /// Six fields rather than a loop over an array because a kernel has no heap: ILGPU will not
+    /// take a `stackalloc` or a `new int[n]` here, so the set has to live in registers. Six is
+    /// what the deepest user needs — Scroll Boxes shares one used-card set across two bundles of
+    /// three — and a fight reward simply never fills more than two of them.
+    /// </summary>
+    private struct TakenSet
+    {
+        public int T0, T1, T2, T3, T4, T5;
+        public int Count;
+
+        public int At(int i)
+        {
+            if (i == 0) return T0;
+            if (i == 1) return T1;
+            if (i == 2) return T2;
+            if (i == 3) return T3;
+            if (i == 4) return T4;
+            return T5;
+        }
+
+        public void Add(int at)
+        {
+            if (Count == 0) T0 = at;
+            else if (Count == 1) T1 = at;
+            else if (Count == 2) T2 = at;
+            else if (Count == 3) T3 = at;
+            else if (Count == 4) T4 = at;
+            else T5 = at;
+            Count++;
+        }
+    }
+
     /// <summary>Whether a candidate shares a card TYPE with one already offered this reward.</summary>
-    private static bool Blacklisted(CardPoolView pools, int poolBase, int candidate, int t0, int t1, int takenCount)
+    private static bool Blacklisted(CardPoolView pools, int poolBase, int candidate, in TakenSet taken)
     {
         int id = pools.TypeId[poolBase + candidate];
-        if (takenCount > 0 && pools.TypeId[poolBase + t0] == id) return true;
-        if (takenCount > 1 && pools.TypeId[poolBase + t1] == id) return true;
+        for (int i = 0; i < taken.Count; i++)
+            if (pools.TypeId[poolBase + taken.At(i)] == id) return true;
         return false;
     }
 
@@ -187,25 +222,25 @@ public static class CardFilter
     /// subtract the at most two entries already taken, exactly as the CPU path now does.
     /// </summary>
     private static int CountAvailable(
-        CardPoolView pools, int pool, int poolBase, int rarity, int t0, int t1, int takenCount)
+        CardPoolView pools, int pool, int poolBase, int rarity, in TakenSet taken)
     {
         if (rarity <= None || rarity >= GpuCardPools.RarityCount) return 0;
         int n = pools.GroupCount[pool * GpuCardPools.RarityCount + rarity];
-        if (takenCount > 0 && pools.Rarity[poolBase + t0] == rarity) n--;
-        if (takenCount > 1 && pools.Rarity[poolBase + t1] == rarity) n--;
+        for (int i = 0; i < taken.Count; i++)
+            if (pools.Rarity[poolBase + taken.At(i)] == rarity) n--;
         return n;
     }
 
     /// <summary>The nth still-available entry of a rarity, in pool order, or -1 if it ran out.</summary>
     private static int NthAvailable(
-        CardPoolView pools, int pool, int poolBase, int rarity, int nth, int t0, int t1, int takenCount)
+        CardPoolView pools, int pool, int poolBase, int rarity, int nth, in TakenSet taken)
     {
         int start = pools.GroupStart[pool * GpuCardPools.RarityCount + rarity];
         int count = pools.GroupCount[pool * GpuCardPools.RarityCount + rarity];
         for (int i = 0; i < count; i++)
         {
             int entry = pools.Group[start + i];
-            if (Blacklisted(pools, poolBase, entry, t0, t1, takenCount)) continue;
+            if (Blacklisted(pools, poolBase, entry, in taken)) continue;
             if (nth-- == 0) return entry;
         }
         return -1;
@@ -213,10 +248,10 @@ public static class CardFilter
 
     /// <summary>CardFactory.GetNextAllowedRarity — climb the ladder until the pool can satisfy one.</summary>
     private static int NextAllowedRarity(
-        CardPoolView pools, int pool, int poolBase, int rarity, int t0, int t1, int takenCount)
+        CardPoolView pools, int pool, int poolBase, int rarity, in TakenSet taken)
     {
         int seen = 1 << rarity;
-        while (rarity != None && CountAvailable(pools, pool, poolBase, rarity, t0, t1, takenCount) == 0)
+        while (rarity != None && CountAvailable(pools, pool, poolBase, rarity, in taken) == 0)
         {
             rarity = NextHighest(rarity);
             int bit = 1 << rarity;
@@ -229,7 +264,7 @@ public static class CardFilter
     /// <summary>CardRarityOdds.Roll, including the pity offset it carries between draws.</summary>
     private static int RollRarity(
         ref GpuRandom rng, ref float offset, CardFilterParams p,
-        CardPoolView pools, int pool, int poolBase, int t0, int t1, int takenCount)
+        CardPoolView pools, int pool, int poolBase, in TakenSet taken)
     {
         float roll = rng.NextFloat();
         float rareThreshold = p.RareOdds + offset;
@@ -243,7 +278,7 @@ public static class CardFilter
         float grown = offset + p.RarityGrowth;
         offset = rarity == Rare ? BaseRarityOffset : (grown < MaxRarityOffset ? grown : MaxRarityOffset);
 
-        return NextAllowedRarity(pools, pool, poolBase, rarity, t0, t1, takenCount);
+        return NextAllowedRarity(pools, pool, poolBase, rarity, in taken);
     }
 
     /// <summary>
@@ -271,14 +306,14 @@ public static class CardFilter
             if (payloadPicks > 0)
             {
                 var prng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
-                int p0 = -1, p1 = -1, pTaken = 0;
+                var taken = default(TakenSet);
 
                 for (int i = 0; i < payloadPicks; i++)
                 {
-                    int avail = CountAvailable(pools, pool, poolBase, Rare, p0, p1, pTaken);
+                    int avail = CountAvailable(pools, pool, poolBase, Rare, in taken);
                     if (avail <= 0) break;
 
-                    int got = NthAvailable(pools, pool, poolBase, Rare, prng.NextInt(0, avail), p0, p1, pTaken);
+                    int got = NthAvailable(pools, pool, poolBase, Rare, prng.NextInt(0, avail), in taken);
                     if (got < 0) break;
 
                     int gotType = pools.TypeId[poolBase + got];
@@ -290,8 +325,7 @@ public static class CardFilter
                         if (criteria.TypeId[c] == gotType) satisfied |= 1 << c;
                     }
 
-                    if (pTaken == 0) p0 = got; else if (pTaken == 1) p1 = got;
-                    pTaken++;
+                    taken.Add(got);
                 }
             }
 
@@ -365,21 +399,20 @@ public static class CardFilter
 
                 for (int r = 0; r < p.DraftRewards; r++)
                 {
-                    int t0 = -1, t1 = -1, taken = 0;
+                    var taken = default(TakenSet);
                     for (int i = 0; i < p.DraftOptions; i++)
                     {
-                        int rarity = RollBaseRarity(ref prng, p, pools, pool, poolBase, t0, t1, taken);
-                        int avail = CountAvailable(pools, pool, poolBase, rarity, t0, t1, taken);
+                        int rarity = RollBaseRarity(ref prng, p, pools, pool, poolBase, in taken);
+                        int avail = CountAvailable(pools, pool, poolBase, rarity, in taken);
                         if (avail <= 0) break;
 
                         int got = NthAvailable(
-                            pools, pool, poolBase, rarity, prng.NextInt(0, avail), t0, t1, taken);
+                            pools, pool, poolBase, rarity, prng.NextInt(0, avail), in taken);
                         if (got < 0) break;
 
                         satisfied = Claim(pools.TypeId[poolBase + got], slot, Draft, satisfied, p, criteria);
 
-                        if (taken == 0) t0 = got; else if (taken == 1) t1 = got;
-                        taken++;
+                        taken.Add(got);
                     }
                 }
             }
@@ -452,13 +485,13 @@ public static class CardFilter
     /// </summary>
     private static int RollBaseRarity(
         ref GpuRandom rng, CardFilterParams p, CardPoolView pools, int pool, int poolBase,
-        int t0, int t1, int taken)
+        in TakenSet taken)
     {
         float roll = rng.NextFloat();
         int rarity = roll < p.RareOdds ? Rare
                    : roll < RegularUncommonOdds + p.RareOdds ? Uncommon
                    : Common;
-        return NextAllowedRarity(pools, pool, poolBase, rarity, t0, t1, taken);
+        return NextAllowedRarity(pools, pool, poolBase, rarity, in taken);
     }
 
     /// <summary>Whether any fight criterion can be satisfied by this slot's rewards.</summary>
@@ -511,19 +544,19 @@ public static class CardFilter
             rng.Burn(1);                  // GoldReward.Populate
             if (hasPotion) rng.Burn(2);   // PotionReward.Populate: rarity, then pick
 
-            int t0 = -1, t1 = -1, takenCount = 0;
+            var taken = default(TakenSet);
 
             for (int i = 0; i < 3; i++)
             {
-                int rarity = RollRarity(ref rng, ref rarityOffset, p, pools, pool, poolBase, t0, t1, takenCount);
-                int count = CountAvailable(pools, pool, poolBase, rarity, t0, t1, takenCount);
+                int rarity = RollRarity(ref rng, ref rarityOffset, p, pools, pool, poolBase, in taken);
+                int count = CountAvailable(pools, pool, poolBase, rarity, in taken);
 
                 // Unreachable for a real pool: only a pool with no Common, Uncommon or Rare
                 // could drain every rung of the ladder. The CPU path throws here; a kernel
                 // cannot, so it declines the seed instead, and the verifier would show it.
                 if (count <= 0) return false;
 
-                int picked = NthAvailable(pools, pool, poolBase, rarity, rng.NextInt(0, count), t0, t1, takenCount);
+                int picked = NthAvailable(pools, pool, poolBase, rarity, rng.NextInt(0, count), in taken);
                 if (picked < 0) return false;
 
                 rng.NextFloat();          // upgrade roll, taken whether or not it can land
@@ -540,8 +573,7 @@ public static class CardFilter
                     if (criteria.TypeId[c] == type) satisfied |= 1 << c;
                 }
 
-                if (takenCount == 0) t0 = picked; else if (takenCount == 1) t1 = picked;
-                takenCount++;
+                taken.Add(picked);
             }
 
             // In pick order a criterion names its fight, so once that fight is walked it is
