@@ -22,10 +22,31 @@ and Frozen Egg appeared in both. `ChestRelics.Generate` already solves the same 
 (its `taken` set, tracked by identity so the Act 3 rarity gate cannot shift an index) and is the
 pattern to copy.
 
-**Arcane Scroll's and Hefty Tablet's card payloads ARE done** (2026-08-31), in
-`Core/Cards/NeowCardPayload.cs`, searchable, GPU-ported and Oracle-verified. Massive Scroll and
-Scroll Boxes are the two left whose shapes are now known: read the payload section of
-`docs/GAME_MECHANICS.md` before starting either, and do not re-derive it.
+**Four Neow card payloads are done**, in `Core/Cards/NeowCardPayload.cs`, all searchable and
+Oracle-verified draw-for-draw: Arcane Scroll and Hefty Tablet (2026-08-31), Massive Scroll and
+Scroll Boxes (2026-10-27). They are THREE different chains, not one with a count, which is what
+`PayloadShape` names:
+
+- **Rares** (the two scrolls) — N uniform picks over the character's rares. GPU-ported as
+  `Fight = 0` in the card stage.
+- **MassiveScroll** — a rarity roll through `RollWithBaseOdds`, a pick, and an upgrade roll, over
+  the character pool AND the colourless pool filtered to multiplayer-only cards. 17 cards, no
+  Commons, so a Common roll always walks to Uncommon. Co-op only (`IsAllowed: players > 1`).
+- **ScrollBoxes** — not the factory at all. Two bundles of 2 commons then 1 uncommon, one shared
+  used-card set across both. You keep a WHOLE BUNDLE, so two wanted cards must be in the same
+  one, which is what `Offers` enforces and what the displays group by.
+
+The last two are **not GPU-ported**: the kernel's payload walk is the Rares shape, so
+`GpuSearchPlanner` and the `--gpu-verify` payload checks both decline anything else. Declining
+only hands work back to the CPU, which is the safe direction.
+
+Two traps the Oracle caught or would catch: a Defect Claw bundle (1 in 100 per bundle) adds
+NOTHING to the used-card set, so treating its three Claws as drawn moves the next bundle; and it
+also skips that bundle's three draws, which makes the Defect's TOTAL Scroll Boxes cost
+seed-dependent where `NeowRewardDrawCost` can only state the common case of 8.
+
+Neow's Bones is still the odd one out: it shuffles a lobby-dependent relic list, so even its draw
+cost is unsettled, and the "took at Neow" control refuses it rather than guessing.
 
 `docs/plan.md` holds the open queue, what was built, and the reasoning behind each decision.
 **It is gitignored and exists only in the author's checkout** — it is personal working notes, so

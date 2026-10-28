@@ -274,8 +274,38 @@ Three consequences, and the first is the one that is easy to get wrong:
 
 So a payload is `Hallway`'s inner loop with the rarity roll and the upgrade roll deleted: N times
 `NextInt(0, CountAvailable(Rare, minus taken))` into `NthAvailable`. Nothing new is needed from
-the pools. **Scroll Boxes, Massive Scroll and Neow's Bones were NOT established and are not
-covered by this** — their costs (6/8, 9, and a shuffle) say their shapes differ.
+the pools. **Scroll Boxes and Massive Scroll were established separately and ARE now modelled**
+(2026-10-27, read against v0.111.0); Neow's Bones still is not. Their costs (6/8, 9, and a
+shuffle) were the clue that their shapes differ, and they do:
+
+- **Massive Scroll** is the ordinary factory, `CreateForReward(owner, 3, options)`, over
+  `[ownCharacterPool, ColorlessCardPool]` filtered to `MultiplayerConstraint == MultiplayerOnly`,
+  with `Source.Other` and `RarityOdds.RegularEncounter` and NO flags. So three draws a card: a
+  rarity roll through `RollWithBaseOdds` (base thresholds, no pity read and none written back),
+  the pick, and an upgrade roll that is taken because `NoUpgradeRoll` is not set. That pool is 17
+  cards — 5 from the character, 12 colourless — and holds **no Commons**, so a Common roll always
+  walks the ladder to Uncommon. The player keeps one of the three. Co-op only: `IsAllowed`
+  returns `runState.Players.Count > 1`.
+- **Scroll Boxes** does not use the factory. `GenerateRandomBundles` draws with `NextItem`
+  straight off `PlayerRng.Rewards`: two bundles, each two commons then one uncommon, against ONE
+  `usedCardIds` set shared by both bundles. One draw a card. The player keeps a **whole bundle**,
+  so a criterion naming two cards needs them in the SAME bundle.
+
+Two things about Scroll Boxes that are easy to get wrong, and the first was caught by the Oracle
+rather than by reading:
+
+- **A Defect Claw bundle marks nothing used.** On `rewards.NextInt(100) < 1` the bundle becomes
+  three Claws and the method `continue`s without touching `usedCardIds`, so the next bundle draws
+  as though it had not happened. Treating the three Claws as drawn makes the following bundle's
+  second common wrong and nothing else, which is exactly the kind of near-miss that looks like
+  bad luck.
+- **That branch also skips the bundle's three draws**, so the Defect's TOTAL cost is
+  seed-dependent: 8 normally, 5 with one Claw bundle, 2 with both. `NeowRewardDrawCost` can only
+  state the common case, so taking Scroll Boxes as the Defect has a ~2% chance of shifting that
+  player's fight rewards by more than the table says.
+
+`IsAllowedAtNeow` also gates the relic on the player having at least four unlocked commons and
+two uncommons, which is why the draw loops can assume the pool is deep enough.
 
 **Implemented 2026-08-31** as `NeowCardPayload`, re-read against v0.111.0 and Oracle-checked
 draw-for-draw (`Neow card payloads, draw-for-draw vs game Rng`, five characters x eighty seeds x
