@@ -4205,6 +4205,192 @@ async function inspect() {
 
 $('#inspectGo').onclick = inspect;
 $('#clear').onclick = resetAll;
+
+// ---- Saved searches --------------------------------------------------------------------------
+//
+// A preset is the whole criteria state written to a JSON file in the user's own data directory.
+// Saving is `state` as it stands; loading is that object put back and every panel redrawn, which
+// is the same path Clear already takes.
+//
+// The thing that needs care is not saving or loading, it is loading a preset that no longer
+// fits. Slugs can retire across a game patch, and a lobby saved with four players names slots a
+// two-player lobby does not have. Every panel already drops what it cannot show, quietly, which
+// is right while you are editing and wrong when a file was supposed to restore something. So the
+// load counts what it had to drop and says so.
+
+/** Where the server keeps presets, learned from the list call. */
+let presetDirectory = '';
+
+/** Opens the dialog, refreshes the list, and optionally puts the cursor in the name box. */
+async function openPresets(focusName) {
+  $('#presetSheet').showModal();
+  if (focusName) $('#presetName').focus();
+  await refreshPresets();
+}
+
+async function refreshPresets() {
+  const list = $('#presetList');
+  list.replaceChildren(el('div', 'empty', 'Loading…'));
+
+  let data;
+  try {
+    data = await (await fetch('/api/presets')).json();
+  } catch {
+    list.replaceChildren(el('div', 'empty', 'Could not read your presets folder.'));
+    return;
+  }
+
+  presetDirectory = data.directory ?? '';
+  $('#presetPath').textContent = presetDirectory;
+  setHint('#presetPathHint', data.overridden
+    ? `Set by ${data.overrideVariable}. Unset it to go back to the default location.`
+    : 'Outside the app folder on purpose, so a new build of the seed finder leaves them alone. '
+      + `Set ${data.overrideVariable} to keep them somewhere else.`);
+
+  const rows = data.presets ?? [];
+  if (rows.length === 0) {
+    list.replaceChildren(el('div', 'empty', 'Nothing saved yet.'));
+    return;
+  }
+
+  list.replaceChildren();
+  for (const row of rows) {
+    const item = el('div', 'preset-row');
+
+    const main = el('button', 'preset-load');
+    main.type = 'button';
+    main.appendChild(el('span', 'preset-name', row.name));
+
+    // The game version is only worth mentioning when it differs from the one running now,
+    // because that is the case where a criterion might no longer resolve.
+    const when = new Date(row.savedAt);
+    const meta = [when.toLocaleDateString(), when.toLocaleTimeString([], { timeStyle: 'short' })];
+    if (row.gameVersion && row.gameVersion !== catalog.gameVersion)
+      meta.push(`saved on game ${row.gameVersion}`);
+    main.appendChild(el('span', 'preset-meta', meta.join(' · ')));
+    main.onclick = () => loadPreset(row.name);
+
+    const del = el('button', 'icon-btn preset-del', 'Delete');
+    del.type = 'button';
+    del.title = `Delete "${row.name}"`;
+    del.onclick = async () => {
+      await fetch(`/api/presets/${encodeURIComponent(row.name)}`, { method: 'DELETE' });
+      await refreshPresets();
+    };
+
+    item.appendChild(main);
+    item.appendChild(del);
+    list.appendChild(item);
+  }
+}
+
+async function savePreset() {
+  const name = $('#presetName').value.trim();
+  if (!name) {
+    setHint('#presetSaveHint', 'Give it a name first.');
+    $('#presetName').focus();
+    return;
+  }
+
+  // Scan settings are left out on purpose. How far to scan and where to start are about running
+  // a search, not about what you are looking for, and a saved start index would make every load
+  // resume from the same place.
+  const res = await fetch('/api/presets', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, state }),
+  });
+
+  if (!res.ok) {
+    let msg = 'Could not save that.';
+    try { msg = (await res.json()).error ?? msg; } catch { /* not JSON, keep the default */ }
+    setHint('#presetSaveHint', msg);
+    return;
+  }
+
+  $('#presetName').value = '';
+  setHint('#presetSaveHint', `Saved "${name}".`);
+  await refreshPresets();
+}
+
+/**
+ * Puts a saved search back.
+ *
+ * Merged onto a fresh default rather than assigned, so a preset written before a criterion
+ * existed still loads: the missing key keeps its default instead of becoming undefined and
+ * breaking the panel that reads it.
+ */
+async function loadPreset(name) {
+  let preset;
+  try {
+    const res = await fetch(`/api/presets/${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error();
+    preset = await res.json();
+  } catch {
+    setHint('#presetSaveHint', `Could not read "${name}".`);
+    return;
+  }
+
+  stopSearch('');
+  state = { ...defaultState(), ...(preset.state ?? {}) };
+
+  // What the preset asked for, before the panels get a chance to drop anything.
+  const asked = countCriteria(state);
+  renderCriteria();
+  const kept = countCriteria(state);
+
+  $('#presetSheet').close();
+
+  const lost = asked - kept;
+  const where = preset.gameVersion && preset.gameVersion !== catalog.gameVersion
+    ? ` It was saved on game ${preset.gameVersion} and you are on ${catalog.gameVersion}.`
+    : '';
+
+  setBusy(false, lost > 0
+    ? `Loaded "${name}", but ${lost} ${lost === 1 ? 'criterion' : 'criteria'} no longer fit this `
+      + `lobby and ${lost === 1 ? 'was' : 'were'} dropped.${where}`
+    : `Loaded "${name}".`);
+}
+
+/**
+ * How many criteria a state holds, counting only rows that actually name something.
+ *
+ * Used either side of a redraw to notice what the panels dropped. Deliberately counts the same
+ * way for both, so the difference means "this did not survive" and nothing else.
+ */
+function countCriteria(s) {
+  const named = list => (list ?? []).filter(Boolean).length;
+  return named(s.neow?.filter(n => n.relic))
+    + named(s.ancients?.filter(a => a.ancient))
+    + named(s.bosses?.filter(b => b.boss))
+    + named(s.events?.filter(e => e.event))
+    + named(s.shops?.filter(x => x.relic))
+    + named(s.chests?.filter(c => c.relic))
+    + (s.cards ?? []).reduce((n, c) => n + named(c?.picks), 0)
+    + named(s.specialized?.map(x => x?.card).filter(Boolean))
+    + (s.allStar ?? []).reduce((n, a) => n + named(a), 0)
+    + (s.draft ?? []).reduce((n, d) => n + named(d), 0)
+    + named(s.charCards);
+}
+
+$('#savePreset').onclick = () => openPresets(true);
+$('#loadPreset').onclick = () => openPresets(false);
+$('#presetSaveGo').onclick = savePreset;
+$('#presetName').addEventListener('keydown', e => { if (e.key === 'Enter') savePreset(); });
+$('#presetClose').onclick = () => $('#presetSheet').close();
+$('#presetSheet').addEventListener('click', e => {
+  if (e.target === $('#presetSheet')) $('#presetSheet').close();
+});
+$('#presetCopyPath').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(presetDirectory);
+    $('#presetCopyPath').textContent = 'Copied';
+    setTimeout(() => { $('#presetCopyPath').textContent = 'Copy path'; }, 1200);
+  } catch {
+    // Clipboard refused, which browsers do outside a user gesture or over plain http in some
+    // configurations. The path is on screen either way, so there is nothing to recover.
+  }
+};
 $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); inspect(); } };
 
 // ---- Boot ----------------------------------------------------------------------------------

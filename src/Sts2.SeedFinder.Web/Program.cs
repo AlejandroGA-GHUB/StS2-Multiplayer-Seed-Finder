@@ -10,6 +10,7 @@ using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Core.Saves;
 using Sts2.SeedFinder.Web;
 using Sts2.SeedFinder.Web.Assets;
+using Sts2.SeedFinder.Web.Presets;
 using Sts2.SeedFinder.Core.Install;
 
 // One-time export: decode every relic icon out of a local game install into a folder, so a
@@ -419,6 +420,66 @@ app.MapGet("/api/epochs/decode", (string? code) =>
 
 // Reports are filed by opening a prefilled GitHub issue in the user's own browser. Nothing is
 // posted from here and no token exists, so this endpoint only gathers what the page cannot see
+// ---- Saved searches -------------------------------------------------------------------------
+// One JSON file per preset, in a folder of our own under the user's data directory. See
+// PresetStore for why it is not beside the app and not a database.
+//
+// The whole criteria state goes in verbatim, including the lobby and any imported friend epochs:
+// those change which bosses a seed gives, so a preset that left them out would load and quietly
+// predict something other than what was saved.
+
+app.MapGet("/api/presets", (IConfiguration config) =>
+{
+    var store = new PresetStore(config);
+    return Results.Json(new
+    {
+        // Always reported, even with nothing saved, so the UI can show the user where their
+        // presets will go before there are any to find.
+        directory = store.Directory,
+        overridden = store.IsOverridden,
+        overrideVariable = PresetStore.OverrideVariable,
+        presets = store.List(),
+    }, json);
+});
+
+app.MapGet("/api/presets/{name}", (string name, IConfiguration config) =>
+{
+    var preset = new PresetStore(config).Get(name);
+    return preset is null
+        ? Results.NotFound(new { error = $"no preset called '{name}'." })
+        : Results.Json(preset, json);
+});
+
+app.MapPost("/api/presets", async (HttpRequest req, IConfiguration config, CancellationToken ct) =>
+{
+    try
+    {
+        var body = await JsonSerializer.DeserializeAsync<PresetRequest>(req.Body, json, ct);
+        if (body is null || string.IsNullOrWhiteSpace(body.Name))
+            return Results.BadRequest(new { error = "a preset needs a name." });
+
+        var store = new PresetStore(config);
+        var saved = store.Save(body.Name, body.State, AppVersion.Load().Version, GameVersion);
+        return Results.Json(new { preset = saved, directory = store.Directory }, json);
+    }
+    catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+    catch (JsonException) { return Results.BadRequest(new { error = "that is not a preset." }); }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+    {
+        // Almost always an override pointed somewhere unwritable. Say the path, because the
+        // fix is to change it and the user cannot guess which one we tried.
+        return Results.BadRequest(new
+        {
+            error = $"could not write to {new PresetStore(config).Directory}: {ex.Message}",
+        });
+    }
+});
+
+app.MapDelete("/api/presets/{name}", (string name, IConfiguration config) =>
+    new PresetStore(config).Delete(name)
+        ? Results.Ok(new { deleted = name })
+        : Results.NotFound(new { error = $"no preset called '{name}'." }));
+
 // for itself: the assembly hash behind the drift verdict, the accelerator actually chosen, and
 // the baseline this build was verified against.
 //

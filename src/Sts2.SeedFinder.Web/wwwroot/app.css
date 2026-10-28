@@ -890,3 +890,36 @@ dialog.sheet:not([open]) { display: none; }
 }
 ::-webkit-scrollbar-thumb:hover { background: #454152; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:active { background: var(--accent-dim); background-clip: padding-box; }
+
+/* ---- Saved searches -------------------------------------------------------------------- */
+
+.preset-save { display: flex; gap: 8px; margin: 12px 0 0; }
+.preset-save input { flex: 1; min-width: 0; }
+
+.preset-row {
+  display: flex; align-items: stretch; gap: 8px; margin-top: 8px;
+}
+/* The whole row loads, so the hit area is the name and its date rather than a small button at
+   the end of them. Delete is the one that has to be aimed at. */
+.preset-load {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 10px; text-align: left; cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.preset-load:hover, .preset-load:focus-visible { border-color: var(--accent); background: var(--bg-3); }
+.preset-name { color: var(--text-0); font-size: 13px; font-weight: 500; }
+.preset-meta { color: var(--text-2); font-size: 11px; }
+.preset-del { flex: none; }
+
+/* Where the files are. Always on screen, because a preset the user cannot find on disk is one
+   they will lose the first time they reinstall. */
+.preset-where { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.preset-where-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  color: var(--text-1); font-size: 12px; margin-bottom: 6px;
+}
+.preset-where code {
+  display: block; padding: 7px 9px; border-radius: var(--radius);
+  background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--text-1); font-size: 11.5px; word-break: break-all;
+}

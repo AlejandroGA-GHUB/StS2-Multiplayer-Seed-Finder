@@ -231,6 +231,10 @@
         <!-- Outside the form, so `form="form"` is what still fires its submit handler and
              keeps the Enter key working from the criteria fields. -->
         <button type="submit" form="form" class="primary" id="go">Search</button>
+        <button type="button" class="icon-btn" id="savePreset"
+                title="Save these criteria to load again later">Save</button>
+        <button type="button" class="icon-btn" id="loadPreset"
+                title="Load a saved search">Load</button>
         <button type="button" class="icon-btn" id="clear"
                 title="Reset every criterion, the scan settings and the results">Clear</button>
       </div>
@@ -303,6 +307,39 @@
 <!-- Bug reports. No server of ours is involved: the report is assembled here and handed to the
      user, who files it themselves on GitHub or pastes it wherever they prefer. The value is not
      the routing, it is the block of facts underneath, which no reporter would type correctly. -->
+<!-- Saved searches. One dialog for both halves of it, because naming a new preset and picking an
+     old one are the same question asked twice, and a separate Save dialog would be a box with one
+     field in it. -->
+<dialog class="sheet" id="presetSheet">
+  <div class="sheet-head">
+    <h2>Saved searches</h2>
+    <button type="button" class="picker-close" id="presetClose" aria-label="Close" title="Close">&times;</button>
+  </div>
+  <div class="sheet-body">
+    <p class="lead">A preset remembers the whole left-hand column: the lobby, the characters, the
+      ascension and every criterion you have set. Loading one puts it all back.</p>
+
+    <div class="preset-save">
+      <input type="text" id="presetName" placeholder="Name this search&hellip;" maxlength="60">
+      <button type="button" class="primary" id="presetSaveGo">Save</button>
+    </div>
+    <p class="hint" id="presetSaveHint"></p>
+
+    <div id="presetList"></div>
+
+    <!-- Always shown, saved presets or not. A file the user cannot find is a file they will lose,
+         and this is the only place the path appears. -->
+    <div class="preset-where">
+      <div class="preset-where-head">
+        <span>Presets are kept in</span>
+        <button type="button" class="icon-btn" id="presetCopyPath" title="Copy this path">Copy path</button>
+      </div>
+      <code id="presetPath"></code>
+      <p class="hint" id="presetPathHint"></p>
+    </div>
+  </div>
+</dialog>
+
 <dialog class="sheet" id="reportSheet">
   <div class="sheet-head">
     <h2>Report a problem</h2>
