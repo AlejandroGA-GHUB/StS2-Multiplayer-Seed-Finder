@@ -237,9 +237,13 @@ working from memory. Each of these records something that was got wrong at least
 | `Web/Assets/` | *Localization strings*, *Card art*, and `WEB_APP_SPECS.md` §4 for map node art |
 | Interpreting a `--verify` result | *What a singleplayer `--verify` run does and does not prove* |
 | Regenerating data tables | *Decompiling* (though `sts2seed --refresh` does this without decompiling) |
+| `Gpu/` | `docs/GPU.md` — what is ported, what is not and why, and the narrowing rule |
+| Reading a verifier's output | `docs/VERIFICATION.md` — what each harness can and cannot prove |
 
 Other documents: `docs/plan.md` (open queue, what shipped, and the reasoning behind each feature),
-`docs/WEB_APP_SPECS.md` (the web UI), `docs/PATCH_RECOVERY.md` (what a user does after a patch).
+`docs/WEB_APP_SPECS.md` (the web UI, and where the player's files live), `docs/GPU.md` (the
+accelerator), `docs/VERIFICATION.md` (what each harness proves), `docs/PATCH_RECOVERY.md`
+(what a user does after a patch).
 
 ## Game facts (derived by decompiling v0.109.1; port re-confirmed against v0.110.1 by the Oracle)
 
@@ -313,123 +317,35 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   `Core` does NOT reference it, and never should: the accelerator plugs in through
   `SeedSearcher`'s `candidateIndices` parameter, which may only NARROW which indices get
   examined. Every candidate still goes through the whole CPU criteria chain, so an accelerated
-  search returns the same set. A GPU is never required to build or run; `STS2_GPU=off` disables
-  it, `cuda`/`opencl`/`cpu` force a backend.
+  search returns the same set, and a stage that cannot model something declines rather than
+  guessing. A GPU is never required to build or run; `STS2_GPU=off` disables it,
+  `cuda`/`opencl`/`cpu` force a backend.
 
-  Ported so far, all fused into one pass (`SeedFilter`) and ordered cheapest-first: **acts**,
-  **Neow (both branches)**, **card rewards**, the **three modifier payloads** (Specialized, All
-  Star, Draft) and **run generation** for bosses, events, Ancient identity and shop relics.
-  Measured on a 4070 SUPER against the CPU searcher on the same criteria: Neow curse ~950 M/s,
-  Neow positive 167 M/s (CPU 10 M/s), shop relics 280 M/s (CPU 0.88 M/s), run generation 37 M/s
-  worst case and 432 M/s on a multi-criterion search that rejects early (CPU 2.2 M/s), Draft
-  94 M/s (CPU 6.9 M/s), Specialized 141 M/s (CPU 32 M/s), All Star 140 M/s (CPU 85 M/s).
+  Ported: acts, Neow (both branches), card rewards, the three modifier payloads, the Rares Neow
+  payloads, and run generation for bosses, events, Ancient identity and shop relics. Not ported:
+  treasure chests, Ancient offers, and the Massive Scroll and Scroll Boxes payload shapes.
+  **Read `docs/GPU.md` before touching `Gpu/`** — it has the measured rates, why each unported
+  thing is unported, and the tricks the kernels use instead of materialising a shuffle.
 
-  **The modifier payloads share the card stage** rather than getting one each, because all three
-  come off the same per-player `Rewards` stream it already walks. `CardCriteriaView.Fight` is the
-  discriminator: positive is a fight, 0 a Neow payload, and -1/-2/-3 Specialized/All Star/Draft.
-  Three things they needed, each worth knowing before touching `GpuCardPools`:
-  a flat **`Offerable`** index per pool, since a uniform pick indexes the non-Basic, non-Ancient
-  entries in POOL order, which is neither one rarity group nor the groups concatenated; the
-  **colourless pool** uploaded once per distinct unlock state, since it has five epoch gates of
-  its own; and **`OfferableOwnCount`**, the prefix of a pool belonging to the player's own
-  character, because Specialized must not follow CharacterCards into the widened pool.
+### Where the player's files live
+Install (art, descriptions, version), saves (unlocks, runs, history) and presets each have their
+own lookup and their own override: `Assets:GameDirectory`, `STS2_SAVE_DIR`, `STS2_PRESET_DIR`.
+An explicit override never falls back — a wrong path fails loudly rather than silently using
+someone else's profile. `Core/Install/GameInstall.cs`, `Core/Saves/SaveLocations.cs` and
+`Web/Presets/PresetStore.cs`; the detail is in `docs/WEB_APP_SPECS.md`, "Finding the player's
+files".
 
-  How exact each payload test is decides whether the kernel may reject. Specialized satisfies
-  EVERY matching criterion (one card, so two asks for it are one question). All Star claims one
-  still-unsatisfied criterion per draw, which is exact because criteria naming the same card are
-  interchangeable. **Draft is deliberately looser**: the game takes one card per reward, so two
-  wanted cards sharing a reward cannot both be had, and the kernel only asks whether enough
-  DISTINCT rewards offer them. Exact per card, over-accepting across different cards, which is
-  free because `SeedSearcher` re-runs the real matching on every candidate.
+### Four verification harnesses, and they cover different failure modes
+- **Oracle** — each *function* against the game's own compiled code. Headless, no run needed.
+  The only reason the fast path can be trusted, and the patch-drift alarm.
+- **`--verify`** — the *wiring*, against `current_run.save`. Needs a run in progress.
+- **`--verify-history`** — the same wiring against every finished run on disk. The only one that
+  reaches co-op or shop relics.
+- **`--gpu-verify`** — the *kernels*, held to `Core` rather than to the game. Needs no GPU.
 
-  **The positive branch never materialises the offer.** Building it the CPU's way needs a mutable
-  variable-length list per thread. Instead the kernel computes where the wanted relic STARTS and
-  follows that one position through the same reverse Fisher-Yates swaps, then asks whether it
-  landed at index 0 or 1 — the `RunFilter` trick, applied to Neow. Three things make the starting
-  position cheap: availability filtering is lobby-dependent and not seed-dependent, so the base
-  pool is a host constant; the counterpart removals are a five-row table keyed by the curse that
-  rolled (`NeowPrefilterView.RemovedMask`); and the coin flips append in a fixed order. The
-  Large Capsule skip is a `continue`, not a burned draw, because it genuinely removes a draw.
-
-  **Not ported: treasure chests, and Ancient OFFERS.** Both for structural reasons, not lack of
-  time. An Ancient's offer runs `AncientOffers.Branches`, which returns variable-length branch
-  sets — the GPU filters on which Ancient turns up and the CPU decides what it offers. Chests are
-  the harder one and the analysis is worth not re-deriving: `RunFilter` never materialises a
-  shuffle, it follows one entry through the same swaps (see its class comment), which answers
-  "where did this relic land". A chest asks the INVERSE, "which relic is at the front", and for
-  Act 3 the `DroppedAtAct3Chest` gate means the answer depends on the identity of everything
-  ahead of it. Acts 1 and 2 have no gate and their chest index is fixed by the rarity rolls
-  alone, so those two ARE expressible by tracking; Act 3 would need the deque built. A partial
-  port covering acts 1 and 2 and declining act 3 would be sound, since declining only ever
-  hands work back to the CPU.
-
-### Finding the player's files, for people who are not this user
-Two separate lookups, both needed for an open-source release and both with an override:
-
-- **Install** (art, descriptions, version) — `Core/Install/GameInstall.cs`. Steam lets users put
-  games on any drive, so this reads `libraryfolders.vdf` and the registry rather than guessing.
-  Override: `Assets:GameDirectory`.
-- **Saves** (unlock state, run in progress, history) — `Core/Saves/SaveLocations.cs`. Godot's
-  user dir for a project with a custom dir name: `%APPDATA%\SlayTheSpire2` on Windows,
-  `~/Library/Application Support/SlayTheSpire2` on macOS, `~/.local/share/SlayTheSpire2` on
-  Linux, plus the Proton prefix. Steam does NOT relocate these, so there is no library list to
-  read here. Below the user dir everything is walked, not constructed, because the path contains
-  the platform name and the account id (`steam/<steamId>/profile<N>/saves`).
-  Override: `STS2_SAVE_DIR`, or `Saves:Directory` in config. An explicit override does not fall
-  back — a wrong path should fail loudly rather than silently use someone else's profile.
-
-- **Presets** (saved searches, web only) — `Web/Presets/PresetStore.cs`.
-  `%APPDATA%\Sts2SeedFinder\presets`, one JSON file each, created on first save and never by
-  listing. Deliberately NOT `%APPDATA%\SlayTheSpire2`, which is the game's and which this project
-  only reads, and deliberately not beside the app, since a release is extracted and anything in
-  that folder is orphaned by the next update. Override: `STS2_PRESET_DIR`, which like the others
-  errors rather than falling back. A preset is the whole UI criteria state, loaded by merging onto
-  `defaultState()` and redrawing; the load reports how many criteria no longer fit rather than
-  dropping them quietly. See the saved-searches section of `docs/WEB_APP_SPECS.md`.
-
-`/api/profile` reports which profile was found, how many epochs are revealed, and the lobby of
-any run in progress. When nothing is found it returns the paths it tried, so the UI can name the
-fix instead of just saying no. Both the CLI verifiers and the web app go through the same code,
-so they cannot disagree about where your saves are.
-
-### The four verification harnesses cover different failure modes
-None replaces the others, and knowing which to reach for saves time:
-
-- **Oracle** — proves each *function* matches. Runs our code and the game's compiled code on
-  the same inputs and asserts identical output, headless, no run needed. This is the only
-  reason the fast path can be trusted: `SeedSearcher` scans millions of seeds through our
-  reimplementation and never through the game's code. It is also the patch-drift alarm.
-- **`--verify`** — proves the *wiring*. Diffs `RunGenerator` against `current_run.save`, which
-  is the game's own written record of every draw `GenerateRooms` made. Needed because the
-  assembled chain cannot run headless (it wants a live `ModelDb`/`RunState`), so the Oracle
-  structurally cannot reach it. Needs a run in progress.
-- **`--verify-history`** — proves the same wiring against what players actually SAW, across
-  every finished run on disk. Weaker per run (no rng block, no grab bags, only the rooms
-  entered) but far broader, retrospective, and the only one that reaches co-op or shop relics.
-  Its failures need reading rather than trusting: build, unlock state at the time, boss
-  discovery order and mods are all unrecorded, and the tool says so.
-
-- **`--gpu-verify`** — proves the *kernels*. The Oracle structurally cannot reach them: they are
-  a second implementation of the same arithmetic, compiled by a different compiler for a
-  different instruction set, so `sts2.dll` has nothing to say about them. They are held to
-  `Core` instead, which the Oracle already vouches for. Needs no GPU (it falls back to ILGPU's
-  CPU accelerator) and no run. **Run it after any change to `Core/MegaRandom.cs`, `Core/Rng.cs`,
-  `Core/GameHash.cs`, `Core/SeedCodec.cs`, `Core/Acts/`, `Core/Cards/`, `Core/Modifiers/` or
-  `Gpu/`** — those are the files the kernels mirror. `Core/Acts/` matters most: `RunFilter` reproduces the whole
-  UpFront draw order, so a change there that nobody mirrors puts the kernel one draw out and
-  every act after that point is quietly wrong.
-  It compares hit SETS, not sampled hits, because a kernel that wrongly REJECTS seeds produces
-  a search that is quietly incomplete and looks perfectly healthy.
-  Its `planner` checks (2026-09-28) go one layer up and run whole searches through
-  `GpuSearchPlanner.TryPlan` against plain `SeedSearcher`, because the kernel checks build their
-  own pools and parameters and so cannot see the planner building them differently. That gap hid
-  a real bug: the card pools came from the lobby's union unlock state instead of each player's
-  own, dropping seeds whenever an imported friend epoch differed in card epochs. They need a real
-  device and are skipped on the CPU accelerator.
-
-Correct pieces wired in the wrong order pass the Oracle and fail `--verify`. A patch that
-changes `NextFloat` fails the Oracle immediately. Card rewards are Oracle-only, by necessity —
-see "The first fight's card reward" for why `--verify` cannot reach them.
+Correct pieces wired in the wrong order pass the Oracle and fail `--verify`. A patch that changes
+`NextFloat` fails the Oracle immediately. **Read `docs/VERIFICATION.md`** for what each one can
+and cannot prove, and for why the `planner` checks exist on top of the kernel ones.
 
 **Phase 0 spike resolved:** the RNG/hash primitives (`Rng`, `StringHelper`, `MegaRandom`) run
 headless with **no Godot runtime and no `ModelDb` init**. Higher-level generation (`ModelDb`,

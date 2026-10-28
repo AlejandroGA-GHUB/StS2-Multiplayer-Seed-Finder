@@ -877,6 +877,39 @@ to the default.
 The dialog shows the folder path with a copy button whether or not anything is saved. A file the
 user cannot find is a file they will lose.
 
+### Finding the player’s files
+
+Moved here from `CLAUDE.md`: it is one subject (where this tool reads and writes user data)
+that both the web app and the CLI verifiers go through, so they cannot disagree about it.
+
+Two separate lookups, both needed for an open-source release and both with an override:
+
+- **Install** (art, descriptions, version) — `Core/Install/GameInstall.cs`. Steam lets users put
+  games on any drive, so this reads `libraryfolders.vdf` and the registry rather than guessing.
+  Override: `Assets:GameDirectory`.
+- **Saves** (unlock state, run in progress, history) — `Core/Saves/SaveLocations.cs`. Godot's
+  user dir for a project with a custom dir name: `%APPDATA%\SlayTheSpire2` on Windows,
+  `~/Library/Application Support/SlayTheSpire2` on macOS, `~/.local/share/SlayTheSpire2` on
+  Linux, plus the Proton prefix. Steam does NOT relocate these, so there is no library list to
+  read here. Below the user dir everything is walked, not constructed, because the path contains
+  the platform name and the account id (`steam/<steamId>/profile<N>/saves`).
+  Override: `STS2_SAVE_DIR`, or `Saves:Directory` in config. An explicit override does not fall
+  back — a wrong path should fail loudly rather than silently use someone else's profile.
+
+- **Presets** (saved searches, web only) — `Web/Presets/PresetStore.cs`.
+  `%APPDATA%\Sts2SeedFinder\presets`, one JSON file each, created on first save and never by
+  listing. Deliberately NOT `%APPDATA%\SlayTheSpire2`, which is the game's and which this project
+  only reads, and deliberately not beside the app, since a release is extracted and anything in
+  that folder is orphaned by the next update. Override: `STS2_PRESET_DIR`, which like the others
+  errors rather than falling back. A preset is the whole UI criteria state, loaded by merging onto
+  `defaultState()` and redrawing; the load reports how many criteria no longer fit rather than
+  dropping them quietly. See the saved-searches section of `docs/WEB_APP_SPECS.md`.
+
+`/api/profile` reports which profile was found, how many epochs are revealed, and the lobby of
+any run in progress. When nothing is found it returns the paths it tried, so the UI can name the
+fix instead of just saying no. Both the CLI verifiers and the web app go through the same code,
+so they cannot disagree about where your saves are.
+
 ## 8. HTTP API
 
 JSON, all under `/api`. The UI is the only client, but keeping it clean means the CLI and UI

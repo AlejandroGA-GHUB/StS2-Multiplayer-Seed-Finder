@@ -1,35 +1,26 @@
-v1.6.0
+v1.7.0
 
-Release Date: 10/11/2026
+Release Date: 10/27/2026
 
 v0.111.0 beta steam release
 
 # CHANGELOG
 
-1. Two new modifiers you can search on. All Star: the five colourless cards it hands each
-player, and you can ask for any of them, including the same card twice. Draft: the ten rewards
-of three it offers, where you name up to ten cards you want to be able to take, and the finder
-knows you only get one card per reward.
+1. Saved searches. Set up a search, hit Save and give it a name, and Load brings the whole thing
+back later: the lobby, the characters, the ascension and every criterion. Handy for the searches
+you run again and again, like two players as Ironclad and Silent looking for Silken Tress.
 
-2. Adding another character's cards is supported, all five tickboxes. Each one adds that
-character's whole pool to every fight card reward, so the fight 1 to 3 pickers now offer those
-cards too. Worth knowing: a player already playing the ticked character gains nothing from it,
-which the panel tells you per player.
+2. Your presets are kept outside the app folder, so installing a new build of the seed finder
+leaves them alone. The Save and Load windows both show you exactly where they are, with a button
+to copy the path.
 
-3. One switch for the seven harmless modifiers: Hoarder, Flight, Midas, Murderous, Night
-Terrors, Terminal and Cursed Run. None of them changes anything this tool predicts, so it makes
-no difference how many you have on. Flick it on to tell the finder your run is a Custom one.
+3. Massive Scroll and Scroll Boxes can now be searched on, the same way Arcane Scroll and Hefty
+Tablet already could. Pick the relic in the Neow panel, then name the cards you want it to hand
+over.
 
-4. Modifiers stack. Tick as many as your lobby has, and the card rewards are read from after
-whatever those modifiers spend: Specialized costs one draw, All Star five, Draft sixty.
-Searching for a Neow relic no longer fails when you turn a modifier on, since the Neow panel
-now clears itself instead.
+4. Scroll Boxes knows about bundles. It offers you two bundles of three and you keep a whole
+bundle, so cards you ask for have to turn up in the same one. Results show the two bundles
+separately instead of as a list of six.
 
-5. You can ask for the same card more than once. Pick a card, then use the + on it to ask for
-a second copy. Works in the fight card picker, where it means two different fights, and in the
-Draft and All Star pickers.
-
-6. Modifier searches now run on the GPU.
-
-7. Fixed Darv offering Pandora's Box under modifiers that empty your starting deck. The game
-never offers it there, and getting that wrong also shifted the other two relics Darv offered.
+5. Loading a preset saved on an older game version still works. Anything a patch has retired is
+dropped and the tool tells you how much, instead of quietly loading a weaker search.
