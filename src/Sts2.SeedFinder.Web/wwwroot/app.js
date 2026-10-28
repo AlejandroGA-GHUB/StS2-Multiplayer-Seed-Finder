@@ -658,7 +658,8 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
           const full = pickerMulti.chosen.length >= pickerMulti.max;
           // Judged at the position the NEXT pick would take, which is the fight it would name.
           // The same card can be illegal as fight 1 and legal as fight 3.
-          const blocked = pickerMulti.disableAt?.(r, pickerMulti.chosen.length) ?? false;
+          const blocked = pickerMulti.disableAt?.(r, pickerMulti.chosen.length, pickerMulti.chosen)
+            ?? false;
 
           if (held.length > 0) {
             tile.classList.add('is-picked');
@@ -673,8 +674,13 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
             // The stepper, which is the only way to ask for a second copy. It appears once a
             // card is picked rather than always, so the common case of picking one card is
             // exactly as it was: click to pick, click again to clear.
-            const step = el('span', 'step');
-            if (held.length > 1) {
+            //
+            // Suppressed entirely where a repeat cannot happen. A Neow payload blacklists each
+            // pick from the ones after it, so every card it hands over is distinct and a "give
+            // me two of these" can never be satisfied; offering the control would be inviting a
+            // search the server then refuses.
+            const step = pickerMulti.unique ? null : el('span', 'step');
+            if (step && held.length > 1) {
               const minus = el('span', 'step-btn', '−');
               minus.dataset.step = 'down';
               minus.title = 'Ask for one fewer';
@@ -688,8 +694,10 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
               : blocked
                 ? 'Another copy cannot land where it would have to'
                 : 'Ask for another copy';
-            step.appendChild(plus);
-            tile.appendChild(step);
+            if (step) {
+              step.appendChild(plus);
+              tile.appendChild(step);
+            }
           }
 
           tile.disabled = held.length === 0 && blocked;
@@ -802,7 +810,9 @@ function openPicker(title, groups, kind = 'relic', multi = null) {
   function settle(filter) {
     const chosen = pickerMulti.chosen;
     for (let i = 0; i < chosen.length;) {
-      if (pickerMulti.disableAt?.(pickerMulti.itemFor?.(chosen[i]), i)) chosen.splice(i, 1);
+      // Judged against everything BEFORE it, which is what the position would see on the way in.
+      if (pickerMulti.disableAt?.(pickerMulti.itemFor?.(chosen[i]), i, chosen.slice(0, i)))
+        chosen.splice(i, 1);
       else i++;
     }
 
@@ -3950,6 +3960,24 @@ function payloadGroups(payload, pool) {
     .filter(g => g.items.length);
 }
 
+/**
+ * Whether one more card can join what is already picked.
+ *
+ * Only Scroll Boxes constrains this, and it is the bundle that does it: you keep two commons and
+ * one uncommon, so a third common or a second uncommon is something no seed can hand you. The
+ * server refuses both, and refusing them here means never building the search that gets refused.
+ */
+function payloadAllows(payload, pool, card, chosen) {
+  if (payload.bundleSize <= 0 || !card) return true;
+
+  const rarityOf = slug => pool.find(c => c.slug === slug)?.rarity;
+  const taken = r => (chosen ?? []).filter(s => rarityOf(s) === r).length;
+
+  if (card.rarity === 'Common') return taken('Common') < payload.bundleSize - 1;
+  if (card.rarity === 'Uncommon') return taken('Uncommon') < 1;
+  return true;
+}
+
 /** What the picker says this relic does, which differs per shape rather than per card count. */
 function payloadHint(payload) {
   if (payload.poolKind === 'mp_only')
@@ -4073,13 +4101,19 @@ function renderNeow() {
       if (!crit.cards.length) {
         // Three different empties, and they are not the same problem. No character yet is a
         // half-filled form; an empty pool with characters set means "for every player" left no
-        // rare all of them could be handed, which is worth saying rather than looking broken.
+        // card all of them could be handed, which is worth saying rather than looking broken.
+        //
+        // The wording follows the relic's pool, not the rares one. Three of the four payload
+        // relics do not draw rares at all, and "any rare card" over a list of commons reads as
+        // a bug in the list rather than in the label.
         const ready = slotsOfRow(crit).every(i => state.characters[i]);
+        const what = { mp_only: 'multiplayer-only card', low_rarities: 'card' }[payload.poolKind]
+          ?? 'rare card';
         field.appendChild(anyIcon(28));
         field.appendChild(el('span', 'name',
-          pool.length ? 'Any rare card'
+          pool.length ? `Any ${what}`
           : !ready ? 'Pick a character first'
-          : 'No rare every player could be given'));
+          : `No ${what} every player could be given`));
       } else {
         const list = el('span', 'picks');
         for (const slug of crit.cards) {
@@ -4103,10 +4137,15 @@ function renderNeow() {
           payloadGroups(payload, pool),
           'card',
           {
-            max: payload.payloadCards,
+            // A bundle is what you keep, so Scroll Boxes caps at three of the six it shows.
+            max: payload.bundleSize > 0 ? payload.bundleSize : payload.payloadCards,
             initial: crit.cards,
             ordered: false,
+            // Every payload blacklists its picks from each other, so no relic here can hand
+            // over two of the same card.
+            unique: true,
             itemFor: slug => pool.find(c => c.slug === slug),
+            disableAt: (c, at, chosen) => !payloadAllows(payload, pool, c, chosen),
             hint: payloadHint(payload),
           });
         if (picked) { crit.cards = picked; renderNeow(); renderCards(); }

@@ -1465,11 +1465,48 @@ public static class SeedSearcher
             if (capacity == 0)
                 throw new ArgumentException(
                     $"{want.Relic.Name} does not hand out cards this tool can name. Only "
-                    + string.Join(" and ", NeowCardPayload.Predictable.Select(s => NeowRelics.Find(s)!.Name))
-                    + " do: they run the ordinary reward factory over your own rares, with the "
-                    + "rarity and upgrade rolls removed.");
+                    + string.Join(", ", NeowCardPayload.Predictable.Select(s => NeowRelics.Find(s)!.Name))
+                    + " do.");
 
-            if (want.Cards.Count > capacity)
+            // Scroll Boxes offers six but hands over one BUNDLE, so what a player can come away
+            // with is three, and the bundle's own shape caps it further: two commons and one
+            // uncommon. Refusing here beats scanning forever for something no seed can produce,
+            // which is what asking for three commons used to do.
+            if (NeowCardPayload.ShapeOf(want.Relic.Slug) == PayloadShape.ScrollBoxes)
+            {
+                if (want.Cards.Count > NeowCardPayload.BundleSize)
+                    throw new ArgumentException(
+                        $"{want.Relic.Name} offers two bundles of {NeowCardPayload.BundleSize} and you "
+                        + $"keep one bundle, so {want.Cards.Count} cards cannot all be taken. Name "
+                        + $"{NeowCardPayload.BundleSize} or fewer, and they have to share a bundle.");
+
+                // Rarity is a property of the card, so any slot's pool answers this.
+                var shape = want.ResolveSlots(c.PlayerCount)
+                    .Concat(Enumerable.Range(0, c.PlayerCount))
+                    .Where(s => s < c.Characters.Count)
+                    .Select(s => NeowCardPayload.Offerable(
+                        c.Characters[s], want.Relic.Slug, c.UnlocksFor(s), c.IsMultiplayer).ToList())
+                    .FirstOrDefault();
+
+                if (shape is not null)
+                {
+                    int commons = want.Cards.Count(x =>
+                        shape.Any(e => e.TypeName == x && e.Rarity == CardRarity.Common));
+                    int uncommons = want.Cards.Count(x =>
+                        shape.Any(e => e.TypeName == x && e.Rarity == CardRarity.Uncommon));
+
+                    if (commons > NeowCardPayload.BundleSize - 1)
+                        throw new ArgumentException(
+                            $"A {want.Relic.Name} bundle is {NeowCardPayload.BundleSize - 1} commons "
+                            + $"and one uncommon, so it cannot hold {commons} commons.");
+
+                    if (uncommons > 1)
+                        throw new ArgumentException(
+                            $"A {want.Relic.Name} bundle holds one uncommon, so it cannot hold "
+                            + $"{uncommons}.");
+                }
+            }
+            else if (want.Cards.Count > capacity)
                 throw new ArgumentException(
                     $"{want.Relic.Name} hands out {capacity} card{(capacity == 1 ? "" : "s")}, so it "
                     + $"cannot give all {want.Cards.Count} of those at once.");

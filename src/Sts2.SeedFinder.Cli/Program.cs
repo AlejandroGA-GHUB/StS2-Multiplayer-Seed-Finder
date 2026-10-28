@@ -450,9 +450,15 @@ internal static class Program
         var resolved = new List<string>();
         foreach (var name in names.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
         {
+            // Against the RELIC's own pool, not the character's. Massive Scroll draws from the
+            // character pool and the colourless one together, so resolving by character alone
+            // refuses colourless cards it really does hand over.
             string? found = null;
             foreach (var slot in looking)
-                if (CardCatalog.Find(opts.Characters[slot], name, isMultiplayer: opts.PlayerCount > 1) is { } hit) { found = hit; break; }
+                if (CardCatalog.FindIn(
+                        NeowCardPayload.Offerable(
+                            opts.Characters[slot], relic.Slug, null, opts.PlayerCount > 1),
+                        name) is { } hit) { found = hit; break; }
 
             resolved.Add(found ?? throw new ArgumentException(
                 $"'{name}' is not a card "

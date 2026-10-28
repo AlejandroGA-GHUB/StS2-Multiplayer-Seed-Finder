@@ -88,6 +88,24 @@ public static class CardCatalog
         CardRewardGenerator.ColorlessPool(unlocks, isMultiplayer)
             .Where(c => RewardRarities.Contains(c.Rarity));
 
+    /// <summary>
+    /// Resolve a user-typed name or slug against an ARBITRARY pool.
+    ///
+    /// The character-keyed overloads above cannot answer for a pool that is not one character's:
+    /// Massive Scroll draws from the character pool and the colourless pool together, so a
+    /// colourless card it genuinely hands over is not findable by character. Resolving against
+    /// the pool the caller is actually asking about is the only thing that works for all of
+    /// them.
+    /// </summary>
+    public static string? FindIn(IEnumerable<CardEntry> pool, string nameOrSlug)
+    {
+        var wanted = Normalize(nameOrSlug);
+        foreach (var c in pool)
+            if (Normalize(Slug(c.TypeName)) == wanted || Normalize(c.TypeName) == wanted)
+                return c.TypeName;
+        return null;
+    }
+
     /// <summary>Resolve a user-typed name or slug against the colourless pool.</summary>
     public static string? FindColorless(
         string nameOrSlug, UnlockState? unlocks = null, bool isMultiplayer = true)
