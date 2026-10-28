@@ -123,7 +123,13 @@ public static class GpuDoctor
         {
             var party = new[] { Character.Ironclad, Character.Silent };
 
-            foreach (var relic in NeowCardPayload.Predictable)
+            // Only the shapes the kernel models. Its payload walk is N uniform picks over the
+            // character's rares; Massive Scroll rolls a rarity over a different pool and takes
+            // an upgrade draw, and Scroll Boxes is not the factory at all. GpuSearchPlanner
+            // declines both for the same reason, so holding the kernel to them would be testing
+            // a path no search can reach.
+            foreach (var relic in NeowCardPayload.Predictable
+                         .Where(r => NeowCardPayload.ShapeOf(r) == PayloadShape.Rares))
             {
                 var check = GpuVerifyCards.RunPayload(
                     engine, party, unlocks: null, start: 10_000_000_000, samples: 20_000, relicSlug: relic);

@@ -168,9 +168,11 @@ public sealed class NeowPlan
             if (slot >= criteria.Characters.Count) { rows[slot] = [-1]; continue; }
 
             var character = criteria.Characters[slot];
+            // Ids are interned per POOL, and the three payload shapes read three different
+            // pools, so they have to be resolved against this relic's own.
             rows[slot] = want.Cards
                 .Select(c => NeowCardPayload.TypeIdOf(
-                    character, criteria.UnlocksFor(slot), c, criteria.IsMultiplayer))
+                    character, want.Relic.Slug, criteria.UnlocksFor(slot), c, criteria.IsMultiplayer))
                 .ToArray();
         }
         return rows;

@@ -253,6 +253,14 @@ public sealed class GpuSearchPlanner : IDisposable
         // direction a pre-filter is allowed to be wrong in.
         var payloads = criteria.NeowCriteria.Where(x => x.Cards.Count > 0).ToList();
 
+        // The kernel's payload walk is the RARES shape: N uniform picks over the character's
+        // rares. Massive Scroll rolls a rarity over a different pool and takes an upgrade
+        // draw, and Scroll Boxes is not the factory at all, so running either through that
+        // walk would reject seeds the CPU accepts. Declining hands the whole search back,
+        // which is the only direction a pre-filter is allowed to be wrong in.
+        if (payloads.Any(x => NeowCardPayload.ShapeOf(x.Relic.Slug) != PayloadShape.Rares))
+            return null;
+
         // The three modifier payloads join in here rather than getting a stage each: all three
         // are drawn at Neow off the same per-player Rewards stream this stage already walks,
         // and all three answer the same question about the same slot.

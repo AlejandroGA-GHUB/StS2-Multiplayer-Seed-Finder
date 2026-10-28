@@ -169,7 +169,12 @@ public static class GpuVerifyCards
 
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            wanted[slot] = NeowCardPayload.Offerable(characters[slot], bySlot[slot], isMultiplayer).First().TypeName;
+            // The kernel's payload walk is the rares shape, so this check stays on a relic
+            // that uses it. Massive Scroll and Scroll Boxes are a different chain and the
+            // planner declines them rather than feeding them to this one.
+            wanted[slot] = NeowCardPayload
+                .Offerable(characters[slot], "arcane_scroll", bySlot[slot], isMultiplayer)
+                .First().TypeName;
             critSlot[slot] = slot;
             critFight[slot] = 0;                 // 0 marks a payload criterion
             critType[slot] = pools.TypeIdOf(wanted[slot]);

@@ -334,6 +334,15 @@ public static class CardRewardGenerator
     }
 
     /// <summary>
+    /// <c>CardRarityOdds.RollWithBaseOdds</c> over an arbitrary pool, for the one Neow payload
+    /// that rolls a rarity. Exposed rather than duplicated so Massive Scroll and Draft cannot
+    /// drift from each other or from the fight walk's ladder.
+    /// </summary>
+    internal static CardRarity RollBaseRarityFor(
+        Rng rng, PoolIndex index, CardEntry[] pool, ReadOnlySpan<int> taken, int ascension) =>
+        RollBaseRarity(rng, index, pool, taken, ascension);
+
+    /// <summary>
     /// Whether a fight this far into a run can offer a Rare at all, at this ascension.
     ///
     /// Fight 1 never can: the pity offset starts at -0.05 and grows by 0.01 a draw, so the rare

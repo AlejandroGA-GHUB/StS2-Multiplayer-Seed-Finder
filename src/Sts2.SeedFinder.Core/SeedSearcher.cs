@@ -1495,8 +1495,10 @@ public static class SeedSearcher
                     s < c.Characters.Count && pool(c.Characters[s], c.UnlocksFor(s)).Any(e => e.TypeName == card);
 
                 bool reachable = everySlot
-                    ? slots.Count > 0 && slots.All(s => Holds(s, (ch, u) => NeowCardPayload.Offerable(ch, u, c.IsMultiplayer)))
-                    : slots.Any(s => Holds(s, (ch, u) => NeowCardPayload.Offerable(ch, u, c.IsMultiplayer)));
+                    ? slots.Count > 0 && slots.All(s => Holds(s, (ch, u) =>
+                        NeowCardPayload.Offerable(ch, want.Relic.Slug, u, c.IsMultiplayer)))
+                    : slots.Any(s => Holds(s, (ch, u) =>
+                        NeowCardPayload.Offerable(ch, want.Relic.Slug, u, c.IsMultiplayer)));
                 if (reachable) continue;
 
                 // Split apart because the two are different mistakes: a card from the wrong
@@ -1509,9 +1511,19 @@ public static class SeedSearcher
                 // requires, so its payload reads the player's own pool whatever is ticked.
                 bool inSomePool = slots.Any(s => Holds(s, (ch, u) => CardCatalog.Offerable(ch, u, c.IsMultiplayer)));
 
+                // What the relic draws differs by shape, so the "wrong rarity" half has to
+                // name the right thing: rares for the scrolls, multiplayer-only cards for
+                // Massive Scroll, commons and uncommons for Scroll Boxes.
+                string draws = NeowCardPayload.ShapeOf(want.Relic.Slug) switch
+                {
+                    PayloadShape.MassiveScroll => "multiplayer-only cards",
+                    PayloadShape.ScrollBoxes => "commons and uncommons",
+                    _ => "Rares",
+                };
+
                 throw new ArgumentException(inSomePool && !everySlot
-                    ? $"{want.Relic.Name} only ever gives Rares, and {CardCatalog.Display(card)} is not one."
-                    : $"{CardCatalog.Display(card)} is not in the rare pool of "
+                    ? $"{want.Relic.Name} only ever gives {draws}, and {CardCatalog.Display(card)} is not one."
+                    : $"{CardCatalog.Display(card)} is not in the {draws} pool of "
                       + (want.Requirement == SlotRequirement.Any
                             ? "anyone in this party"
                             : string.Join(" and ", slots.Select(x => $"P{x + 1} ({(x < c.Characters.Count ? c.Characters[x].ToString() : "?")})")))

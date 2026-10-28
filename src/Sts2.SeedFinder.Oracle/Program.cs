@@ -771,12 +771,18 @@ internal static class Program
     private static int CheckNeowCardPayload()
     {
         var bad = new List<string>();
-
-        // CanonicalVars is `new CardsVar(N)` for both relics, and a decimal literal small
-        // enough to fit an int compiles to `ldc.i4 N; newobj decimal(int)`. Anything else in
-        // that getter would break the count assertion below rather than pass quietly.
+        // CanonicalVars is `new CardsVar(N)` for the two rares relics, and a decimal literal
+        // small enough to fit an int compiles to `ldc.i4 N; newobj decimal(int)`. Anything else
+        // in that getter would break the count assertion below rather than pass quietly.
+        //
+        // Only the rares pair declares its count that way: Massive Scroll hardcodes 3 at the
+        // call site and Scroll Boxes builds bundles, so their counts are asserted by the replays
+        // instead.
         foreach (var slug in Sts2.SeedFinder.Core.Cards.NeowCardPayload.Predictable)
         {
+            if (Sts2.SeedFinder.Core.Cards.NeowCardPayload.ShapeOf(slug)
+                != Sts2.SeedFinder.Core.Cards.PayloadShape.Rares) continue;
+
             var relic = Sts2.SeedFinder.Core.Neow.NeowRelics.Find(slug)!;
             string typeName = relic.Name.Replace("'", "").Replace(" ", "");
             int ours = Sts2.SeedFinder.Core.Cards.NeowCardPayload.CardCount(slug);
@@ -797,9 +803,11 @@ internal static class Program
         {
             var pool = Sts2.SeedFinder.Core.Cards.CardRewardGenerator.PoolFor(character);
             var rares = pool.Where(c => c.Rarity == Sts2.SeedFinder.Core.Cards.CardRarity.Rare).ToList();
+            var massivePool = Sts2.SeedFinder.Core.Cards.NeowCardPayload.MassiveScrollPool(character);
 
             foreach (var slug in Sts2.SeedFinder.Core.Cards.NeowCardPayload.Predictable)
             {
+                var shape = Sts2.SeedFinder.Core.Cards.NeowCardPayload.ShapeOf(slug);
                 int count = Sts2.SeedFinder.Core.Cards.NeowCardPayload.CardCount(slug);
 
                 for (ulong seed = 0; seed < 80 && bad.Count < 5; seed++)
@@ -809,16 +817,95 @@ internal static class Program
                     for (int slot = 0; slot < 2; slot++)
                     {
                         // The payload is the FIRST thing on this stream, so the game's Rng is
-                        // used from its very first draw. No potion roll, no gold, no rarity and
-                        // no upgrade: that absence is the thing under test.
+                        // used from its very first draw. For the rares pair there is no potion
+                        // roll, no gold, no rarity and no upgrade, and that absence is the thing
+                        // under test; the other two shapes spend their own draws and the test is
+                        // that we spend exactly the same ones.
                         var rng = NewGameRng(unchecked(runSeed + (ulong)slot), "rewards");
-
                         var theirs = new List<string>(count);
-                        for (int i = 0; i < count; i++)
+
+                        if (shape == Sts2.SeedFinder.Core.Cards.PayloadShape.Rares)
                         {
-                            var candidates = rares.Where(c => !theirs.Contains(c.TypeName)).ToList();
-                            var picked = (Sts2.SeedFinder.Core.Cards.CardEntry)GameNextItem(rng, candidates)!;
-                            theirs.Add(picked.TypeName);
+                            for (int i = 0; i < count; i++)
+                            {
+                                var candidates = rares.Where(c => !theirs.Contains(c.TypeName)).ToList();
+                                var picked = (Sts2.SeedFinder.Core.Cards.CardEntry)GameNextItem(rng, candidates)!;
+                                theirs.Add(picked.TypeName);
+                            }
+                        }
+                        else if (shape == Sts2.SeedFinder.Core.Cards.PayloadShape.MassiveScroll)
+                        {
+                            // CardCreationOptions(..., Source.Other, RarityOdds.RegularEncounter)
+                            // with no ForceRarityOddsChange routes to RollWithBaseOdds: the base
+                            // thresholds, no pity offset read and none written back. Then the
+                            // pick, then an upgrade roll that happens because NoUpgradeRoll is
+                            // not set.
+                            for (int i = 0; i < 3; i++)
+                            {
+                                var left = massivePool.Where(c => !theirs.Contains(c.TypeName)).ToList();
+                                if (left.Count == 0) break;
+
+                                float roll = GameNextFloat(rng);
+                                var rarity = roll < 0.03f
+                                    ? Sts2.SeedFinder.Core.Cards.CardRarity.Rare
+                                    : roll < 0.37f + 0.03f
+                                        ? Sts2.SeedFinder.Core.Cards.CardRarity.Uncommon
+                                        : Sts2.SeedFinder.Core.Cards.CardRarity.Common;
+
+                                // GetNextAllowedRarity, climbing with wrapping until the pool
+                                // can satisfy one. This pool holds no Commons, so a Common roll
+                                // always lands on Uncommon.
+                                var seen = new HashSet<Sts2.SeedFinder.Core.Cards.CardRarity>();
+                                while (!left.Any(c => c.Rarity == rarity) && seen.Add(rarity))
+                                    rarity = rarity switch
+                                    {
+                                        Sts2.SeedFinder.Core.Cards.CardRarity.Basic => Sts2.SeedFinder.Core.Cards.CardRarity.Common,
+                                        Sts2.SeedFinder.Core.Cards.CardRarity.Common => Sts2.SeedFinder.Core.Cards.CardRarity.Uncommon,
+                                        Sts2.SeedFinder.Core.Cards.CardRarity.Uncommon => Sts2.SeedFinder.Core.Cards.CardRarity.Rare,
+                                        _ => Sts2.SeedFinder.Core.Cards.CardRarity.Common,
+                                    };
+
+                                var candidates = left.Where(c => c.Rarity == rarity).ToList();
+                                if (candidates.Count == 0) break;
+
+                                var picked = (Sts2.SeedFinder.Core.Cards.CardEntry)GameNextItem(rng, candidates)!;
+                                theirs.Add(picked.TypeName);
+
+                                GameNextFloat(rng);          // the upgrade roll, always taken
+                            }
+                        }
+                        else
+                        {
+                            // Scroll Boxes: two bundles of two commons then one uncommon, drawn
+                            // against ONE used set shared across both bundles. The Defect gets a
+                            // leading NextInt(100) per bundle, and on a 1 the bundle is three
+                            // Claws and the three draws do not happen.
+                            var commons = pool.Where(c => c.Rarity == Sts2.SeedFinder.Core.Cards.CardRarity.Common).ToList();
+                            var uncommons = pool.Where(c => c.Rarity == Sts2.SeedFinder.Core.Cards.CardRarity.Uncommon).ToList();
+                            var used = new HashSet<string>(StringComparer.Ordinal);
+
+                            for (int bundle = 0; bundle < 2; bundle++)
+                            {
+                                if (character == Sts2.SeedFinder.Core.Acts.Character.Defect
+                                    && GameNextInt(rng, 0, 100) < 1)
+                                {
+                                    theirs.Add("Claw");
+                                    theirs.Add("Claw");
+                                    theirs.Add("Claw");
+                                    continue;
+                                }
+
+                                for (int i = 0; i < 3; i++)
+                                {
+                                    var from = i < 2 ? commons : uncommons;
+                                    var candidates = from.Where(c => !used.Contains(c.TypeName)).ToList();
+                                    if (candidates.Count == 0) break;
+
+                                    var picked = (Sts2.SeedFinder.Core.Cards.CardEntry)GameNextItem(rng, candidates)!;
+                                    theirs.Add(picked.TypeName);
+                                    used.Add(picked.TypeName);
+                                }
+                            }
                         }
 
                         var mine = Sts2.SeedFinder.Core.Cards.NeowCardPayload
@@ -836,8 +923,9 @@ internal static class Program
 
         return Check("Neow card payloads, draw-for-draw vs game Rng", bad.Count == 0,
             bad.Count == 0
-                ? "Arcane Scroll and Hefty Tablet: 5 characters x 80 seeds x 2 slots matched, "
-                  + "and both card counts agree with the game's own CanonicalVars"
+                ? "Arcane Scroll, Hefty Tablet, Massive Scroll and Scroll Boxes: "
+                  + "5 characters x 80 seeds x 2 slots matched, and both scroll card counts "
+                  + "agree with the game's own CanonicalVars"
                 : string.Join(" | ", bad));
     }
 
