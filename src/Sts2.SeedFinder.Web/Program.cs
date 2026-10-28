@@ -245,7 +245,16 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
             NeowCardPayload.CardCount(r.Slug),
             CardRewardGenerator.NeowRewardDrawCost(r.Slug, Character.Ironclad),
             CardRewardGenerator.NeowRewardDrawCost(r.Slug, Character.Defect),
-            RelicNotes.ModeOf(r)))
+            RelicNotes.ModeOf(r),
+            NeowCardPayload.ShapeOf(r.Slug) switch
+            {
+                PayloadShape.MassiveScroll => "mp_only",
+                PayloadShape.ScrollBoxes => "low_rarities",
+                _ => "rares",
+            },
+            NeowCardPayload.ShapeOf(r.Slug) == PayloadShape.ScrollBoxes
+                ? NeowCardPayload.BundleSize
+                : 0))
         .Where(r => r.PayloadCards > 0 || r.Draws != 0)
         .ToArray();
 

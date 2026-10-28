@@ -165,9 +165,20 @@ internal static class Program
             SeedCodec.RunSeed(seed), slot, opts.Characters[slot], relic.Slug,
             isMultiplayer: opts.PlayerCount > 1);
 
-        return cards.Count == 0
-            ? ""
-            : "  -> " + string.Join(", ", cards.Select(c => CardCatalog.Display(c.TypeName)));
+        if (cards.Count == 0) return "";
+
+        var names = cards.Select(c => CardCatalog.Display(c.TypeName)).ToList();
+
+        // Scroll Boxes hands over a whole bundle, so its six read as two choices of three
+        // rather than one list of six. Which three you come away with is the point of it.
+        if (NeowCardPayload.ShapeOf(relic.Slug) != PayloadShape.ScrollBoxes)
+            return "  -> " + string.Join(", ", names);
+
+        var bundles = new List<string>();
+        for (int i = 0; i + NeowCardPayload.BundleSize <= names.Count; i += NeowCardPayload.BundleSize)
+            bundles.Add(string.Join(", ", names.GetRange(i, NeowCardPayload.BundleSize)));
+
+        return "  -> [" + string.Join("] or [", bundles) + "]";
     }
 
     /// <summary>

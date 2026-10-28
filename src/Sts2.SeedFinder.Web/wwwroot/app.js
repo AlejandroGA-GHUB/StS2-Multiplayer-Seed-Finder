@@ -1267,16 +1267,22 @@ function modifierDraws() {
 }
 
 /**
- * Cards Specialized could hand this slot: their whole pool, since it ignores rarity.
+ * This slot's OWN character pool, before CharacterCards widens anything.
  *
- * Their OWN pool, even with CharacterCards ticked. Specialized builds its options through
- * ForNonCombatWithUniformOdds and never sets the IsCardReward flag, and the CharacterCards hook
- * returns early without it, so the added pools reach the fight rewards and not this.
+ * The distinction matters for everything drawn at Neow. Those options go through
+ * ForNonCombatWithUniformOdds or their own CardCreationOptions and never set the IsCardReward
+ * flag, and the CharacterCards hook returns early without it, so the added pools reach the fight
+ * rewards and nothing else.
  */
-function specializedPoolFor(slot) {
+function cardPoolOwn(slot) {
   const c = state.characters[slot];
   const cards = (c && catalog.cardPools.find(p => p.character === c)?.cards) || [];
   return state.players === 1 ? cards.filter(card => !card.multiplayerOnly) : cards;
+}
+
+/** Cards Specialized could hand this slot: their whole own pool, since it ignores rarity. */
+function specializedPoolFor(slot) {
+  return cardPoolOwn(slot);
 }
 
 function renderModifiers() {
@@ -3260,15 +3266,27 @@ function payloadRow(pay) {
 
   const wanted = new Set(state.neow.filter(n => n.relic === pay.relic).flatMap(n => n.cards ?? []));
 
-  const offer = el('div', 'offer');
-  for (const slug of pay.cards) {
-    const cardName = cardNames.get(slug) ?? slug;
-    const p = el('span', 'pill is-card' + (wanted.has(slug) ? ' is-match' : ''));
-    p.appendChild(iconFor(slug, cardName, 20, 'card'));
-    p.appendChild(el('span', null, cardName));
-    offer.appendChild(withTip(p, slug, cardName, 'card'));
+  // Scroll Boxes hands over a whole BUNDLE, so its six are drawn as two rows of three rather
+  // than one row of six. Which three you would come away with is the only thing a reader
+  // actually needs from it, and a flat list hides exactly that.
+  const bundle = neowCardRelic(pay.relic)?.bundleSize ?? 0;
+  const groups = bundle > 0
+    ? Array.from({ length: Math.ceil(pay.cards.length / bundle) },
+                 (_, i) => pay.cards.slice(i * bundle, (i + 1) * bundle))
+    : [pay.cards];
+
+  for (const group of groups) {
+    const offer = el('div', 'offer');
+    if (groups.length > 1) offer.appendChild(el('div', 'slot-label', 'or'));
+    for (const slug of group) {
+      const cardName = cardNames.get(slug) ?? slug;
+      const p = el('span', 'pill is-card' + (wanted.has(slug) ? ' is-match' : ''));
+      p.appendChild(iconFor(slug, cardName, 20, 'card'));
+      p.appendChild(el('span', null, cardName));
+      offer.appendChild(withTip(p, slug, cardName, 'card'));
+    }
+    row.appendChild(offer);
   }
-  row.appendChild(offer);
   return row;
 }
 
@@ -3912,12 +3930,70 @@ function slotsOfRow(crit) {
  * Under "for every player" it is the intersection instead — a card only one character has could
  * never be handed to all of them, and offering it would build a search with no answers.
  */
+/**
+ * How the payload picker groups its cards, which follows the pool the relic actually draws from.
+ *
+ * Rares are one group because that is the whole pool. The other two span rarities, and grouping
+ * by rarity there is worth the lines: Scroll Boxes draws two commons and one uncommon per
+ * bundle, so which rarity a card is decides how many of it you can get.
+ */
+function payloadGroups(payload, pool) {
+  if (payload.poolKind === 'rares')
+    return [{ title: payload.payloadCards === 1 ? 'Rares' : `Rares (up to ${payload.payloadCards})`, items: pool }];
+
+  const order = payload.poolKind === 'low_rarities'
+    ? ['Common', 'Uncommon']
+    : ['Uncommon', 'Rare'];
+
+  return order
+    .map(r => ({ title: r, items: pool.filter(c => c.rarity === r) }))
+    .filter(g => g.items.length);
+}
+
+/** What the picker says this relic does, which differs per shape rather than per card count. */
+function payloadHint(payload) {
+  if (payload.poolKind === 'mp_only')
+    return `All ${payload.payloadCards} are shown at once and you keep one, so naming fewer is `
+      + 'the looser search. It draws from the multiplayer-only cards of that player’s pool and '
+      + 'the colourless pool together, which is why the list is short. Close this when you have '
+      + 'the ones you want.';
+
+  if (payload.poolKind === 'low_rarities')
+    return `Two bundles of ${payload.bundleSize}, and you keep a whole bundle. So cards named `
+      + 'here have to turn up in the SAME bundle, not just somewhere among the six. Close this '
+      + 'when you have the ones you want.';
+
+  return payload.payloadCards === 1
+    ? 'One rare, drawn from that player’s own pool. Close this when you have it.'
+    : `All ${payload.payloadCards} are shown at once and you keep one, so naming fewer is the `
+      + 'looser search. Close this when you have the ones you want.';
+}
+
+/**
+ * What a payload relic could hand a row's players, which is NOT one pool.
+ *
+ * The three shapes read three different pools, and getting this wrong would offer cards the
+ * relic can never produce. The catalog carries the discriminator so the page does not have a
+ * second copy of the rule:
+ *
+ *   rares         Arcane Scroll, Hefty Tablet. The player's own rares.
+ *   mp_only       Massive Scroll. The character pool AND the colourless pool, both filtered to
+ *                 cards that exist only in multiplayer.
+ *   low_rarities  Scroll Boxes. The character's commons and uncommons.
+ */
 function payloadPool(crit) {
   const slots = slotsOfRow(crit).filter(i => state.characters[i]);
   if (!slots.length) return [];
 
-  const rareOf = i => cardPoolFor(i).filter(c => c.rarity === 'Rare');
-  const lists = slots.map(rareOf);
+  const kind = neowCardRelic(crit.relic)?.poolKind ?? 'rares';
+  const poolOf = i => {
+    if (kind === 'low_rarities')
+      return cardPoolOwn(i).filter(c => c.rarity === 'Common' || c.rarity === 'Uncommon');
+    if (kind === 'mp_only')
+      return cardPoolOwn(i).concat(colorlessPool()).filter(c => c.multiplayerOnly);
+    return cardPoolOwn(i).filter(c => c.rarity === 'Rare');
+  };
+  const lists = slots.map(poolOf);
 
   if (crit.require === 'all')
     return lists[0].filter(c => lists.every(l => l.some(x => x.slug === c.slug)));
@@ -4024,17 +4100,14 @@ function renderNeow() {
         if (e.target.dataset.clear) { crit.cards = []; renderNeow(); renderCards(); return; }
         const picked = await openPicker(
           `${chosen.name} hands over…`,
-          [{ title: payload.payloadCards === 1 ? 'Rares' : `Rares (up to ${payload.payloadCards})`, items: pool }],
+          payloadGroups(payload, pool),
           'card',
           {
             max: payload.payloadCards,
             initial: crit.cards,
             ordered: false,
             itemFor: slug => pool.find(c => c.slug === slug),
-            hint: payload.payloadCards === 1
-              ? 'One rare, drawn from that player’s own pool. Close this when you have it.'
-              : `All ${payload.payloadCards} are shown at once and you keep one, so naming `
-                + 'fewer is the looser search. Close this when you have the ones you want.',
+            hint: payloadHint(payload),
           });
         if (picked) { crit.cards = picked; renderNeow(); renderCards(); }
       };

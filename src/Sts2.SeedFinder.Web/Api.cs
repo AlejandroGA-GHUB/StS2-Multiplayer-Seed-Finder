@@ -89,8 +89,21 @@ public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 /// <param name="DefectDraws">
 /// The same for a Defect. Only Scroll Boxes differs, by the two extra all-Claw checks it rolls.
 /// </param>
+/// <param name="PoolKind">
+/// Which pool this relic's payload draws from, because the three shapes do not share one:
+/// <c>rares</c> for the scrolls, <c>mp_only</c> for Massive Scroll (the character pool and the
+/// colourless pool, both filtered to multiplayer-only cards) and <c>low_rarities</c> for Scroll
+/// Boxes (commons and uncommons). The page needs it to offer the right cards, and it is sent
+/// rather than hardcoded there so a second copy of the rule cannot drift from Core.
+/// </param>
+/// <param name="BundleSize">
+/// For Scroll Boxes, how many of the cards are handed over together: you keep a whole bundle,
+/// so two wanted cards have to be in the same one. Zero for the shapes that put everything in
+/// front of you at once and let you keep one.
+/// </param>
 public sealed record NeowCardRelicDto(
-    string Slug, string Name, int PayloadCards, int Draws, int DefectDraws, string? Mode = null);
+    string Slug, string Name, int PayloadCards, int Draws, int DefectDraws, string? Mode = null,
+    string PoolKind = "rares", int BundleSize = 0);
 
 /// <param name="BossArtSlugs">Boss slugs the install can serve node art for.</param>
 /// <param name="AncientArtSlugs">
