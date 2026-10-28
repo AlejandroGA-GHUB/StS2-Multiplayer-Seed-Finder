@@ -232,9 +232,9 @@
              keeps the Enter key working from the criteria fields. -->
         <button type="submit" form="form" class="primary" id="go">Search</button>
         <button type="button" class="icon-btn" id="savePreset"
-                title="Save these criteria to load again later">Save</button>
+                title="Save these criteria under a name, to bring back later with Load">Save</button>
         <button type="button" class="icon-btn" id="loadPreset"
-                title="Load a saved search">Load</button>
+                title="Bring back a search saved with Save, or delete one">Load</button>
         <button type="button" class="icon-btn" id="clear"
                 title="Reset every criterion, the scan settings and the results">Clear</button>
       </div>
@@ -307,23 +307,46 @@
 <!-- Bug reports. No server of ours is involved: the report is assembled here and handed to the
      user, who files it themselves on GitHub or pastes it wherever they prefer. The value is not
      the routing, it is the block of facts underneath, which no reporter would type correctly. -->
-<!-- Saved searches. One dialog for both halves of it, because naming a new preset and picking an
-     old one are the same question asked twice, and a separate Save dialog would be a box with one
-     field in it. -->
-<dialog class="sheet" id="presetSheet">
+<!-- Saved searches, as two dialogs rather than one. Saving asks for a name; loading picks from
+     a list. Putting both in one box meant a name field sitting above a list it had nothing to do
+     with, and a Save button that was really the dialog's third job. -->
+<dialog class="sheet" id="saveSheet">
   <div class="sheet-head">
-    <h2>Saved searches</h2>
-    <button type="button" class="picker-close" id="presetClose" aria-label="Close" title="Close">&times;</button>
+    <h2>Save this search</h2>
+    <button type="button" class="picker-close" id="saveClose" aria-label="Close" title="Close">&times;</button>
   </div>
   <div class="sheet-body">
-    <p class="lead">A preset remembers the whole left-hand column: the lobby, the characters, the
-      ascension and every criterion you have set. Loading one puts it all back.</p>
+    <p class="lead">Keeps the whole left-hand column exactly as it stands: the lobby, the
+      characters, the ascension and every criterion you have set. <b>Load</b> brings it all
+      back.</p>
 
-    <div class="preset-save">
-      <input type="text" id="presetName" placeholder="Name this search&hellip;" maxlength="60">
+    <label class="preset-label" for="presetName">Name this search</label>
+    <input type="text" id="presetName" placeholder="e.g. 2p Ironclad + Silent, Silken Tress"
+           maxlength="60" autocomplete="off">
+    <div class="preset-actions">
       <button type="button" class="primary" id="presetSaveGo">Save</button>
     </div>
     <p class="hint" id="presetSaveHint"></p>
+
+    <div class="preset-where">
+      <div class="preset-where-head">
+        <span>Saved to</span>
+        <button type="button" class="icon-btn" data-copy-path="1" title="Copy this path">Copy path</button>
+      </div>
+      <code data-preset-path="1"></code>
+      <p class="hint" data-preset-path-hint="1"></p>
+    </div>
+  </div>
+</dialog>
+
+<dialog class="sheet" id="loadSheet">
+  <div class="sheet-head">
+    <h2>Your saved searches</h2>
+    <button type="button" class="picker-close" id="loadClose" aria-label="Close" title="Close">&times;</button>
+  </div>
+  <div class="sheet-body">
+    <p class="lead">Pick one to put the whole left-hand column back as it was. To keep the search
+      you have set up now, close this and use <b>Save</b>.</p>
 
     <div id="presetList"></div>
 
@@ -332,10 +355,10 @@
     <div class="preset-where">
       <div class="preset-where-head">
         <span>Presets are kept in</span>
-        <button type="button" class="icon-btn" id="presetCopyPath" title="Copy this path">Copy path</button>
+        <button type="button" class="icon-btn" data-copy-path="1" title="Copy this path">Copy path</button>
       </div>
-      <code id="presetPath"></code>
-      <p class="hint" id="presetPathHint"></p>
+      <code data-preset-path="1"></code>
+      <p class="hint" data-preset-path-hint="1"></p>
     </div>
   </div>
 </dialog>

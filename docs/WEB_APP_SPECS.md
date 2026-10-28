@@ -839,8 +839,12 @@ A second mode: paste a seed, get the full breakdown with no search. Same result 
 
 ### Saved searches
 Searches repeat. "Two players, Ironclad and Silent, Silken Tress for everyone" is a thing you
-set up once and then want back on demand, so **Save** and **Load** sit beside Search and Clear
-and both open one dialog.
+set up once and then want back on demand, so **Save** and **Load** sit beside Search and Clear.
+
+**One dialog each, not one shared.** Naming a new preset and picking an old one look like the
+same subject but are not the same act: one wants a text field and nothing else, the other a list.
+Sharing a box made Save its third control and put the name field above a list it had no
+relationship with. Each dialog's lead names the other, so neither is a dead end.
 
 A preset is the **whole criteria state**, written verbatim as JSON: the lobby, the characters,
 the ascension, every panel, and any imported friend epochs. The epochs are in deliberately, since

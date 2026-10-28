@@ -893,8 +893,12 @@ dialog.sheet:not([open]) { display: none; }
 
 /* ---- Saved searches -------------------------------------------------------------------- */
 
-.preset-save { display: flex; gap: 8px; margin: 12px 0 0; }
-.preset-save input { flex: 1; min-width: 0; }
+/* The name field gets a row to itself. Sharing one with the Save button made it compete for
+   width with a control that has a fixed size, which left it narrow enough to be unreadable in
+   the narrower dialog. */
+.preset-label { display: block; margin: 16px 0 5px; color: var(--text-1); font-size: 12px; }
+#presetName { width: 100%; font-size: 13px; }
+.preset-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 
 .preset-row {
   display: flex; align-items: stretch; gap: 8px; margin-top: 8px;
