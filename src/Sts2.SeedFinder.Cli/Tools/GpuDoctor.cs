@@ -121,15 +121,13 @@ public static class GpuDoctor
         // either wrong would still look healthy: it would simply answer about a different part
         // of the stream than Core does.
         {
-            var party = new[] { Character.Ironclad, Character.Silent };
+            var party = new[] { Character.Ironclad, Character.Defect };
 
-            // Only the shapes the kernel models. Its payload walk is N uniform picks over the
-            // character's rares; Massive Scroll rolls a rarity over a different pool and takes
-            // an upgrade draw, and Scroll Boxes is not the factory at all. GpuSearchPlanner
-            // declines both for the same reason, so holding the kernel to them would be testing
-            // a path no search can reach.
-            foreach (var relic in NeowCardPayload.Predictable
-                         .Where(r => NeowCardPayload.ShapeOf(r) == PayloadShape.Rares))
+            // All four, which is three different chains. The Defect is in the party on purpose:
+            // it is the only character Scroll Boxes rolls its all-Claw bundle for, and that
+            // branch spends a draw and marks nothing used, so a kernel that got it wrong would
+            // drift from Core only on the ~1 in 100 seeds where it fires.
+            foreach (var relic in NeowCardPayload.Predictable)
             {
                 var check = GpuVerifyCards.RunPayload(
                     engine, party, unlocks: null, start: 10_000_000_000, samples: 20_000, relicSlug: relic);
@@ -704,6 +702,43 @@ public static class GpuDoctor
             {
                 new NeowCriterion(NeowRelics.Find("hefty_tablet")!, SlotRequirement.Specific,
                     new[] { 1 }, PayloadCards: new[] { p2Rare }),
+            },
+        }, 400_000);
+
+        // The two shapes that are not the rares walk, through the planner this time: it is what
+        // builds the pools and the per-slot shape array, and a kernel check cannot see it doing
+        // that differently from Core.
+        var massive = NeowCardPayload.MassiveScrollPool(Character.Ironclad).First().TypeName;
+        yield return ("massive scroll p1", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(NeowRelics.Find("massive_scroll")!, SlotRequirement.Specific,
+                    new[] { 0 }, PayloadCards: new[] { massive }),
+            },
+        }, 400_000);
+
+        // A Defect, because its all-Claw bundle is the branch that spends a draw and marks
+        // nothing used. Two cards so the CPU's same-bundle rule is exercised against the
+        // kernel's looser "present at all", which is the one place this stage over-accepts.
+        var defectDuo = new[] { Character.Defect, Character.Silent };
+        var boxPool = NeowCardPayload
+            .Offerable(Character.Defect, "scroll_boxes").ToList();
+        yield return ("scroll boxes p1, defect, two cards", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = defectDuo,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(NeowRelics.Find("scroll_boxes")!, SlotRequirement.Specific,
+                    new[] { 0 },
+                    PayloadCards: new[]
+                    {
+                        boxPool.First(e => e.Rarity == CardRarity.Common).TypeName,
+                        boxPool.First(e => e.Rarity == CardRarity.Uncommon).TypeName,
+                    }),
             },
         }, 400_000);
     }

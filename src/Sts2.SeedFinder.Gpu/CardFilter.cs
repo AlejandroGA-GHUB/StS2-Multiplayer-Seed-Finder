@@ -42,6 +42,18 @@ public readonly struct CardCriteriaView
     /// </summary>
     public readonly ArrayView<int> ColorlessOfSlot;
 
+    /// <summary>Which chain this slot's payload relic follows, or 0 when nothing asks.</summary>
+    public readonly ArrayView<int> PayloadShapeOfSlot;
+
+    /// <summary>Which uploaded pool Massive Scroll reads for this slot.</summary>
+    public readonly ArrayView<int> MassiveOfSlot;
+
+    /// <summary>
+    /// Where Claw sits in this slot's own pool, or -1 when the player is not the Defect. Scroll
+    /// Boxes rolls its all-Claw bundle for the Defect only, so -1 means "do not roll".
+    /// </summary>
+    public readonly ArrayView<int> ClawOfSlot;
+
     /// <summary>
     /// Draws this slot's assumed Neow pick takes off the Rewards stream before fight 1, indexed
     /// by slot. Mirrors <c>SearchCriteria.RewardPriorDraws</c>, and getting it wrong here would
@@ -63,7 +75,8 @@ public readonly struct CardCriteriaView
     public CardCriteriaView(
         ArrayView<int> slot, ArrayView<int> fight, ArrayView<int> typeId, ArrayView<int> poolOfSlot,
         ArrayView<int> priorDraws, ArrayView<int> payloadPicks,
-        ArrayView<int> colorlessOfSlot)
+        ArrayView<int> colorlessOfSlot, ArrayView<int> payloadShapeOfSlot,
+        ArrayView<int> massiveOfSlot, ArrayView<int> clawOfSlot)
     {
         Slot = slot;
         Fight = fight;
@@ -72,6 +85,9 @@ public readonly struct CardCriteriaView
         PriorDraws = priorDraws;
         PayloadPicks = payloadPicks;
         ColorlessOfSlot = colorlessOfSlot;
+        PayloadShapeOfSlot = payloadShapeOfSlot;
+        MassiveOfSlot = massiveOfSlot;
+        ClawOfSlot = clawOfSlot;
     }
 }
 
@@ -299,33 +315,95 @@ public static class CardFilter
 
             // Player.cs seeds the whole PlayerRngSet with hash(seed) + slotIndex, then names
             // each generator within it.
-            // The Neow payload, when anything asks about this slot. One NextItem per card off
-            // the front of the stream: Uniform odds skip the rarity roll entirely and
-            // NoUpgradeRoll removes the other, so a pick IS a draw. See Core's NeowCardPayload.
-            int payloadPicks = criteria.PayloadPicks[slot];
-            if (payloadPicks > 0)
+            // What Neow hands this player the moment they take the relic, when something asks
+            // about it. Off the front of its own copy of the stream, which is exact: a payload
+            // is drawn before anything else touches it.
+            //
+            // Three shapes, because the four relics are three different chains. PayloadShape
+            // says which, per slot, since two players can be asked about different relics.
+            int shape = criteria.PayloadShapeOfSlot[slot];
+            if (shape != PayloadNone)
             {
                 var prng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
                 var taken = default(TakenSet);
 
-                for (int i = 0; i < payloadPicks; i++)
+                if (shape == PayloadRares)
                 {
-                    int avail = CountAvailable(pools, pool, poolBase, Rare, in taken);
-                    if (avail <= 0) break;
-
-                    int got = NthAvailable(pools, pool, poolBase, Rare, prng.NextInt(0, avail), in taken);
-                    if (got < 0) break;
-
-                    int gotType = pools.TypeId[poolBase + got];
-                    for (int c = 0; c < p.CriterionCount; c++)
+                    // Arcane Scroll and Hefty Tablet: N uniform picks over the character's
+                    // rares. Uniform odds skip the rarity roll entirely and NoUpgradeRoll
+                    // removes the other, so a pick IS a draw.
+                    for (int i = 0; i < criteria.PayloadPicks[slot]; i++)
                     {
-                        if (criteria.Fight[c] != 0) continue;
-                        int want = criteria.Slot[c];
-                        if (want >= 0 && want != slot) continue;
-                        if (criteria.TypeId[c] == gotType) satisfied |= 1 << c;
-                    }
+                        int avail = CountAvailable(pools, pool, poolBase, Rare, in taken);
+                        if (avail <= 0) break;
 
-                    taken.Add(got);
+                        int got = NthAvailable(pools, pool, poolBase, Rare, prng.NextInt(0, avail), in taken);
+                        if (got < 0) break;
+
+                        satisfied = ClaimPayload(pools.TypeId[poolBase + got], slot, satisfied, p, criteria);
+                        taken.Add(got);
+                    }
+                }
+                else if (shape == PayloadMassiveScroll)
+                {
+                    // Massive Scroll: the ordinary factory over its own pool. Three draws a
+                    // card — a base-odds rarity roll that moves no pity, the pick, and an
+                    // upgrade roll that happens because NoUpgradeRoll is not set.
+                    int mpool = criteria.MassiveOfSlot[slot];
+                    int mbase = pools.PoolBase[mpool];
+
+                    for (int i = 0; i < MassiveScrollCards; i++)
+                    {
+                        int rarity = RollBaseRarity(ref prng, p, pools, mpool, mbase, in taken);
+                        int avail = CountAvailable(pools, mpool, mbase, rarity, in taken);
+                        if (avail <= 0) break;
+
+                        int got = NthAvailable(
+                            pools, mpool, mbase, rarity, prng.NextInt(0, avail), in taken);
+                        if (got < 0) break;
+
+                        prng.NextFloat();        // the upgrade roll, always taken
+
+                        satisfied = ClaimPayload(pools.TypeId[mbase + got], slot, satisfied, p, criteria);
+                        taken.Add(got);
+                    }
+                }
+                else
+                {
+                    // Scroll Boxes: two bundles of two commons then one uncommon, drawn against
+                    // ONE used set shared by both. Not the factory, so no rarity roll and no
+                    // upgrade roll: one draw a card.
+                    //
+                    // Deliberately LOOSER than the real criterion, like Draft's. The player
+                    // keeps one BUNDLE, so two wanted cards have to share one; this only asks
+                    // whether they are present at all. SeedSearcher re-runs the bundle check on
+                    // every candidate, and over-accepting is free.
+                    int claw = criteria.ClawOfSlot[slot];
+
+                    for (int bundle = 0; bundle < ScrollBoxesBundles; bundle++)
+                    {
+                        // Defect only, and when it fires the bundle is three Claws, the three
+                        // draws do not happen, and NOTHING is added to the used set.
+                        if (claw >= 0 && prng.NextInt(0, 100) < ClawBundlePercent)
+                        {
+                            satisfied = ClaimPayload(pools.TypeId[poolBase + claw], slot, satisfied, p, criteria);
+                            continue;
+                        }
+
+                        for (int i = 0; i < ScrollBoxesBundleSize; i++)
+                        {
+                            int rarity = i < ScrollBoxesBundleSize - 1 ? Common : Uncommon;
+                            int avail = CountAvailable(pools, pool, poolBase, rarity, in taken);
+                            if (avail <= 0) break;
+
+                            int got = NthAvailable(
+                                pools, pool, poolBase, rarity, prng.NextInt(0, avail), in taken);
+                            if (got < 0) break;
+
+                            satisfied = ClaimPayload(pools.TypeId[poolBase + got], slot, satisfied, p, criteria);
+                            taken.Add(got);
+                        }
+                    }
                 }
             }
 
@@ -442,6 +520,43 @@ public static class CardFilter
     private const int Specialized = -1;
     private const int AllStar = -2;
     private const int Draft = -3;
+
+    /// <summary>
+    /// Which chain a slot's payload relic follows. Mirrors Core's <c>PayloadShape</c>, and the
+    /// planner is what maps one to the other; they are ints here because a kernel cannot take
+    /// an enum across the boundary.
+    /// </summary>
+    private const int PayloadNone = 0, PayloadRares = 1, PayloadMassiveScroll = 2, PayloadScrollBoxes = 3;
+
+    /// <summary>Massive Scroll shows three and you keep one.</summary>
+    private const int MassiveScrollCards = 3;
+
+    /// <summary>Scroll Boxes offers two bundles of three, and you keep a whole bundle.</summary>
+    private const int ScrollBoxesBundles = 2, ScrollBoxesBundleSize = 3;
+
+    /// <summary>The Defect's per-bundle chance of three Claws instead, as a percent.</summary>
+    private const int ClawBundlePercent = 1;
+
+    /// <summary>
+    /// Marks every payload criterion this drawn card satisfies.
+    ///
+    /// EVERY one, not the first unsatisfied one, which is the opposite of <see cref="Claim"/>.
+    /// A payload blacklists its picks from each other, so no relic here hands over the same card
+    /// twice and no two criteria can name it: <c>Validate</c> refuses a repeat outright. Taking
+    /// the first would therefore change nothing, and taking all of them matches the CPU.
+    /// </summary>
+    private static int ClaimPayload(
+        int gotType, int slot, int satisfied, CardFilterParams p, CardCriteriaView criteria)
+    {
+        for (int c = 0; c < p.CriterionCount; c++)
+        {
+            if (criteria.Fight[c] != 0) continue;
+            int want = criteria.Slot[c];
+            if (want >= 0 && want != slot) continue;
+            if (criteria.TypeId[c] == gotType) satisfied |= 1 << c;
+        }
+        return satisfied;
+    }
 
     /// <summary>Whether any criterion of this kind can be answered by this slot.</summary>
     private static bool Asks(int slot, int kind, CardFilterParams p, CardCriteriaView criteria)

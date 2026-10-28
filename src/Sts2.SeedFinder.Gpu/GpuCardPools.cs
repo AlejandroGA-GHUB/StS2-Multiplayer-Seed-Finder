@@ -133,6 +133,23 @@ public sealed class GpuCardPools : IDisposable
     /// </summary>
     public int[] ColorlessPoolOfSlot { get; }
 
+    /// <summary>
+    /// Which uploaded pool holds Massive Scroll's candidates for each slot: that player's own
+    /// pool and the colourless one concatenated, both filtered to multiplayer-only cards. A
+    /// pool of its own because it is neither of the two it is built from, and per slot because
+    /// it is epoch-gated by that player's unlocks like everything else.
+    /// </summary>
+    public int[] MassivePoolOfSlot { get; }
+
+    /// <summary>
+    /// Where Claw sits in each slot's character pool, or -1 when that player is not the Defect.
+    ///
+    /// One array carrying two facts, because the kernel needs both together and never apart:
+    /// Scroll Boxes rolls its 1-in-100 all-Claw bundle for the Defect only, and when it fires it
+    /// needs the card. A -1 means "no roll, no bundle".
+    /// </summary>
+    public int[] ClawOfSlot { get; }
+
     /// <param name="unlocksBySlot">
     /// Each slot's OWN unlock state, in lobby order — what <c>SearchCriteria.UnlocksBySlot</c>
     /// returns. Not the run's union: a card pool is gated by its player's epochs, and the CPU
@@ -207,6 +224,27 @@ public sealed class GpuCardPools : IDisposable
             ColorlessPoolOfSlot[slot] = colorlessKeys[at].Pool;
         }
 
+        // Massive Scroll's pool, deduplicated the same way: it depends on the character AND the
+        // unlock state, so two slots agreeing on both share one upload.
+        MassivePoolOfSlot = new int[characters.Count];
+        var massiveKeys = new List<(Character Character, UnlockState? Unlocks, int Pool)>();
+        for (int slot = 0; slot < characters.Count; slot++)
+        {
+            var character = characters[slot];
+            var unlocks = unlocksBySlot[slot];
+            int at = massiveKeys.FindIndex(
+                k => k.Character == character && ReferenceEquals(k.Unlocks, unlocks));
+            if (at < 0)
+            {
+                var massive = NeowCardPayload.MassiveScrollPool(character, unlocks, isMultiplayer);
+                massiveKeys.Add((character, unlocks, pools.Count));
+                at = massiveKeys.Count - 1;
+                pools.Add(massive);
+                ownLength.Add(massive.Length);
+            }
+            MassivePoolOfSlot[slot] = massiveKeys[at].Pool;
+        }
+
         _typeIds = new Dictionary<string, int>(StringComparer.Ordinal);
 
         var rarity = new List<byte>();
@@ -257,6 +295,18 @@ public sealed class GpuCardPools : IDisposable
                 if (i < ownLength[p]) offerableOwnCount[p]++;
             }
             offerableCount[p] = offerable.Count - offerableStart[p];
+        }
+
+        // Claw's position in each slot's own character pool, for Scroll Boxes' Defect branch.
+        ClawOfSlot = new int[characters.Count];
+        for (int slot = 0; slot < characters.Count; slot++)
+        {
+            ClawOfSlot[slot] = -1;
+            if (characters[slot] != Character.Defect) continue;
+
+            var own = pools[PoolOfSlot[slot]];
+            for (int i = 0; i < ownLength[PoolOfSlot[slot]]; i++)
+                if (own[i].TypeName == "Claw") { ClawOfSlot[slot] = i; break; }
         }
 
         _rarity = accelerator.Allocate1D(rarity.ToArray());

@@ -27,8 +27,7 @@ Oracle-verified draw-for-draw: Arcane Scroll and Hefty Tablet (2026-08-31), Mass
 Scroll Boxes (2026-10-27). They are THREE different chains, not one with a count, which is what
 `PayloadShape` names:
 
-- **Rares** (the two scrolls) — N uniform picks over the character's rares. GPU-ported as
-  `Fight = 0` in the card stage.
+- **Rares** (the two scrolls) — N uniform picks over the character's rares.
 - **MassiveScroll** — a rarity roll through `RollWithBaseOdds`, a pick, and an upgrade roll, over
   the character pool AND the colourless pool filtered to multiplayer-only cards. 17 cards, no
   Commons, so a Common roll always walks to Uncommon. Co-op only (`IsAllowed: players > 1`).
@@ -36,9 +35,12 @@ Scroll Boxes (2026-10-27). They are THREE different chains, not one with a count
   used-card set across both. You keep a WHOLE BUNDLE, so two wanted cards must be in the same
   one, which is what `Offers` enforces and what the displays group by.
 
-The last two are **not GPU-ported**: the kernel's payload walk is the Rares shape, so
-`GpuSearchPlanner` and the `--gpu-verify` payload checks both decline anything else. Declining
-only hands work back to the CPU, which is the safe direction.
+All three shapes are **GPU-ported** (2026-10-28), sharing the card stage as `Fight = 0` with a
+per-slot `PayloadShapeOfSlot` saying which chain to walk. One stream per slot means one chain per
+slot: two relics of the same shape merge by taking the deeper count, which only over-accepts,
+but two DIFFERENT shapes on one slot make the planner decline and hand the search to the CPU.
+Scroll Boxes' bundle rule is deliberately NOT in the kernel — it asks only whether the cards are
+present, and `SeedSearcher` runs the same-bundle check on every candidate.
 
 Two traps the Oracle caught or would catch: a Defect Claw bundle (1 in 100 per bundle) adds
 NOTHING to the used-card set, so treating its three Claws as drawn moves the next bundle; and it
@@ -321,11 +323,11 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   guessing. A GPU is never required to build or run; `STS2_GPU=off` disables it,
   `cuda`/`opencl`/`cpu` force a backend.
 
-  Ported: acts, Neow (both branches), card rewards, the three modifier payloads, the Rares Neow
-  payloads, and run generation for bosses, events, Ancient identity and shop relics. Not ported:
-  treasure chests, Ancient offers, and the Massive Scroll and Scroll Boxes payload shapes.
-  **Read `docs/GPU.md` before touching `Gpu/`** — it has the measured rates, why each unported
-  thing is unported, and the tricks the kernels use instead of materialising a shuffle.
+  Ported: acts, Neow (both branches), card rewards, the three modifier payloads, all four Neow
+  card payloads, and run generation for bosses, events, Ancient identity and shop relics. Not
+  ported: treasure chests and Ancient offers.
+  **Read `docs/GPU.md` before touching `Gpu/`** — it has why each unported thing is unported, and
+  the tricks the kernels use instead of materialising a shuffle.
 
 ### Where the player's files live
 Install (art, descriptions, version), saves (unlocks, runs, history) and presets each have their

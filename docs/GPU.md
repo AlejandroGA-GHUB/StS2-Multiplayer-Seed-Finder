@@ -19,7 +19,16 @@ it, `cuda`/`opencl`/`cpu` force a backend.
 
 Ported so far, all fused into one pass (`SeedFilter`) and ordered cheapest-first: **acts**,
 **Neow (both branches)**, **card rewards**, the **three modifier payloads** (Specialized, All
-Star, Draft) and **run generation** for bosses, events, Ancient identity and shop relics.
+Star, Draft), **all four Neow card payloads** and **run generation** for bosses, events, Ancient
+identity and shop relics.
+
+**The Neow payloads are three chains behind one stage.** `PayloadShapeOfSlot` says which to walk
+for each slot, because two players can be asked about different relics. One stream per slot means
+one chain per slot: two relics of the SAME shape merge by taking the deeper count, which only
+over-accepts (asking whether a card is among Hefty Tablet's three is looser than asking whether
+it is Arcane Scroll's one), but two DIFFERENT shapes on one slot make the planner decline. Scroll
+Boxes' bundle rule is deliberately left out of the kernel, the same way Draft's matching is: it
+asks whether the cards are present at all and `SeedSearcher` runs the real same-bundle check.
 
 Every one of them is faster than the CPU path on the same criteria, by margins that depend on
 how much work the criterion makes per seed: a stage that walks sixty draws gains far more than

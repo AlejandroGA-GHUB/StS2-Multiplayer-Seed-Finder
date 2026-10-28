@@ -88,6 +88,9 @@ public static class GpuVerifyCards
         using var dPayload = acc.Allocate1D(new int[characters.Count]);
         // These checks never exercise All Star, so the colourless mapping only has to be bound.
         using var dColorless = acc.Allocate1D(pools.ColorlessPoolOfSlot);
+        using var dShape = acc.Allocate1D(new int[characters.Count]);
+        using var dMassive = acc.Allocate1D(pools.MassivePoolOfSlot);
+        using var dClaw = acc.Allocate1D(pools.ClawOfSlot);
         using var dMatched = acc.Allocate1D<int>(samples);
 
         var kernel = acc.LoadAutoGroupedStreamKernel<
@@ -96,7 +99,7 @@ public static class GpuVerifyCards
 
         var criteriaView = new CardCriteriaView(
             dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View, dPayload.View,
-            dColorless.View);
+            dColorless.View, dShape.View, dMassive.View, dClaw.View);
         kernel(samples, dIndices.View, p, pools.View, criteriaView, dMatched.View);
         acc.Synchronize();
 
@@ -166,15 +169,25 @@ public static class GpuVerifyCards
         var critFight = new int[characters.Count];
         var critType = new int[characters.Count];
         var payloadPicks = new int[characters.Count];
+        var payloadShape = new int[characters.Count];
+
+        int shape = NeowCardPayload.ShapeOf(relicSlug) switch
+        {
+            PayloadShape.Rares => 1,
+            PayloadShape.MassiveScroll => 2,
+            PayloadShape.ScrollBoxes => 3,
+            _ => 0,
+        };
 
         for (int slot = 0; slot < characters.Count; slot++)
         {
-            // The kernel's payload walk is the rares shape, so this check stays on a relic
-            // that uses it. Massive Scroll and Scroll Boxes are a different chain and the
-            // planner declines them rather than feeding them to this one.
+            // A card this relic can actually hand over, which is a different pool per shape.
+            // Taking the first in pool order keeps matches dense enough over a range this size
+            // for the two sides to have something to disagree about.
             wanted[slot] = NeowCardPayload
-                .Offerable(characters[slot], "arcane_scroll", bySlot[slot], isMultiplayer)
+                .Offerable(characters[slot], relicSlug, bySlot[slot], isMultiplayer)
                 .First().TypeName;
+            payloadShape[slot] = shape;
             critSlot[slot] = slot;
             critFight[slot] = 0;                 // 0 marks a payload criterion
             critType[slot] = pools.TypeIdOf(wanted[slot]);
@@ -207,6 +220,9 @@ public static class GpuVerifyCards
         using var dPrior = acc.Allocate1D(new int[characters.Count]);
         using var dPayload = acc.Allocate1D(payloadPicks);
         using var dColorless = acc.Allocate1D(pools.ColorlessPoolOfSlot);
+        using var dShape = acc.Allocate1D(payloadShape);
+        using var dMassive = acc.Allocate1D(pools.MassivePoolOfSlot);
+        using var dClaw = acc.Allocate1D(pools.ClawOfSlot);
         using var dMatched = acc.Allocate1D<int>(samples);
 
         var kernel = acc.LoadAutoGroupedStreamKernel<
@@ -215,7 +231,8 @@ public static class GpuVerifyCards
 
         kernel(samples, dIndices.View, p, pools.View,
             new CardCriteriaView(dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View,
-                                 dPayload.View, dColorless.View),
+                                 dPayload.View, dColorless.View, dShape.View, dMassive.View,
+                                 dClaw.View),
             dMatched.View);
         acc.Synchronize();
 

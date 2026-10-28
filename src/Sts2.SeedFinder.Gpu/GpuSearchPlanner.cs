@@ -90,6 +90,18 @@ public sealed class GpuSearchPlanner : IDisposable
 
     /// <summary>Device buffers that live only as long as one search.</summary>
     /// <summary>
+    /// Core's <c>PayloadShape</c> as the int the kernel switches on. Kept here rather than on
+    /// the enum so the mapping lives next to the code that sends it.
+    /// </summary>
+    private static int ShapeCode(PayloadShape shape) => shape switch
+    {
+        PayloadShape.Rares => 1,
+        PayloadShape.MassiveScroll => 2,
+        PayloadShape.ScrollBoxes => 3,
+        _ => 0,
+    };
+
+    /// <summary>
     /// The <c>Fight</c> values that mark a modifier payload rather than a fight. Must match the
     /// constants the kernel switches on; they live here too so the two sides are written down
     /// next to the code that sets and reads them.
@@ -108,10 +120,13 @@ public sealed class GpuSearchPlanner : IDisposable
         public required MemoryBuffer1D<int, Stride1D.Dense> PriorDraws { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> PayloadPicks { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> ColorlessOfSlot { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> PayloadShapeOfSlot { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> MassiveOfSlot { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> ClawOfSlot { get; init; }
 
         public CardCriteriaView View => new(
             Slot.View, Fight.View, TypeId.View, PoolOfSlot.View, PriorDraws.View, PayloadPicks.View,
-            ColorlessOfSlot.View);
+            ColorlessOfSlot.View, PayloadShapeOfSlot.View, MassiveOfSlot.View, ClawOfSlot.View);
 
         public void Dispose()
         {
@@ -122,6 +137,9 @@ public sealed class GpuSearchPlanner : IDisposable
             PriorDraws.Dispose();
             PayloadPicks.Dispose();
             ColorlessOfSlot.Dispose();
+            PayloadShapeOfSlot.Dispose();
+            MassiveOfSlot.Dispose();
+            ClawOfSlot.Dispose();
             Pools.Dispose();
         }
     }
@@ -253,13 +271,6 @@ public sealed class GpuSearchPlanner : IDisposable
         // direction a pre-filter is allowed to be wrong in.
         var payloads = criteria.NeowCriteria.Where(x => x.Cards.Count > 0).ToList();
 
-        // The kernel's payload walk is the RARES shape: N uniform picks over the character's
-        // rares. Massive Scroll rolls a rarity over a different pool and takes an upgrade
-        // draw, and Scroll Boxes is not the factory at all, so running either through that
-        // walk would reject seeds the CPU accepts. Declining hands the whole search back,
-        // which is the only direction a pre-filter is allowed to be wrong in.
-        if (payloads.Any(x => NeowCardPayload.ShapeOf(x.Relic.Slug) != PayloadShape.Rares))
-            return null;
 
         // The three modifier payloads join in here rather than getting a stage each: all three
         // are drawn at Neow off the same per-player Rewards stream this stage already walks,
@@ -305,19 +316,35 @@ public sealed class GpuSearchPlanner : IDisposable
             fight[i] = want.Fight;
         }
 
-        // How many payload cards each slot has to have drawn for it. A criterion naming no slot
-        // has to be looked for on every player, so it arms them all.
+        // How many payload cards each slot has to have drawn for it, and which chain to draw
+        // them with. A criterion naming no slot has to be looked for on every player, so it
+        // arms them all.
         var payloadPicks = new int[criteria.PlayerCount];
+        var payloadShape = new int[criteria.PlayerCount];
         int next = criteria.Cards.Count;
 
         foreach (var want in payloads)
         {
             int picks = NeowCardPayload.CardCount(want.Relic.Slug);
+            int shape = ShapeCode(NeowCardPayload.ShapeOf(want.Relic.Slug));
             var armed = want.Requirement == SlotRequirement.Any
                 ? Enumerable.Range(0, criteria.PlayerCount)
                 : want.ResolveSlots(criteria.PlayerCount);
+
             foreach (var s in armed)
-                if (s >= 0 && s < payloadPicks.Length) payloadPicks[s] = Math.Max(payloadPicks[s], picks);
+            {
+                if (s < 0 || s >= payloadPicks.Length) continue;
+
+                // One stream per slot means one chain per slot. Two relics of the SAME shape
+                // merge by taking the deeper count, which only ever over-accepts: asking
+                // whether a card is among Hefty Tablet's three is looser than asking whether it
+                // is Arcane Scroll's one, and the CPU settles it. Two DIFFERENT shapes cannot
+                // be merged at all, so the stage declines and the CPU does the whole job.
+                if (payloadShape[s] != 0 && payloadShape[s] != shape) { pools.Dispose(); return null; }
+
+                payloadShape[s] = shape;
+                payloadPicks[s] = Math.Max(payloadPicks[s], picks);
+            }
 
             // "Any player" stays -1 here, exactly as a card criterion does: the kernel then
             // accepts a payload match from whichever slot produced it.
@@ -400,6 +427,9 @@ public sealed class GpuSearchPlanner : IDisposable
             PriorDraws = acc.Allocate1D(criteria.RewardPriorDraws()),
             PayloadPicks = acc.Allocate1D(payloadPicks),
             ColorlessOfSlot = acc.Allocate1D(pools.ColorlessPoolOfSlot),
+            PayloadShapeOfSlot = acc.Allocate1D(payloadShape),
+            MassiveOfSlot = acc.Allocate1D(pools.MassivePoolOfSlot),
+            ClawOfSlot = acc.Allocate1D(pools.ClawOfSlot),
         };
     }
 
