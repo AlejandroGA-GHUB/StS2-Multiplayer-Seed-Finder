@@ -4410,21 +4410,29 @@ async function openSaveSheet() {
   await refreshPresets();
 }
 
-/** The Load dialog: what is saved, and the option to drop one. */
+/**
+ * The Load dialog: what is saved, and the option to drop one.
+ *
+ * Filled BEFORE it is shown. A <dialog> centres itself on its own size, so opening it empty and
+ * then dropping a list into it made the box appear small, jump to its real size and re-centre,
+ * which reads as the window flashing. The list comes off a local file read, so waiting for it
+ * costs nothing a user can perceive; a re-open after a delete repaints in place, where a resize
+ * is the honest thing to show because a row really did go.
+ */
 async function openLoadSheet() {
   const list = $('#presetList');
-  list.replaceChildren(el('div', 'empty', 'Loading…'));
-  if (!$('#loadSheet').open) $('#loadSheet').showModal();
-
   const data = await refreshPresets();
+
   if (!data) {
     list.replaceChildren(el('div', 'empty', 'Could not read your presets folder.'));
+    if (!$('#loadSheet').open) $('#loadSheet').showModal();
     return;
   }
 
   const rows = data.presets ?? [];
   if (rows.length === 0) {
     list.replaceChildren(el('div', 'empty', 'Nothing saved yet. Set up a search, then use Save.'));
+    if (!$('#loadSheet').open) $('#loadSheet').showModal();
     return;
   }
 
@@ -4457,6 +4465,8 @@ async function openLoadSheet() {
     item.appendChild(del);
     list.appendChild(item);
   }
+
+  if (!$('#loadSheet').open) $('#loadSheet').showModal();
 }
 
 async function savePreset() {
