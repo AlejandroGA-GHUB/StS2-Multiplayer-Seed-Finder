@@ -386,6 +386,29 @@ Point it at the folder that contains `steam` (the one with `<your-id>/profile1/s
 An explicit setting is taken as final: if it is wrong, the tool reports that it found nothing
 rather than quietly falling back and using a profile you did not mean.
 
+### Saved searches
+
+**Save** and **Load**, beside Search and Clear, remember a whole search: the lobby, the
+characters, the ascension and every criterion. Handy for the ones you run again and again, like
+two players as Ironclad and Silent looking for Silken Tress for both.
+
+They are plain JSON files, one per preset, kept outside the app folder so a new build of the seed
+finder leaves them alone:
+
+```
+%APPDATA%\Sts2SeedFinder\presets
+```
+
+The Save dialog shows that path with a copy button, so you can back them up or move them to
+another machine. To keep them somewhere else:
+
+```
+set STS2_PRESET_DIR=D:\somewhere\presets
+```
+
+Loading a preset saved on an older game version still works, but anything the patch retired is
+dropped and the tool says how much, rather than loading a quietly weaker search.
+
 ### Everybody else's unlocks
 
 In co-op, **each player's relic bag is filtered by their own unlocks**, and the run itself is

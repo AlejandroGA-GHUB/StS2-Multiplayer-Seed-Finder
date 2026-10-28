@@ -837,6 +837,42 @@ lead to it. Never silently pick one. This is a correctness requirement, not a ni
 ### Inspect a seed
 A second mode: paste a seed, get the full breakdown with no search. Same result card.
 
+### Saved searches
+Searches repeat. "Two players, Ironclad and Silent, Silken Tress for everyone" is a thing you
+set up once and then want back on demand, so **Save** and **Load** sit beside Search and Clear
+and both open one dialog.
+
+A preset is the **whole criteria state**, written verbatim as JSON: the lobby, the characters,
+the ascension, every panel, and any imported friend epochs. The epochs are in deliberately, since
+they change which bosses a seed gives; a preset that dropped them would load and quietly predict
+something other than what was saved.
+
+What is NOT in a preset: the scan settings (`start`, `count`, `results`) and the inspect box.
+Those say how to run a search rather than what to look for, and a saved start index would make
+every load resume from the same place.
+
+Saving is `state` as it stands. Loading merges it onto a fresh `defaultState()` and calls
+`renderCriteria()`, which is the path Clear already takes, so no panel needed new code. Merging
+rather than assigning is what lets a preset written before a criterion existed still load: the
+missing key keeps its default instead of arriving as `undefined` in a panel that reads it.
+
+**The load has to report what it dropped.** Every panel already discards what it cannot show
+(a card that belongs to a character you are no longer playing, a slot a smaller lobby does not
+have), which is right while editing and wrong when a file was meant to restore something. So the
+load counts criteria either side of the redraw and says how many did not survive, naming the game
+version the preset was saved on when it differs from the one running.
+
+Where the files live is its own decision, in `PresetStore`: `%APPDATA%\Sts2SeedFinder\presets`,
+one JSON file per preset, created on first save and never by listing. It is deliberately NOT
+`%APPDATA%\SlayTheSpire2`, which belongs to the game and which this project only ever reads, and
+deliberately not beside the app, because a release is downloaded and extracted and anything in
+that folder is orphaned by the next update. `STS2_PRESET_DIR` overrides it and, like
+`STS2_SAVE_DIR`, an override that cannot be written is an error rather than a reason to fall back
+to the default.
+
+The dialog shows the folder path with a copy button whether or not anything is saved. A file the
+user cannot find is a file they will lose.
+
 ## 8. HTTP API
 
 JSON, all under `/api`. The UI is the only client, but keeping it clean means the CLI and UI
@@ -848,6 +884,10 @@ can share nothing but `Core`.
 | `GET` | `/api/profile` | The local profile: unlock state, epochs revealed, and the lobby of any run in progress |
 | `GET` | `/api/explain?seed=&players=&characters=` | Full breakdown of one seed, including each player's first-fight reward and shop sequence |
 | `GET` | `/api/search?…` | SSE stream of `SeedHit`s; same params as the CLI, plus `card` and `shop` |
+| `GET` | `/api/presets` | Saved searches, plus the folder they live in and whether it was overridden |
+| `GET` | `/api/presets/{name}` | One preset, state and all |
+| `POST` | `/api/presets` | Save `{name, state}`, overwriting any of the same name |
+| `DELETE` | `/api/presets/{name}` | Remove one |
 | `GET` | `/api/asset/relic/{slug}.png` | Relic icon from the active provider; 404 under `none` |
 | `GET` | `/api/asset/card/{slug}.png` | Card portrait, same provider and same rules |
 | `GET` | `/api/asset/character/{slug}.png` | Character portrait, same provider and same rules |

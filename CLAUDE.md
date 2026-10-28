@@ -357,6 +357,15 @@ Two separate lookups, both needed for an open-source release and both with an ov
   Override: `STS2_SAVE_DIR`, or `Saves:Directory` in config. An explicit override does not fall
   back — a wrong path should fail loudly rather than silently use someone else's profile.
 
+- **Presets** (saved searches, web only) — `Web/Presets/PresetStore.cs`.
+  `%APPDATA%\Sts2SeedFinder\presets`, one JSON file each, created on first save and never by
+  listing. Deliberately NOT `%APPDATA%\SlayTheSpire2`, which is the game's and which this project
+  only reads, and deliberately not beside the app, since a release is extracted and anything in
+  that folder is orphaned by the next update. Override: `STS2_PRESET_DIR`, which like the others
+  errors rather than falling back. A preset is the whole UI criteria state, loaded by merging onto
+  `defaultState()` and redrawing; the load reports how many criteria no longer fit rather than
+  dropping them quietly. See the saved-searches section of `docs/WEB_APP_SPECS.md`.
+
 `/api/profile` reports which profile was found, how many epochs are revealed, and the lobby of
 any run in progress. When nothing is found it returns the paths it tried, so the UI can name the
 fix instead of just saying no. Both the CLI verifiers and the web app go through the same code,
