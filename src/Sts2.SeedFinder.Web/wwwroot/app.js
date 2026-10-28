@@ -3285,9 +3285,17 @@ function payloadRow(pay) {
                  (_, i) => pay.cards.slice(i * bundle, (i + 1) * bundle))
     : [pay.cards];
 
-  for (const group of groups) {
+  // One cell holding every bundle, not one cell each: the row is a two column grid, so a second
+  // .offer appended to it lands back under the label and is drawn 64px wide.
+  const stack = el('div', 'offers');
+
+  groups.forEach((group, i) => {
     const offer = el('div', 'offer');
-    if (groups.length > 1) offer.appendChild(el('div', 'slot-label', 'or'));
+
+    // "or" separates the bundles, so it belongs BETWEEN them. The first row still gets the
+    // spacer, empty, so both rows of cards start at the same x.
+    if (groups.length > 1) offer.appendChild(el('span', 'offer-or', i > 0 ? 'or' : ''));
+
     for (const slug of group) {
       const cardName = cardNames.get(slug) ?? slug;
       const p = el('span', 'pill is-card' + (wanted.has(slug) ? ' is-match' : ''));
@@ -3295,8 +3303,10 @@ function payloadRow(pay) {
       p.appendChild(el('span', null, cardName));
       offer.appendChild(withTip(p, slug, cardName, 'card'));
     }
-    row.appendChild(offer);
-  }
+    stack.appendChild(offer);
+  });
+
+  row.appendChild(stack);
   return row;
 }
 

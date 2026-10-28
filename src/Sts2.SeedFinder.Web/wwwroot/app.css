@@ -626,7 +626,12 @@ input[type=number]::-webkit-inner-spin-button { appearance: none; -webkit-appear
   display: flex; align-items: center; gap: 4px; padding-top: 3px; font-size: 11.5px;
 }
 .slot-label { color: var(--text-2); font-size: 12px; padding-top: 5px; }
-.offer { display: flex; flex-wrap: wrap; gap: 5px; }
+.offer { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+
+/* Scroll Boxes' two bundles, stacked. The "or" is a fixed width so the second bundle's cards
+   line up under the first's rather than sitting one word to the right. */
+.offers { display: flex; flex-direction: column; gap: 6px; }
+.offer-or { flex: none; width: 16px; color: var(--text-2); font-size: 11.5px; }
 
 /* A second set of per-player rows inside one act, for the first fight's reward. Indented and
    ruled so it reads as part of Act 1 rather than as another act. */
