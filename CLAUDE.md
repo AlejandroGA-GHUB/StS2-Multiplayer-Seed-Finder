@@ -22,20 +22,24 @@ and Frozen Egg appeared in both. `ChestRelics.Generate` already solves the same 
 (its `taken` set, tracked by identity so the Act 3 rarity gate cannot shift an index) and is the
 pattern to copy.
 
-**Four Neow card payloads are done**, in `Core/Cards/NeowCardPayload.cs`, all searchable and
+**Five Neow card payloads are done**, in `Core/Cards/NeowCardPayload.cs`, all searchable and
 Oracle-verified draw-for-draw: Arcane Scroll and Hefty Tablet (2026-08-31), Massive Scroll and
-Scroll Boxes (2026-10-27). They are THREE different chains, not one with a count, which is what
-`PayloadShape` names:
+Scroll Boxes (2026-10-27), Lead Paperweight (2026-10-31). They are THREE different chains, not
+one with a count, under four `PayloadShape`s:
 
 - **Rares** (the two scrolls) — N uniform picks over the character's rares.
 - **MassiveScroll** — a rarity roll through `RollWithBaseOdds`, a pick, and an upgrade roll, over
   the character pool AND the colourless pool filtered to multiplayer-only cards. 17 cards, no
   Commons, so a Common roll always walks to Uncommon. Co-op only (`IsAllowed: players > 1`).
+- **LeadPaperweight** — Massive Scroll's chain (rarity roll, pick, upgrade roll), 2 cards over
+  the WHOLE colourless pool, no relic-side filter (solo still drops the multiplayer-only cards), either mode. Its own shape because the pool differs; the
+  walk is shared (`NeowCardPayload.RollsRarity`).
 - **ScrollBoxes** — not the factory at all. Two bundles of 2 commons then 1 uncommon, one shared
   used-card set across both. You keep a WHOLE BUNDLE, so two wanted cards must be in the same
   one, which is what `Offers` enforces and what the displays group by.
 
-All three shapes are **GPU-ported** (2026-10-28), sharing the card stage as `Fight = 0` with a
+All four shapes are **GPU-ported** (2026-10-28, Lead Paperweight 2026-10-31, reading the
+colourless table All Star already uploads), sharing the card stage as `Fight = 0` with a
 per-slot `PayloadShapeOfSlot` saying which chain to walk. One stream per slot means one chain per
 slot: two relics of the same shape merge by taking the deeper count, which only over-accepts,
 but two DIFFERENT shapes on one slot make the planner decline and hand the search to the CPU.
@@ -180,6 +184,7 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --shop p1:belt_buckle
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --chest 1:war_paint --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression --characters ironclad,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic lead_paperweight:p1:prowess --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --neow-pick p1:massive_scroll --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --specialized p1:claw --characters defect,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --all-star p1:prowess --players 2   # no --characters needed
@@ -323,7 +328,7 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   guessing. A GPU is never required to build or run; `STS2_GPU=off` disables it,
   `cuda`/`opencl`/`cpu` force a backend.
 
-  Ported: acts, Neow (both branches), card rewards, the three modifier payloads, all four Neow
+  Ported: acts, Neow (both branches), card rewards, the three modifier payloads, all five Neow
   card payloads, and run generation for bosses, events, Ancient identity and shop relics. Not
   ported: treasure chests and Ancient offers.
   **Read `docs/GPU.md` before touching `Gpu/`** — it has why each unported thing is unported, and

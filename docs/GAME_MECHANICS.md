@@ -249,9 +249,9 @@ assumed revealed", which is what they always meant). The GPU Neow stage holds on
 lobby, so when players differ it keeps only its curse criteria and leaves positives to the CPU.
 
 Card *payloads* (Hefty Tablet's 3 rare cards, Arcane Scroll's rare, Scroll Boxes' bundles)
-are rolled in `AfterObtained`, not at Neow. **Arcane Scroll's and Hefty Tablet's are now
-modelled and searchable** (`Core/Cards/NeowCardPayload.cs`, Oracle-verified against v0.111.0);
-Massive Scroll's, Scroll Boxes' and Neow's Bones' are not. For all of them
+are rolled in `AfterObtained`, not at Neow. **Arcane Scroll's, Hefty Tablet's, Massive
+Scroll's, Scroll Boxes' and Lead Paperweight's are now modelled and searchable**
+(`Core/Cards/NeowCardPayload.cs`, Oracle-verified against v0.111.0); Neow's Bones' is not. For all of them
 **how many draws they cost is** known, because they come off `PlayerRng.Rewards` and therefore
 shift the first fight's reward — see `NeowRewardDrawCost` below.
 
@@ -306,6 +306,20 @@ rather than by reading:
 
 `IsAllowedAtNeow` also gates the relic on the player having at least four unlocked commons and
 two uncommons, which is why the draw loops can assume the pool is deep enough.
+
+**Lead Paperweight is Massive Scroll's chain over another pool** (read against v0.111.0,
+2026-10-31, and modelled the same day as `PayloadShape.LeadPaperweight`). `AfterObtained` calls
+`CreateForReward(owner, 2, options)` with the `ColorlessCardPool` ALONE, no card filter,
+`Source.Other` and `RegularEncounter`, no flags. So two cards at three draws each (base-odds
+rarity, pick, upgrade), which is the 6 `NeowRewardDrawCost` already recorded. The pool is the 65
+colourless cards, 40 Uncommon and 25 Rare, gated by the colourless epochs and run-mode filtered
+like any pool (solo drops the multiplayer-only ones). No Commons, so a Common roll walks to
+Uncommon, and roughly 3% of cards land Rare. The player keeps one of the two, or skips. It is
+the only payload that ignores the character, though the search still asks for the party.
+
+**The rolled payloads read the ascension.** `RollWithBaseOdds` uses `RegularRareOdds`, which
+Scarcity (A7+) halves to 0.0149, so Massive Scroll's and Lead Paperweight's rarity rolls differ
+at A7+. The GPU always applied it; the CPU path passed ascension 0 until 2026-10-31.
 
 **Implemented 2026-08-31** as `NeowCardPayload`, re-read against v0.111.0 and Oracle-checked
 draw-for-draw (`Neow card payloads, draw-for-draw vs game Rng`, five characters x eighty seeds x

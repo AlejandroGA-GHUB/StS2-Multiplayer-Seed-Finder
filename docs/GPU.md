@@ -19,11 +19,14 @@ it, `cuda`/`opencl`/`cpu` force a backend.
 
 Ported so far, all fused into one pass (`SeedFilter`) and ordered cheapest-first: **acts**,
 **Neow (both branches)**, **card rewards**, the **three modifier payloads** (Specialized, All
-Star, Draft), **all four Neow card payloads** and **run generation** for bosses, events, Ancient
+Star, Draft), **all five Neow card payloads** and **run generation** for bosses, events, Ancient
 identity and shop relics.
 
 **The Neow payloads are three chains behind one stage.** `PayloadShapeOfSlot` says which to walk
-for each slot, because two players can be asked about different relics. One stream per slot means
+for each slot, because two players can be asked about different relics. Lead Paperweight is a
+fourth shape code on Massive Scroll's walk: same draws, but its pool comes from `ColorlessOfSlot`
+(the table All Star reads) instead of `MassiveOfSlot`, and both take their count from
+`PayloadPicks` rather than a constant. One stream per slot means
 one chain per slot: two relics of the SAME shape merge by taking the deeper count, which only
 over-accepts (asking whether a card is among Hefty Tablet's three is looser than asking whether
 it is Arcane Scroll's one), but two DIFFERENT shapes on one slot make the planner decline. Scroll
