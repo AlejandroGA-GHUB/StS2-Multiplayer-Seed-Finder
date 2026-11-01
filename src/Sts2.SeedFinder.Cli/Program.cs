@@ -735,10 +735,11 @@ internal static class Program
                                asked for different relics. Without one it uses --require.
                                Default: silken_tress, unless an --ancient flag is given, in
                                which case Neow is unconstrained.
-                               Arcane Scroll and Hefty Tablet may also name the cards they
-                               hand over: one rare for the scroll, up to three for the tablet.
+                               Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll Boxes and
+                               Lead Paperweight may also name the cards they hand over, e.g.
+                               lead_paperweight:p1:prowess (one of its two colourless cards).
                                Doing so says that player TAKES it, so their fight rewards are
-                               read one (or three) draws along.
+                               read that relic's draws along.
             --neow-pick <who>:<relic>
                                Assume this player takes this Neow option, which shifts their
                                fight card rewards. Only the options that draw off that

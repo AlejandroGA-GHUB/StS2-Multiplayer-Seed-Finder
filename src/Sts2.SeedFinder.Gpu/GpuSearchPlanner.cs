@@ -327,6 +327,12 @@ public sealed class GpuSearchPlanner : IDisposable
         {
             int picks = NeowCardPayload.CardCount(want.Relic.Slug);
             int shape = ShapeCode(NeowCardPayload.ShapeOf(want.Relic.Slug));
+
+            // A payload Core models but the kernel does not. Code 0 reads as "nothing asks" on
+            // the device, so sending it would leave the criterion's bit unset and reject every
+            // seed. Declining hands the whole search to the CPU instead.
+            if (shape == 0) { pools.Dispose(); return null; }
+
             var armed = want.Requirement == SlotRequirement.Any
                 ? Enumerable.Range(0, criteria.PlayerCount)
                 : want.ResolveSlots(criteria.PlayerCount);

@@ -1555,6 +1555,7 @@ public static class SeedSearcher
                 {
                     PayloadShape.MassiveScroll => "multiplayer-only cards",
                     PayloadShape.ScrollBoxes => "commons and uncommons",
+                    PayloadShape.LeadPaperweight => "colourless cards",
                     _ => "Rares",
                 };
 

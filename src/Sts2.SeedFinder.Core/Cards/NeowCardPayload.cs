@@ -16,14 +16,23 @@ public enum PayloadShape
 
     /// <summary>Scroll Boxes: two bundles of 2 commons and 1 uncommon, keep a whole bundle.</summary>
     ScrollBoxes,
+
+    /// <summary>
+    /// Lead Paperweight: Massive Scroll's chain, two cards over the whole colourless pool.
+    /// A shape of its own rather than a count on Massive Scroll's, because the pool differs and
+    /// the GPU addresses the two pools through different per-slot tables.
+    /// </summary>
+    LeadPaperweight,
 }
 
 /// <summary>
 /// The cards a Neow relic hands a player the moment they take it.
 ///
-/// Four of Neow's options are modelled here, in three different shapes. They are genuinely
-/// different chains rather than one with parameters, which is why this reads as three walks and
-/// not one loop: what is drawn, from which pool, and how many draws it costs all differ.
+/// Five of Neow's options are modelled here, in four shapes over three different chains. They
+/// are genuinely different chains rather than one with parameters, which is why this reads as
+/// three walks and not one loop: what is drawn, from which pool, and how many draws it costs all
+/// differ. Lead Paperweight is the exception that proves it: it IS Massive Scroll's chain, over
+/// another pool and for one card fewer, so it shares that walk.
 ///
 /// <code>
 ///   ArcaneScroll / HeftyTablet .AfterObtained       -> PayloadShape.Rares
@@ -40,7 +49,13 @@ public enum PayloadShape
 ///       odds   = RegularEncounter    flags = none
 ///     3 draws a card: a rarity roll, the pick, and an upgrade roll.
 ///
-///   ScrollBoxes.GenerateRandomBundles                -> PayloadShape.ScrollBoxes
+///   LeadPaperweight.AfterObtained                   -> PayloadShape.LeadPaperweight
+///     CreateForReward(owner, 2, options)
+///       pools  = the Colourless pool alone, no filter
+///       odds   = RegularEncounter    flags = none
+///     3 draws a card, exactly as Massive Scroll: rarity roll, pick, upgrade roll.
+///
+///   ScrollBoxes.GenerateRandomBundles               -> PayloadShape.ScrollBoxes
 ///     Not the factory at all. Two bundles, each 2 commons then 1 uncommon, drawn with
 ///     NextItem over the character pool, against ONE used-card set shared by both bundles.
 ///     1 draw a card, plus a leading NextInt(100) per bundle for the Defect only.
@@ -90,8 +105,16 @@ public static class NeowCardPayload
         "arcane_scroll" or "hefty_tablet" => PayloadShape.Rares,
         "massive_scroll" => PayloadShape.MassiveScroll,
         "scroll_boxes" => PayloadShape.ScrollBoxes,
+        "lead_paperweight" => PayloadShape.LeadPaperweight,
         _ => PayloadShape.None,
     };
+
+    /// <summary>
+    /// Whether this shape is the ordinary reward factory with a rarity roll: Massive Scroll and
+    /// Lead Paperweight. Three draws a card, and the only shapes that read the ascension.
+    /// </summary>
+    public static bool RollsRarity(PayloadShape shape) =>
+        shape is PayloadShape.MassiveScroll or PayloadShape.LeadPaperweight;
 
     /// <summary>
     /// How many cards this Neow relic puts in front of the player, or 0 for a relic whose
@@ -108,6 +131,7 @@ public static class NeowCardPayload
         "hefty_tablet" => 3,
         "massive_scroll" => 3,
         "scroll_boxes" => Bundles * BundleSize,
+        "lead_paperweight" => 2,
         _ => 0,
     };
 
@@ -116,17 +140,23 @@ public static class NeowCardPayload
 
     /// <summary>Neow relics whose payload this tool can name, in offer order.</summary>
     public static readonly string[] Predictable =
-        ["arcane_scroll", "hefty_tablet", "massive_scroll", "scroll_boxes"];
+        ["arcane_scroll", "hefty_tablet", "massive_scroll", "scroll_boxes", "lead_paperweight"];
 
     /// <summary>
-    /// The pool a given relic's payload draws from. Three different pools, which is the other
+    /// The pool a given relic's payload draws from. Four different pools, which is the other
     /// half of why these are separate chains rather than one with a count.
+    ///
+    /// Lead Paperweight's is the only one that ignores the character: every player sees the
+    /// same colourless pool, gated only by their own colourless epochs.
     /// </summary>
     public static CardEntry[] PoolOf(
         string relicSlug, Character character, UnlockState? unlocks = null, bool isMultiplayer = true) =>
-        ShapeOf(relicSlug) == PayloadShape.MassiveScroll
-            ? MassiveScrollPool(character, unlocks, isMultiplayer)
-            : CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer);
+        ShapeOf(relicSlug) switch
+        {
+            PayloadShape.MassiveScroll => MassiveScrollPool(character, unlocks, isMultiplayer),
+            PayloadShape.LeadPaperweight => CardRewardGenerator.ColorlessPool(unlocks, isMultiplayer),
+            _ => CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer),
+        };
 
     /// <summary>
     /// Draws the payload, writing POOL POSITIONS into <paramref name="picked"/> and returning
@@ -167,9 +197,13 @@ public static class NeowCardPayload
             return count;
         }
 
-        if (shape == PayloadShape.MassiveScroll)
+        if (RollsRarity(shape))
         {
-            for (int i = 0; i < BundleSize; i++)
+            // Massive Scroll and Lead Paperweight: the same factory call over different pools,
+            // three cards and two. The colourless pool holds no Commons, like Massive Scroll's,
+            // so a Common roll walks to Uncommon here too.
+            int wanted = CardCount(relicSlug);
+            for (int i = 0; i < wanted; i++)
             {
                 var rarity = CardRewardGenerator.RollBaseRarityFor(
                     rng, index, pool, picked[..count], ascension);
@@ -270,7 +304,7 @@ public static class NeowCardPayload
     /// Reachability, not possession, and what "reachable" means differs by shape:
     ///
     /// <list type="bullet">
-    /// <item><b>Rares and Massive Scroll</b> put every card in front of you at once and you keep
+    /// <item><b>Rares, Massive Scroll and Lead Paperweight</b> put every card in front of you at once and you keep
     /// one, so a wanted card only has to be among them. Naming two says "both were offered"
     /// rather than "I got both", and naming fewer is the looser search.</item>
     /// <item><b>Scroll Boxes</b> hands over a whole BUNDLE, so two wanted cards have to be in
@@ -357,6 +391,11 @@ public static class NeowCardPayload
 
             PayloadShape.ScrollBoxes => CardRewardGenerator.PoolFor(character, unlocks, isMultiplayer)
                 .Where(c => c.Rarity is CardRarity.Common or CardRarity.Uncommon),
+
+            // The rarity roll can only land on the three reward rarities, so anything else the
+            // pool might one day carry is unreachable. Today it is Uncommons and Rares only.
+            PayloadShape.LeadPaperweight => CardRewardGenerator.ColorlessPool(unlocks, isMultiplayer)
+                .Where(c => c.Rarity is CardRarity.Common or CardRarity.Uncommon or CardRarity.Rare),
 
             _ => Array.Empty<CardEntry>(),
         };

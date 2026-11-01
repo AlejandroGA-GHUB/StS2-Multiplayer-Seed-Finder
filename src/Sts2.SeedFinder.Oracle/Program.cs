@@ -775,9 +775,9 @@ internal static class Program
         // small enough to fit an int compiles to `ldc.i4 N; newobj decimal(int)`. Anything else
         // in that getter would break the count assertion below rather than pass quietly.
         //
-        // Only the rares pair declares its count that way: Massive Scroll hardcodes 3 at the
-        // call site and Scroll Boxes builds bundles, so their counts are asserted by the replays
-        // instead.
+        // Only the rares pair declares its count that way: Massive Scroll and Lead Paperweight
+        // hardcode 3 and 2 at the call site and Scroll Boxes builds bundles, so their counts are
+        // asserted by the replays instead.
         foreach (var slug in Sts2.SeedFinder.Core.Cards.NeowCardPayload.Predictable)
         {
             if (Sts2.SeedFinder.Core.Cards.NeowCardPayload.ShapeOf(slug)
@@ -804,6 +804,7 @@ internal static class Program
             var pool = Sts2.SeedFinder.Core.Cards.CardRewardGenerator.PoolFor(character);
             var rares = pool.Where(c => c.Rarity == Sts2.SeedFinder.Core.Cards.CardRarity.Rare).ToList();
             var massivePool = Sts2.SeedFinder.Core.Cards.NeowCardPayload.MassiveScrollPool(character);
+            var colorlessPool = Sts2.SeedFinder.Core.Cards.CardRewardGenerator.ColorlessPool();
 
             foreach (var slug in Sts2.SeedFinder.Core.Cards.NeowCardPayload.Predictable)
             {
@@ -833,16 +834,25 @@ internal static class Program
                                 theirs.Add(picked.TypeName);
                             }
                         }
-                        else if (shape == Sts2.SeedFinder.Core.Cards.PayloadShape.MassiveScroll)
+                        else if (Sts2.SeedFinder.Core.Cards.NeowCardPayload.RollsRarity(shape))
                         {
                             // CardCreationOptions(..., Source.Other, RarityOdds.RegularEncounter)
                             // with no ForceRarityOddsChange routes to RollWithBaseOdds: the base
                             // thresholds, no pity offset read and none written back. Then the
                             // pick, then an upgrade roll that happens because NoUpgradeRoll is
                             // not set.
-                            for (int i = 0; i < 3; i++)
+                            //
+                            // Massive Scroll does it three times over its own pool, Lead
+                            // Paperweight twice over the whole colourless pool. The count is
+                            // hardcoded at both call sites, so it is held to the literals here.
+                            var rolledPool = shape == Sts2.SeedFinder.Core.Cards.PayloadShape.MassiveScroll
+                                ? massivePool
+                                : colorlessPool;
+                            int rolledCount = shape == Sts2.SeedFinder.Core.Cards.PayloadShape.MassiveScroll ? 3 : 2;
+
+                            for (int i = 0; i < rolledCount; i++)
                             {
-                                var left = massivePool.Where(c => !theirs.Contains(c.TypeName)).ToList();
+                                var left = rolledPool.Where(c => !theirs.Contains(c.TypeName)).ToList();
                                 if (left.Count == 0) break;
 
                                 float roll = GameNextFloat(rng);
@@ -923,7 +933,7 @@ internal static class Program
 
         return Check("Neow card payloads, draw-for-draw vs game Rng", bad.Count == 0,
             bad.Count == 0
-                ? "Arcane Scroll, Hefty Tablet, Massive Scroll and Scroll Boxes: "
+                ? "Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll Boxes and Lead Paperweight: "
                   + "5 characters x 80 seeds x 2 slots matched, and both scroll card counts "
                   + "agree with the game's own CanonicalVars"
                 : string.Join(" | ", bad));
