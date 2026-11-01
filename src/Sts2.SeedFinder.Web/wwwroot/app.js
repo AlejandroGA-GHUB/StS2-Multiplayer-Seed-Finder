@@ -1765,13 +1765,41 @@ function svgEl(tag, attrs) {
   return node;
 }
 
-async function openMapView(seed) {
-  const q = new URLSearchParams({ seed, players: state.players });
+/**
+ * The query parameters that describe the LOBBY rather than the criteria: what a seed is
+ * generated for, as opposed to what it was filtered on.
+ */
+const LOBBY_PARAMS = ['players', 'characters', 'ascension', 'epochs', 'unlocks'];
+
+/**
+ * The lobby a set of results was produced for, taken from the query that produced them.
+ *
+ * A result card keeps this so that anything it opens later describes the same run the card
+ * does, whatever the panel has been changed to since. The map is where that bites: ascension 1
+ * takes a map from 5 elites to 8, which re-deals room types across the whole act, so a seed
+ * found at A10 and mapped at A0 shows the right paths with the wrong rooms on them.
+ */
+function lobbyOf(queryText) {
+  const from = new URLSearchParams(queryText);
+  const q = new URLSearchParams();
+  for (const k of LOBBY_PARAMS) for (const v of from.getAll(k)) q.append(k, v);
+  return q;
+}
+
+/** The lobby as the panel currently describes it, for a map opened with no result behind it. */
+function currentLobby() {
+  const q = new URLSearchParams({ players: state.players });
   if (charactersReady()) q.set('characters', state.characters.join(','));
   if (state.ascension > 0) q.set('ascension', state.ascension);
   // Act SELECTION depends on unlock state, so the lobby has to come along or a partly unlocked
   // party would be shown maps for acts it will never see.
   state.epochs.forEach((e, i) => { if (e) q.append('epochs', `${i + 1}:${e.code}`); });
+  return q;
+}
+
+async function openMapView(seed, lobby = null) {
+  const q = new URLSearchParams(lobby ?? currentLobby());
+  q.set('seed', seed);
 
   // The status bar is holding the search summary — how many seeds were scanned, on what engine.
   // setBusy empties it, and this is a side trip rather than a new search, so put it back after.
@@ -3481,7 +3509,11 @@ function renderHit(hit, position = null) {
   const mapBtn = el('button', 'icon-btn map-btn', 'Map Visual');
   mapBtn.type = 'button';
   mapBtn.title = 'Show this seed’s three act maps';
-  mapBtn.onclick = () => openMapView(hit.seed);
+  // Captured now, not read on click: the card shows the run its query asked for, and the map has
+  // to be of that same run even after the ascension or the party has been changed in the panel.
+  // A new search or inspect clears the results first, so lastQuery here is always this card's.
+  const lobby = lastQuery ? lobbyOf(lastQuery.text) : null;
+  mapBtn.onclick = () => openMapView(hit.seed, lobby);
   head.appendChild(mapBtn);
 
   head.appendChild(copy);
@@ -4284,7 +4316,9 @@ function syncAscensionHint() {
       ? 'Ascension 7 tightens the card rarity odds, which moves every card reward from the second '
         + 'fight on. Ascension 10 would also give the final act a second boss.' + ADVICE
       : 'Two levels change what a seed gives you: Ascension 7 tightens the card rarity odds from '
-        + 'the second fight on, and Ascension 10 gives the final act a second boss.' + ADVICE;
+        + 'the second fight on, and Ascension 10 gives the final act a second boss. Any ascension '
+        + 'at all also puts more elites on the act maps, so rooms on Map Visual move from A1.'
+        + ADVICE;
 }
 
 $('#start').oninput = () => { startIsUserSet = $('#start').value.trim() !== ''; };
