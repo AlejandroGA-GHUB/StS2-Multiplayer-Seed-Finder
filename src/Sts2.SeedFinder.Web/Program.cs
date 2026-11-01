@@ -250,6 +250,7 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
             {
                 PayloadShape.MassiveScroll => "mp_only",
                 PayloadShape.ScrollBoxes => "low_rarities",
+                PayloadShape.LeadPaperweight => "colorless",
                 _ => "rares",
             },
             NeowCardPayload.ShapeOf(r.Slug) == PayloadShape.ScrollBoxes

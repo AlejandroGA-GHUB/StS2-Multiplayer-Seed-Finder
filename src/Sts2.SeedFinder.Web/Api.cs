@@ -80,7 +80,7 @@ public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 /// </summary>
 /// <param name="PayloadCards">
 /// How many cards this tool can NAME for the relic: 1 for Arcane Scroll, 3 for Hefty Tablet,
-/// 0 for the rest. Non-zero is what makes the payload picker appear on a Neow row.
+/// Massive Scroll and Lead Paperweight's 3 and 2, Scroll Boxes' 6, and 0 for the rest. Non-zero is what makes the payload picker appear on a Neow row.
 /// </param>
 /// <param name="Draws">
 /// Draws it takes off that player's Rewards stream before the first fight rolls, which is what
@@ -92,8 +92,9 @@ public sealed record CharacterDto(string Name, string Slug, bool HasArt);
 /// <param name="PoolKind">
 /// Which pool this relic's payload draws from, because the three shapes do not share one:
 /// <c>rares</c> for the scrolls, <c>mp_only</c> for Massive Scroll (the character pool and the
-/// colourless pool, both filtered to multiplayer-only cards) and <c>low_rarities</c> for Scroll
-/// Boxes (commons and uncommons). The page needs it to offer the right cards, and it is sent
+/// colourless pool, both filtered to multiplayer-only cards), <c>low_rarities</c> for Scroll
+/// Boxes (commons and uncommons) and <c>colorless</c> for Lead Paperweight (the whole colourless
+/// pool, whoever the player is). The page needs it to offer the right cards, and it is sent
 /// rather than hardcoded there so a second copy of the rule cannot drift from Core.
 /// </param>
 /// <param name="BundleSize">

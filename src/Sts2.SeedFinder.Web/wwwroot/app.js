@@ -3961,6 +3961,8 @@ function payloadGroups(payload, pool) {
   if (payload.poolKind === 'rares')
     return [{ title: payload.payloadCards === 1 ? 'Rares' : `Rares (up to ${payload.payloadCards})`, items: pool }];
 
+  // Massive Scroll and Lead Paperweight roll a rarity over pools with no Commons, so both are
+  // Uncommons then Rares.
   const order = payload.poolKind === 'low_rarities'
     ? ['Common', 'Uncommon']
     : ['Uncommon', 'Rare'];
@@ -3996,6 +3998,11 @@ function payloadHint(payload) {
       + 'the colourless pool together, which is why the list is short. Close this when you have '
       + 'the ones you want.';
 
+  if (payload.poolKind === 'colorless')
+    return 'Both cards are shown at once and you keep one, so naming one is '
+      + 'the looser search. They come from the colourless pool, which is the same whoever the '
+      + 'player is. Close this when you have the ones you want.';
+
   if (payload.poolKind === 'low_rarities')
     return `Two bundles of ${payload.bundleSize}, and you keep a whole bundle. So cards named `
       + 'here have to turn up in the SAME bundle, not just somewhere among the six. Close this '
@@ -4018,6 +4025,7 @@ function payloadHint(payload) {
  *   mp_only       Massive Scroll. The character pool AND the colourless pool, both filtered to
  *                 cards that exist only in multiplayer.
  *   low_rarities  Scroll Boxes. The character's commons and uncommons.
+ *   colorless     Lead Paperweight. The colourless pool alone, so every slot sees the same list.
  */
 function payloadPool(crit) {
   const slots = slotsOfRow(crit).filter(i => state.characters[i]);
@@ -4029,6 +4037,8 @@ function payloadPool(crit) {
       return cardPoolOwn(i).filter(c => c.rarity === 'Common' || c.rarity === 'Uncommon');
     if (kind === 'mp_only')
       return cardPoolOwn(i).concat(colorlessPool()).filter(c => c.multiplayerOnly);
+    if (kind === 'colorless')
+      return colorlessPool();
     return cardPoolOwn(i).filter(c => c.rarity === 'Rare');
   };
   const lists = slots.map(poolOf);
@@ -4094,7 +4104,7 @@ function renderNeow() {
       row.appendChild(req);
     }
 
-    // Only the two relics that hand cards over get a payload row, and only once a relic is
+    // Only the relics that hand cards over get a payload row, and only once a relic is
     // chosen. Everything else Neow offers gives you a relic and nothing to predict.
     const payload = chosen && neowCardRelic(chosen.slug);
     if (payload?.payloadCards > 0) {
@@ -4113,11 +4123,11 @@ function renderNeow() {
         // half-filled form; an empty pool with characters set means "for every player" left no
         // card all of them could be handed, which is worth saying rather than looking broken.
         //
-        // The wording follows the relic's pool, not the rares one. Three of the four payload
-        // relics do not draw rares at all, and "any rare card" over a list of commons reads as
+        // The wording follows the relic's pool, not the rares one. Three of the five payload
+        // relics are not rares-only, and "any rare card" over a list of commons reads as
         // a bug in the list rather than in the label.
         const ready = slotsOfRow(crit).every(i => state.characters[i]);
-        const what = { mp_only: 'multiplayer-only card', low_rarities: 'card' }[payload.poolKind]
+        const what = { mp_only: 'multiplayer-only card', low_rarities: 'card', colorless: 'colourless card' }[payload.poolKind]
           ?? 'rare card';
         field.appendChild(anyIcon(28));
         field.appendChild(el('span', 'name',
