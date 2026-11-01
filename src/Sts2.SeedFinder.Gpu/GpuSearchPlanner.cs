@@ -98,6 +98,7 @@ public sealed class GpuSearchPlanner : IDisposable
         PayloadShape.Rares => 1,
         PayloadShape.MassiveScroll => 2,
         PayloadShape.ScrollBoxes => 3,
+        PayloadShape.LeadPaperweight => 4,
         _ => 0,
     };
 

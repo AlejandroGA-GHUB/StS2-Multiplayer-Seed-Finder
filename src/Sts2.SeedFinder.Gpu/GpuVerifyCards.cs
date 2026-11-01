@@ -176,6 +176,7 @@ public static class GpuVerifyCards
             PayloadShape.Rares => 1,
             PayloadShape.MassiveScroll => 2,
             PayloadShape.ScrollBoxes => 3,
+            PayloadShape.LeadPaperweight => 4,
             _ => 0,
         };
 
@@ -184,9 +185,16 @@ public static class GpuVerifyCards
             // A card this relic can actually hand over, which is a different pool per shape.
             // Taking the first in pool order keeps matches dense enough over a range this size
             // for the two sides to have something to disagree about.
-            wanted[slot] = NeowCardPayload
-                .Offerable(characters[slot], relicSlug, bySlot[slot], isMultiplayer)
-                .First().TypeName;
+            //
+            // The shapes that roll a rarity land a Rare about 3% of the time, and every slot has
+            // to match at once, so a Rare there leaves Lead Paperweight's 65-card pool with no
+            // matches at all and nothing to disagree about. They aim at an Uncommon instead.
+            var offerable = NeowCardPayload
+                .Offerable(characters[slot], relicSlug, bySlot[slot], isMultiplayer).ToList();
+            wanted[slot] = (NeowCardPayload.RollsRarity(NeowCardPayload.ShapeOf(relicSlug))
+                    ? offerable.FirstOrDefault(e => e.Rarity == CardRarity.Uncommon) ?? offerable[0]
+                    : offerable[0])
+                .TypeName;
             payloadShape[slot] = shape;
             critSlot[slot] = slot;
             critFight[slot] = 0;                 // 0 marks a payload criterion

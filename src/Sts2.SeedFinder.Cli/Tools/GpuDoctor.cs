@@ -129,8 +129,11 @@ public static class GpuDoctor
             // drift from Core only on the ~1 in 100 seeds where it fires.
             foreach (var relic in NeowCardPayload.Predictable)
             {
+                // Lead Paperweight's pool is 65 cards against Massive Scroll's 17, so one card
+                // on both slots at once is rare enough to need ten times the seeds to matter.
+                int samples = relic == "lead_paperweight" ? 200_000 : 20_000;
                 var check = GpuVerifyCards.RunPayload(
-                    engine, party, unlocks: null, start: 10_000_000_000, samples: 20_000, relicSlug: relic);
+                    engine, party, unlocks: null, start: 10_000_000_000, samples: samples, relicSlug: relic);
                 Report(check);
                 ok &= check.Passed;
             }
@@ -741,6 +744,37 @@ public static class GpuDoctor
                     }),
             },
         }, 400_000);
+
+        // Lead Paperweight reads the colourless pool through ColorlessOfSlot, the table All Star
+        // uses, rather than its own. A Rare, so the base-odds rarity roll has to land on the
+        // right side of the threshold, and "any player" so every slot is armed. Then beside a
+        // Massive Scroll on the other slot: two rolled shapes over two different pool tables,
+        // which one stream per slot allows.
+        var colorlessRare = NeowCardPayload.Offerable(Character.Ironclad, "lead_paperweight")
+            .First(e => e.Rarity == CardRarity.Rare).TypeName;
+        yield return ("lead paperweight any player, a rare", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(NeowRelics.Find("lead_paperweight")!, SlotRequirement.Any,
+                    null, PayloadCards: new[] { colorlessRare }),
+            },
+        }, 400_000);
+
+        yield return ("massive scroll p1 + lead paperweight p2", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(NeowRelics.Find("massive_scroll")!, SlotRequirement.Specific,
+                    new[] { 0 }, PayloadCards: new[] { massive }),
+                new NeowCriterion(NeowRelics.Find("lead_paperweight")!, SlotRequirement.Specific,
+                    new[] { 1 }, PayloadCards: new[] { colorlessRare }),
+            },
+        }, 2_000_000);
     }
 
     /// <summary>

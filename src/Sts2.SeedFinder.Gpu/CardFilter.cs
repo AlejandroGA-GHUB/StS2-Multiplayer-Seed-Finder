@@ -63,7 +63,7 @@ public readonly struct CardCriteriaView
 
     /// <summary>
     /// How many payload cards to MODEL for this slot, indexed by slot: 1 for Arcane Scroll, 3
-    /// for Hefty Tablet, 0 when nothing asks.
+    /// for Hefty Tablet and Massive Scroll, 2 for Lead Paperweight, 0 when nothing asks.
     ///
     /// Separate from <see cref="PriorDraws"/> on purpose. A criterion aimed at "any player"
     /// names no slot, so every slot's payload has to be looked at, while nobody's fight stream
@@ -319,8 +319,8 @@ public static class CardFilter
             // about it. Off the front of its own copy of the stream, which is exact: a payload
             // is drawn before anything else touches it.
             //
-            // Three shapes, because the four relics are three different chains. PayloadShape
-            // says which, per slot, since two players can be asked about different relics.
+            // Four shapes over three chains, for five relics. PayloadShape says which, per
+            // slot, since two players can be asked about different relics.
             int shape = criteria.PayloadShapeOfSlot[slot];
             if (shape != PayloadNone)
             {
@@ -344,15 +344,19 @@ public static class CardFilter
                         taken.Add(got);
                     }
                 }
-                else if (shape == PayloadMassiveScroll)
+                else if (shape == PayloadMassiveScroll || shape == PayloadLeadPaperweight)
                 {
-                    // Massive Scroll: the ordinary factory over its own pool. Three draws a
-                    // card — a base-odds rarity roll that moves no pity, the pick, and an
-                    // upgrade roll that happens because NoUpgradeRoll is not set.
-                    int mpool = criteria.MassiveOfSlot[slot];
+                    // Massive Scroll and Lead Paperweight: the ordinary factory over a pool of
+                    // their own. Three draws a card, a base-odds rarity roll that moves no pity,
+                    // the pick, and an upgrade roll that happens because NoUpgradeRoll is not
+                    // set. Massive Scroll's pool is per character, Lead Paperweight's is the
+                    // colourless one All Star already uploads; the count comes from Core.
+                    int mpool = shape == PayloadMassiveScroll
+                        ? criteria.MassiveOfSlot[slot]
+                        : criteria.ColorlessOfSlot[slot];
                     int mbase = pools.PoolBase[mpool];
 
-                    for (int i = 0; i < MassiveScrollCards; i++)
+                    for (int i = 0; i < criteria.PayloadPicks[slot]; i++)
                     {
                         int rarity = RollBaseRarity(ref prng, p, pools, mpool, mbase, in taken);
                         int avail = CountAvailable(pools, mpool, mbase, rarity, in taken);
@@ -526,10 +530,8 @@ public static class CardFilter
     /// planner is what maps one to the other; they are ints here because a kernel cannot take
     /// an enum across the boundary.
     /// </summary>
-    private const int PayloadNone = 0, PayloadRares = 1, PayloadMassiveScroll = 2, PayloadScrollBoxes = 3;
-
-    /// <summary>Massive Scroll shows three and you keep one.</summary>
-    private const int MassiveScrollCards = 3;
+    private const int PayloadNone = 0, PayloadRares = 1, PayloadMassiveScroll = 2, PayloadScrollBoxes = 3,
+                      PayloadLeadPaperweight = 4;
 
     /// <summary>Scroll Boxes offers two bundles of three, and you keep a whole bundle.</summary>
     private const int ScrollBoxesBundles = 2, ScrollBoxesBundleSize = 3;
