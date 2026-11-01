@@ -163,7 +163,7 @@ internal static class Program
 
         var cards = NeowCardPayload.Generate(
             SeedCodec.RunSeed(seed), slot, opts.Characters[slot], relic.Slug,
-            isMultiplayer: opts.PlayerCount > 1);
+            isMultiplayer: opts.PlayerCount > 1, ascension: opts.Ascension);
 
         if (cards.Count == 0) return "";
 

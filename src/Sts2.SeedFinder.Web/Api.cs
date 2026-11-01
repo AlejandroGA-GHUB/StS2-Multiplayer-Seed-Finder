@@ -1267,7 +1267,7 @@ public static class Predictions
                 if (!NeowCardPayload.IsPredictable(relic.Slug)) continue;
 
                 var cards = NeowCardPayload.Generate(
-                    runSeed, slot, characters[slot], relic.Slug, Own(slot), isMultiplayer);
+                    runSeed, slot, characters[slot], relic.Slug, Own(slot), isMultiplayer, ascension);
                 if (cards.Count > 0)
                     payloads.Add(new NeowPayloadDto(slot, relic.Slug, cards.Select(c => c.Slug).ToArray()));
             }

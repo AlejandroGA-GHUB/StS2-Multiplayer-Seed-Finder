@@ -47,9 +47,15 @@ public sealed class NeowPlan
     /// </summary>
     private readonly UnlockState[] _unlocksBySlot;
 
+    /// <summary>
+    /// The run's ascension. Only the payloads that roll a rarity read it, through
+    /// <c>RollWithBaseOdds</c>, whose rare threshold Scarcity (A7+) halves.
+    /// </summary>
+    private readonly int _ascension;
+
     private NeowPlan(
         NeowContext context, int curseCandidateCount, Item[] items,
-        IReadOnlyList<Character> characters, UnlockState[] unlocksBySlot)
+        IReadOnlyList<Character> characters, UnlockState[] unlocksBySlot, int ascension)
     {
         _context = context;
         _playerCount = context.PlayerCount;
@@ -57,6 +63,7 @@ public sealed class NeowPlan
         _items = items;
         _characters = characters;
         _unlocksBySlot = unlocksBySlot;
+        _ascension = ascension;
     }
 
     /// <summary>True when the search has no Neow requirement, so every seed passes this stage.</summary>
@@ -88,7 +95,8 @@ public sealed class NeowPlan
             .ToArray();
 
         return new NeowPlan(
-            context, curseCandidates.Count, items, criteria.Characters, criteria.UnlocksBySlot());
+            context, curseCandidates.Count, items, criteria.Characters, criteria.UnlocksBySlot(),
+            criteria.Ascension);
     }
 
     /// <summary>Does this run seed satisfy every Neow criterion?</summary>
@@ -130,7 +138,7 @@ public sealed class NeowPlan
         // else has touched yet.
         return NeowCardPayload.Offers(
             runSeed, slot, _characters[slot], item.Relic.Slug, _unlocksBySlot[slot],
-            item.WantedBySlot[slot], _context.IsMultiplayer);
+            item.WantedBySlot[slot], _context.IsMultiplayer, _ascension);
     }
 
     private bool OfferMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)
