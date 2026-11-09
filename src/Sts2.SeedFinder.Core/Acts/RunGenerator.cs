@@ -597,7 +597,7 @@ public static class RunGenerator
     }
 
     /// <summary>
-    /// One player's Shop deque, located within the UpFront stream.
+    /// One of a player's relic deques, located within the UpFront stream.
     /// </summary>
     /// <param name="DrawsBefore">
     /// Draws taken by every shuffle ahead of this one. Its own shuffle then costs
@@ -619,9 +619,19 @@ public static class RunGenerator
     /// </summary>
     public static ShopDeque?[] ShopDeques(
         IReadOnlyList<Character> characters, UnlockState unlocks,
-        IReadOnlyList<UnlockState>? playerUnlocks = null)
+        IReadOnlyList<UnlockState>? playerUnlocks = null) =>
+        PlayerDeques(characters, unlocks, playerUnlocks, "Shop");
+
+    /// <summary>
+    /// Where each player's deque of one rarity sits in the UpFront stream, and what goes into
+    /// it. <see cref="ShopDeques"/> is this for "Shop"; the Neow capsules read Common, Uncommon
+    /// and Rare, whose FRONTS are what <c>RelicFactory.PullNextRelicFromFront</c> takes.
+    /// </summary>
+    public static ShopDeque?[] PlayerDeques(
+        IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks, string rarity)
     {
-        var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: true, withChest: false);
+        var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: false, withChest: false);
         var result = new ShopDeque?[characters.Count];
 
         int draws = 0;
@@ -632,8 +642,46 @@ public static class RunGenerator
             var bag = plan.Players[p];
             for (int i = 0; i < bag.Layout.Length; i++)
             {
-                if (bag.Sources[i] is { } source) result[p] = new ShopDeque(draws, source);
+                if (bag.Layout[i].Rarity == rarity)
+                    result[p] = new ShopDeque(draws, OfRarity(bag.Pool, rarity));
                 draws += bag.Layout[i].Count > 1 ? bag.Layout[i].Count - 1 : 0;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// One player's Common, Uncommon and Rare deques as the UpFront shuffles leave them, FRONT
+    /// first. What a capsule pulls from at Neow, before anything else in the run has touched
+    /// them.
+    ///
+    /// Replays the bag shuffles only as far as this player's bag and stops: nothing after it
+    /// moves these deques, and act generation is several hundred draws this does not need.
+    /// </summary>
+    public static IReadOnlyDictionary<string, List<PoolRelic>> PlayerRelicDeques(
+        ulong runSeed, IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks, int slot)
+    {
+        var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: false, withChest: false);
+        var rng = new Rng(runSeed, GameHash.SnakeCase("UpFront"));
+        var result = new Dictionary<string, List<PoolRelic>>(3, StringComparer.Ordinal);
+
+        foreach (var (_, count) in plan.Shared) BurnShuffle(rng, count);
+        for (int p = 0; p < slot; p++)
+            foreach (var (_, count) in plan.Players[p].Layout) BurnShuffle(rng, count);
+
+        var bag = plan.Players[slot];
+        foreach (var (rarity, count) in bag.Layout)
+        {
+            if (ChestRarities.Contains(rarity))
+            {
+                var deque = new List<PoolRelic>(OfRarity(bag.Pool, rarity));
+                Shuffle(deque, rng);
+                result[rarity] = deque;
+            }
+            else
+            {
+                BurnShuffle(rng, count);
             }
         }
         return result;
@@ -690,6 +738,9 @@ public static class RunGenerator
     {
         public required (string Rarity, int Count)[] Layout;
         public required PoolRelic[]?[] Sources;
+
+        /// <summary>The whole bag in pool order, shared relics then the character's own.</summary>
+        public required PoolRelic[] Pool;
     }
 
     /// <summary>
@@ -753,7 +804,7 @@ public static class RunGenerator
                 if (withShop && layout[i].Rarity == "Shop")
                     sources[i] = OfRarity(bag, layout[i].Rarity);
 
-            players[p] = new PlayerBag { Layout = layout, Sources = sources };
+            players[p] = new PlayerBag { Layout = layout, Sources = sources, Pool = bag };
         }
 
         _bagPlan = plan;

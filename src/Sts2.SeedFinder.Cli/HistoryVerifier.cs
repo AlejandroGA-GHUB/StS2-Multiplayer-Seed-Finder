@@ -2,6 +2,7 @@ using System.Text.Json;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Install;
+using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Core.Saves;
 
 namespace Sts2.SeedFinder.Cli;
@@ -54,6 +55,11 @@ public static class HistoryVerifier
         List<List<string>> MonstersPerAct,
         List<string?> AncientPerAct,
         List<List<string>> ShopRelicsPerPlayer,
+        /// <summary>
+        /// What each player took at Neow, or null: the option, every relic they were handed
+        /// there in claim order (the option itself first), and every card.
+        /// </summary>
+        List<NeowTaken?> NeowPerPlayer,
         List<Character> Characters,
         int Ascension,
         string Seed,
@@ -66,6 +72,8 @@ public static class HistoryVerifier
         /// and moves every shuffle, so such a run is not ours to check.
         /// </summary>
         string? UnknownCharacter);
+
+    private sealed record NeowTaken(string Option, List<string> Relics, List<string> Cards);
 
     public static int Run(string? historyDir, bool verbose)
     {
@@ -315,6 +323,73 @@ public static class HistoryVerifier
             }
         }
 
+        asserts += CheckNeowRelicPayloads(run, runSeed, unlocks, playerUnlocks, failures);
+        return asserts;
+    }
+
+    /// <summary>
+    /// What a capsule or Neow's Bones handed each player, against what the run records them
+    /// receiving at Neow.
+    ///
+    /// A capsule's relics are recorded in pull order, so they are compared in order. Neow's
+    /// Bones' two relics are recorded in the order the player CLAIMED them, which the seed does
+    /// not decide, so they are compared as a pair. Its curse is checked only where the predictor
+    /// promises it, which is the whole point of that check.
+    /// </summary>
+    private static int CheckNeowRelicPayloads(
+        Visited run, ulong runSeed, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks, List<string> failures)
+    {
+        int asserts = 0;
+        var ctx = new NeowContext
+        {
+            PlayerCount = run.Characters.Count,
+            AllCharactersUnlockedBySlot = Enumerable.Range(0, run.Characters.Count)
+                .Select(s => (playerUnlocks is { } pu && s < pu.Count ? pu[s] : unlocks).AllCharactersUnlocked)
+                .ToArray(),
+        };
+
+        for (int p = 0; p < run.NeowPerPlayer.Count && p < run.Characters.Count; p++)
+        {
+            if (run.NeowPerPlayer[p] is not { } took) continue;
+            var got = took.Relics.Skip(1).ToList();
+
+            switch (NeowRelicPayload.ShapeOf(took.Option))
+            {
+                case RelicPayloadShape.Capsule:
+                {
+                    asserts++;
+                    var predicted = NeowRelicPayload.Capsule(runSeed, p, run.Characters, unlocks,
+                                                             playerUnlocks, took.Option)
+                        .Select(r => r.Slug).ToList();
+                    if (!predicted.SequenceEqual(got.Take(predicted.Count), StringComparer.OrdinalIgnoreCase))
+                        failures.Add($"P{p + 1} {took.Option}: game {string.Join("+", got)}, "
+                                     + $"ours {string.Join("+", predicted)}");
+                    break;
+                }
+                case RelicPayloadShape.Bones:
+                {
+                    asserts++;
+                    var bones = NeowRelicPayload.BonesRelics(runSeed, p, ctx);
+                    var predicted = bones.Select(r => r.Slug).ToList();
+                    if (!predicted.All(s => got.Contains(s, StringComparer.OrdinalIgnoreCase)))
+                        failures.Add($"P{p + 1} neows_bones relics: game {string.Join("+", got)}, "
+                                     + $"ours {string.Join("+", predicted)}");
+
+                    var offers = NeowGenerator.PredictAllOffers(runSeed, ctx);
+                    if (NeowRelicPayload.CurseIsCertain(runSeed, p, ctx, bones, offers, run.Characters,
+                                                        unlocks, playerUnlocks))
+                    {
+                        asserts++;
+                        var curse = NeowRelicPayload.BonesCurse(runSeed);
+                        var dealt = took.Cards.FirstOrDefault(c => NeowRelicPayload.FindCurse(c) is not null);
+                        if (dealt is null || NeowRelicPayload.FindCurse(dealt) != curse)
+                            failures.Add($"P{p + 1} neows_bones curse: game {dealt ?? "(none)"}, ours {curse}");
+                    }
+                    break;
+                }
+            }
+        }
         return asserts;
     }
 
@@ -507,6 +582,9 @@ public static class HistoryVerifier
         // so flatten in map order.
         var shopRelics = Enumerable.Range(0, Math.Max(characters.Count, 1))
             .Select(_ => new List<string>()).ToList();
+        var neow = Enumerable.Range(0, Math.Max(characters.Count, 1))
+            .Select(_ => (NeowTaken?)null).ToList();
+        bool firstPoint = true;
 
         if (root.TryGetProperty("map_point_history", out var mph) && mph.ValueKind == JsonValueKind.Array)
         {
@@ -543,6 +621,38 @@ public static class HistoryVerifier
                         }
                     }
 
+                    // The very first point is Neow. What each player chose is the ancient
+                    // choice marked chosen; everything they received there follows it.
+                    if (firstPoint && type == "ancient" && point.TryGetProperty("player_stats", out var neowStats))
+                    {
+                        foreach (var ps in neowStats.EnumerateArray())
+                        {
+                            if (!ps.TryGetProperty("player_id", out var pid)) continue;
+                            if (!slotOf.TryGetValue(pid.ToString(), out int slot) || slot >= neow.Count) continue;
+                            string? option = null;
+                            if (ps.TryGetProperty("ancient_choice", out var ac))
+                                foreach (var a in ac.EnumerateArray())
+                                    if (a.TryGetProperty("was_chosen", out var wc) && wc.ValueKind == JsonValueKind.True
+                                        && a.TryGetProperty("TextKey", out var tk))
+                                        option = tk.GetString()?.ToLowerInvariant();
+                            if (option is null) continue;
+
+                            var relicsGot = new List<string>();
+                            if (ps.TryGetProperty("relic_choices", out var rc))
+                                foreach (var r in rc.EnumerateArray())
+                                    if (r.TryGetProperty("was_picked", out var wp) && wp.ValueKind == JsonValueKind.True)
+                                        relicsGot.Add(Entry(r.TryGetProperty("choice", out var c) ? c.GetString() : null)
+                                            .ToLowerInvariant());
+                            var cardsGot = new List<string>();
+                            if (ps.TryGetProperty("cards_gained", out var cg))
+                                foreach (var c in cg.EnumerateArray())
+                                    cardsGot.Add(Entry(c.TryGetProperty("id", out var cid) ? cid.GetString() : null)
+                                        .ToLowerInvariant());
+                            neow[slot] = new NeowTaken(option, relicsGot, cardsGot);
+                        }
+                    }
+                    firstPoint = false;
+
                     if (isShop && point.TryGetProperty("player_stats", out var stats))
                     {
                         foreach (var ps in stats.EnumerateArray())
@@ -573,7 +683,7 @@ public static class HistoryVerifier
         while (bosses.Count < acts.Count) { bosses.Add(new()); monsters.Add(new()); ancients.Add(null); }
 
         return new Visited(
-            acts, bosses, monsters, ancients, shopRelics, characters,
+            acts, bosses, monsters, ancients, shopRelics, neow, characters,
             root.TryGetProperty("ascension", out var asc) && asc.ValueKind == JsonValueKind.Number ? asc.GetInt32() : 0,
             root.TryGetProperty("seed", out var s) ? s.GetString() ?? "" : "",
             root.TryGetProperty("build_id", out var bd) ? bd.GetString() ?? "" : "",
