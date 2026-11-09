@@ -897,6 +897,12 @@ const INFO = {
         + 'rewards come from. Taking one shifts their fight predictions along, so say what they '
         + 'took and the card panel reads from the right place. It affects only the player who took '
         + 'it, and every other Neow choice is free.',
+      { h: 'The options that hand over relics' },
+      'Small and Large Capsule pull one or two relics from the front of that player’s own bag, '
+        + 'and Neow’s Bones deals two of Neow’s own options plus a curse. Name any of them and the '
+        + 'row grows a field for the relics. The relics are certain whatever anyone else picks. '
+        + 'The curse is not always: it comes off a stream the whole run shares, so it is only '
+        + 'matched on seeds where nobody at the table could move it first.',
     ],
   },
 
@@ -2546,8 +2552,12 @@ function cardPoolFor(slot) {
  * PINS the slot can do this: "for any player" does not say whose stream moved.
  */
 function pinnedPick(slot) {
+  // A capsule row that names its relics settles the pick the same way. Neow's Bones does not:
+  // what it costs the stream depends on the seed, so there is no honest number to set.
   const row = state.neow.find(n =>
-    n.relic && (n.cards?.length ?? 0) > 0
+    n.relic
+    && ((n.cards?.length ?? 0) > 0
+        || ((n.relics?.length ?? 0) > 0 && neowRelicPayload(n.relic)?.kind === 'capsule'))
     && (n.require === 'all' || n.require === `p${slot + 1}`));
   return row ? row.relic : null;
 }
@@ -3338,6 +3348,45 @@ function payloadRow(pay) {
   return row;
 }
 
+/**
+ * "Large Capsule gives -> Vajra, Lantern", under the offer it belongs to, and Neow's Bones' two
+ * relics with its curse. The curse is marked when it is not certain: it comes off a stream the
+ * whole table shares, so a partner's Kaleidoscope or New Leaf taken first would move it.
+ */
+function relicPayloadRow(pay) {
+  const row = el('div', 'slot is-payload');
+  const name = relicNames.get(pay.relic) ?? pay.relic;
+  const label = el('div', 'slot-label');
+  label.appendChild(iconFor(pay.relic, name, 16));
+  label.appendChild(el('span', null, 'gives'));
+  row.appendChild(label);
+
+  const rows = state.neow.filter(n => n.relic === pay.relic);
+  const wanted = new Set(rows.flatMap(n => n.relics ?? []));
+  const wantedCurse = new Set(rows.map(n => n.curse).filter(Boolean));
+
+  const offer = el('div', 'offer');
+  for (const slug of pay.relics) {
+    const relicName = relicNames.get(slug) ?? slug;
+    const p = el('span', 'pill' + (wanted.has(slug) ? ' is-match' : ''));
+    p.appendChild(iconFor(slug, relicName, 20, 'relic'));
+    p.appendChild(el('span', null, relicName));
+    offer.appendChild(withTip(p, slug, relicName, 'relic'));
+  }
+  if (pay.curse) {
+    const curseName = cardNames.get(pay.curse) ?? pay.curse;
+    const p = el('span', 'pill is-card is-curse' + (wantedCurse.has(pay.curse) && pay.curseCertain ? ' is-match' : ''));
+    p.appendChild(iconFor(pay.curse, curseName, 20, 'card'));
+    p.appendChild(el('span', null, pay.curseCertain ? curseName : `${curseName} (if taken first)`));
+    if (!pay.curseCertain)
+      p.title = 'Another option at this table draws from the same stream when it is taken, so '
+        + 'this is the curse only if this player resolves Neow first.';
+    offer.appendChild(withTip(p, pay.curse, curseName, 'card'));
+  }
+  row.appendChild(offer);
+  return row;
+}
+
 /** The three cards the first fight offers each player, and whether a potion comes with them. */
 function firstFightBlock(rewards) {
   if (!rewards?.length) return null;
@@ -3542,6 +3591,9 @@ function renderHit(hit, position = null) {
     // it costs one draw per card to answer.
     for (const pay of (hit.neowPayloads ?? []).filter(x => x.slot === o.slot))
       act1.appendChild(payloadRow(pay));
+    // And what a capsule or Neow's Bones would hand them, for the same reason.
+    for (const pay of (hit.neowRelicPayloads ?? []).filter(x => x.slot === o.slot))
+      act1.appendChild(relicPayloadRow(pay));
   }
   for (const sp of hit.specialized ?? []) {
     const row = el('div', 'slot');
@@ -3680,8 +3732,10 @@ function buildQuery() {
   // reads as one criterion about one player rather than two loose ones.
   for (const n of state.neow) {
     if (!n.relic) continue;
-    const cards = (n.cards ?? []).filter(Boolean);
-    q.append('relic', `${n.relic}:${n.require || 'any'}` + (cards.length ? `:${cards.join(',')}` : ''));
+    // Cards for the card-granting relics; relics, and Bones' curse, for the relic-granting
+    // ones. A row only ever carries one kind, so they share the third field.
+    const named = [...(n.cards ?? []), ...(n.relics ?? []), ...(n.curse ? [n.curse] : [])].filter(Boolean);
+    q.append('relic', `${n.relic}:${n.require || 'any'}` + (named.length ? `:${named.join(',')}` : ''));
   }
 
   // Assumed Neow picks, which shift a player's card rewards without asking anything of the
@@ -3963,6 +4017,46 @@ function neowCardRelic(slug) {
   return (catalog.neowCardRelics ?? []).find(r => r.slug === slug) ?? null;
 }
 
+/** Whether this Neow relic hands over relics this tool can name (a capsule or Neow's Bones). */
+function neowRelicPayload(slug) {
+  return (catalog.neowRelicPayloads ?? []).find(r => r.slug === slug) ?? null;
+}
+
+/**
+ * Relics whose pickup draws from the stream Neow's Bones' curse comes off, so the curse cannot
+ * be promised alongside them. The server refuses the pair; this keeps the picker from offering it.
+ */
+const MOVES_BONES_CURSE = new Set(['kaleidoscope', 'new_leaf', 'neows_bones', 'small_capsule', 'large_capsule']);
+
+/**
+ * What a capsule or Neow's Bones row can name.
+ *
+ * A capsule pulls from its own player's bag: the shared relics plus that character's, so a row
+ * for P1 offers P1's, "any player" the union and "every player" the intersection, the same rule
+ * the card payloads follow. Neow's Bones deals from Neow's own options, the same for everyone.
+ */
+function relicPayloadGroups(crit, kind) {
+  if (kind === 'bones') {
+    const usable = r => r.slug !== 'neows_bones';
+    return [
+      { title: 'Curse branch', items: catalog.neowCurses.filter(allowedHere).filter(usable) },
+      { title: 'Positive pool', items: catalog.neowPositives.filter(allowedHere).filter(usable) },
+      { title: 'Coin-flip relics', items: catalog.neowCoinFlip.filter(allowedHere).filter(usable) },
+    ];
+  }
+
+  const slots = slotsOfRow(crit).filter(i => state.characters[i]);
+  if (!slots.length) return [];
+  const all = catalog.capsuleRelics ?? [];
+  const holds = (i, r) => !r.character || r.character === state.characters[i];
+  const pool = crit.require === 'all'
+    ? all.filter(r => slots.every(i => holds(i, r)))
+    : all.filter(r => slots.some(i => holds(i, r)));
+  return ['Common', 'Uncommon', 'Rare']
+    .map(rarity => ({ title: rarity, items: pool.filter(r => r.rarity === rarity) }))
+    .filter(g => g.items.length);
+}
+
 /**
  * Which lobby slots a Neow row is aimed at. "For any player" is every slot, because the row
  * only has to be true of somebody and any of them could be that somebody.
@@ -4105,7 +4199,7 @@ function renderNeow() {
         { title: 'Positive pool', items: catalog.neowPositives.filter(allowedHere) },
         { title: 'Coin-flip pairs: one of each pair joins the pool', items: catalog.neowCoinFlip.filter(allowedHere) },
       ]);
-      if (picked) { crit.relic = picked.slug; crit.cards = []; renderNeow(); renderCards(); }
+      if (picked) { crit.relic = picked.slug; crit.cards = []; crit.relics = []; crit.curse = ''; renderNeow(); renderCards(); }
     };
 
     const rm = el('button', 'icon-btn', '×');
@@ -4218,6 +4312,92 @@ function renderNeow() {
       crit.cards = [];
     }
 
+    // The options that hand over relics rather than cards: a capsule pulls from that player's
+    // own bag, Neow's Bones deals two of Neow's own options and adds a curse.
+    const relicPayload = chosen && neowRelicPayload(chosen.slug);
+    if (relicPayload) {
+      const groups = relicPayloadGroups(crit, relicPayload.kind);
+      const pool = groups.flatMap(g => g.items);
+      crit.relics = (crit.relics ?? []).filter(slug => pool.some(r => r.slug === slug));
+      crit.curse = crit.curse ?? '';
+
+      const field = el('button', 'relic-field card-field span');
+      field.type = 'button';
+      field.disabled = pool.length === 0;
+
+      if (!crit.relics.length) {
+        const ready = slotsOfRow(crit).every(i => state.characters[i]);
+        field.appendChild(anyIcon(28));
+        field.appendChild(el('span', 'name',
+          pool.length ? 'Any relic'
+          : !ready ? 'Pick a character first'
+          : 'No relic every player could be given'));
+      } else {
+        const list = el('span', 'picks');
+        for (const slug of crit.relics) {
+          const name = relicNames.get(slug) ?? slug;
+          const chip = el('span', 'pick');
+          chip.appendChild(iconFor(slug, name, 20, 'relic'));
+          chip.appendChild(el('span', null, name));
+          list.appendChild(withTip(chip, slug, name, 'relic'));
+        }
+        field.appendChild(list);
+        const clear = el('span', 'clear', '×');
+        clear.dataset.clear = '1';
+        clear.title = 'Clear';
+        field.appendChild(clear);
+      }
+
+      field.onclick = async e => {
+        if (e.target.dataset.clear) { crit.relics = []; renderNeow(); renderCards(); return; }
+        const picked = await openPicker(`${chosen.name} hands over…`, groups, 'relic', {
+          max: relicPayload.relics,
+          initial: crit.relics,
+          ordered: false,
+          unique: true,
+          itemFor: slug => pool.find(r => r.slug === slug),
+          disableAt: r => relicPayload.kind === 'bones' && !!crit.curse && MOVES_BONES_CURSE.has(r.slug),
+          hint: relicPayload.kind === 'bones'
+            ? 'Neow’s Bones hands over two of Neow’s own options. Name one or both. Close this '
+              + 'when you have the ones you want.'
+            : relicPayload.relics === 1
+              ? 'The relic it pulls from the front of that player’s own bag. Close this when you have it.'
+              : 'Both relics it pulls from the front of that player’s own bag, in either order. '
+                + 'Name one or both. Close this when you have the ones you want.',
+        });
+        if (picked) { crit.relics = picked; renderNeow(); renderCards(); }
+      };
+      row.appendChild(field);
+
+      if (relicPayload.kind === 'bones') {
+        const curses = dropdown(
+          [{ label: 'Any curse', value: '' },
+           ...(catalog.bonesCurses ?? []).map(c => ({ label: c.name, value: c.slug }))],
+          crit.curse,
+          v => {
+            crit.curse = v;
+            // A relic that moves the curse cannot be named alongside one.
+            if (v) crit.relics = crit.relics.filter(s => !MOVES_BONES_CURSE.has(s));
+            renderNeow();
+          });
+        curses.classList.add('span');
+        row.appendChild(curses);
+
+        if (crit.curse) {
+          const why = el('div', 'branch span');
+          why.append(
+            el('span', 'branch-tag', 'Curse'),
+            el('span', null, 'only matched where nobody at the table can move it first. It comes '
+              + 'off a stream the whole run shares, and a Kaleidoscope, New Leaf or capsule taken '
+              + 'by anyone would draw from it too.'));
+          row.appendChild(why);
+        }
+      }
+    } else if (chosen) {
+      crit.relics = [];
+      crit.curse = '';
+    }
+
     const note = chosen && BRANCH_NOTE[chosen.group];
     if (note) {
       const branch = el('div', 'branch span' + (chosen.group === 'curse' ? ' is-curse' : ''));
@@ -4260,7 +4440,7 @@ function renderAct1() {
 }
 
 $('#addNeow').onclick = () => {
-  state.neow.push({ relic: '', require: 'any', cards: [] });
+  state.neow.push({ relic: '', require: 'any', cards: [], relics: [], curse: '' });
   renderNeow();
 };
 
@@ -4398,6 +4578,11 @@ $('#inspectSeed').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault()
   // belongs to no character, so it needs registering too or All Star's picker falls back to
   // monograms for every card while the server was serving art all along.
   for (const c of catalog.colorlessPool ?? []) { note(c, 'card'); cardNames.set(c.slug, c.name); }
+
+  // What a capsule can pull and the curses Neow's Bones can add, which no list above covers:
+  // most capsule relics are in the chest pool, but a character's own are not.
+  for (const r of catalog.capsuleRelics ?? []) { note(r); relicNames.set(r.slug, r.name); }
+  for (const c of catalog.bonesCurses ?? []) { note(c, 'card'); cardNames.set(c.slug, c.name); }
 
   for (const c of catalog.characters) note(c, 'character');
 

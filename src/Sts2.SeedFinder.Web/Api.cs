@@ -139,7 +139,8 @@ public sealed record CatalogDto(
     CardPoolDto[] CardPools, ShopRelicDto[] ShopRelics, ChestRelicDto[] ChestRelics,
     string[] AncientArtSlugs, string[] EventArtSlugs, string[] BossArtSlugs,
     NeowCardRelicDto[] NeowCardRelics, ModifierDto[] Modifiers, int[][] RareFights,
-    CardDto[] ColorlessPool);
+    CardDto[] ColorlessPool, NeowRelicPayloadKindDto[] NeowRelicPayloads,
+    CapsuleRelicDto[] CapsuleRelics, CardDto[] BonesCurses);
 
 /// <summary>
 /// What the local game install knows about this player, for the "sync from my save" button.
@@ -327,11 +328,39 @@ public sealed record ChestDto(int Act, int Floor, ChestSlotDto[] Slots);
 /// </remarks>
 public sealed record NeowPayloadDto(int Slot, string Relic, string[] Cards);
 
+/// <summary>
+/// What a Small or Large Capsule, or Neow's Bones, would hand this player.
+/// </summary>
+/// <param name="Relics">Relic slugs, in pull order for a capsule and list order for Bones.</param>
+/// <param name="Curse">Neow's Bones' curse as a card slug, or null for a capsule.</param>
+/// <param name="CurseCertain">
+/// False when someone at the table could draw from the same run-level stream first (a
+/// Kaleidoscope, a New Leaf, a capsule pulling War Paint or Whetstone), so the curse shown is
+/// only what it would be if this player resolved Neow first.
+/// </param>
+public sealed record NeowRelicPayloadDto(
+    int Slot, string Relic, string[] Relics, string? Curse, bool CurseCertain);
+
+/// <summary>
+/// A Neow option whose RELIC payload can be named, and how many relics it hands over.
+/// <paramref name="Kind"/> is <c>capsule</c> (pulled from the player's own bag) or <c>bones</c>
+/// (dealt from Neow's own options, plus a curse).
+/// </summary>
+public sealed record NeowRelicPayloadKindDto(string Slug, string Kind, int Relics);
+
+/// <summary>
+/// A relic a capsule can pull: any Common, Uncommon or Rare in a player's bag.
+/// <paramref name="Character"/> is the character whose own pool holds it, or null when shared,
+/// since a capsule only ever pulls from its own player's bag.
+/// </summary>
+public sealed record CapsuleRelicDto(
+    string Slug, string Name, string Rarity, string? Character, bool HasArt, string? Description);
+
 public sealed record SeedResultDto(
     string Seed, NeowOfferDto[] Neow, ActDto[] Acts, AncientOfferDto[] AncientOffers,
     FirstFightDto[] FirstFight, ShopSequenceDto[] Shops, ChestDto[] Chests,
     NeowPayloadDto[] NeowPayloads, SpecializedDto[] Specialized, AllStarDto[] AllStar,
-    DraftDto[] Draft);
+    DraftDto[] Draft, NeowRelicPayloadDto[] NeowRelicPayloads);
 
 /// <summary>
 /// What one player starts five copies of, under the Specialized modifier. Empty unless the
@@ -560,6 +589,16 @@ public static class Query
                 ? ParseRequire(parts[1], players)
                 : (requirement, slots);
 
+            // A capsule or Neow's Bones names RELICS in the same place, and Bones a curse too:
+            // relic=large_capsule:p1:vajra,lantern or relic=neows_bones:any:golden_pearl,doubt.
+            if (parts.Length == 3 && parts[2].Length > 0 && NeowRelicPayload.IsPredictable(found.Slug))
+            {
+                var (relics, curse) = ParsePayloadRelics(parts[2], found);
+                neowWanted.Add(new NeowCriterion(found, rowRule, rowSlots, where,
+                                                 PayloadRelics: relics, PayloadCurse: curse));
+                continue;
+            }
+
             // A third field names the cards the relic itself hands over, comma separated:
             // relic=arcane_scroll:p1:corruption. Resolved against the pools of the players the
             // row is aimed at, since a card slug only means something inside a character's pool.
@@ -672,6 +711,31 @@ public static class Query
     /// a row for P1 resolves against P1's character, and a row for "any player" against
     /// anybody's. Resolving here rather than in Core keeps slugs a wire concern.
     /// </summary>
+    /// <summary>
+    /// The relics, and for Neow's Bones the curse, a capsule or Bones row names. Whether this
+    /// lobby's bags can produce them is Validate's question, asked with the unlock states.
+    /// </summary>
+    private static (IReadOnlyList<string> Relics, string? Curse) ParsePayloadRelics(string csv, NeowRelic relic)
+    {
+        bool bones = NeowRelicPayload.ShapeOf(relic.Slug) == RelicPayloadShape.Bones;
+        var relics = new List<string>();
+        string? curse = null;
+        foreach (var name in csv.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (bones && NeowRelicPayload.FindCurse(name) is { } c)
+            {
+                if (curse is not null) throw new ArgumentException("Neow's Bones adds one curse.");
+                curse = c;
+                continue;
+            }
+            relics.Add((bones ? NeowRelics.Find(name)?.Slug : NeowRelicPayload.FindCapsuleRelic(name)?.Slug)
+                ?? throw new ArgumentException(bones
+                    ? $"'{name}' is neither a Neow relic nor a curse Neow's Bones can add."
+                    : $"'{name}' is not a relic a capsule can pull."));
+        }
+        return (relics, curse);
+    }
+
     private static IReadOnlyList<string> ParsePayloadCards(
         string csv, NeowRelic relic, SlotRequirement rule, IReadOnlyList<int> slots,
         IReadOnlyList<Character> chars, int players)
@@ -1201,7 +1265,9 @@ public static class Predictions
                 // still left empty here: with nobody picked the panel has no player rows to
                 // put it against, and the lobby is not a described run yet.
                 Array.Empty<AllStarDto>(),
-                Array.Empty<DraftDto>());
+                Array.Empty<DraftDto>(),
+                // A capsule pulls from the character's own bag, so this too needs the party.
+                Array.Empty<NeowRelicPayloadDto>());
 
         if (characters.Count != players)
             throw new ArgumentException(
@@ -1271,6 +1337,34 @@ public static class Predictions
                     runSeed, slot, characters[slot], relic.Slug, Own(slot), isMultiplayer, ascension);
                 if (cards.Count > 0)
                     payloads.Add(new NeowPayloadDto(slot, relic.Slug, cards.Select(c => c.Slug).ToArray()));
+            }
+        }
+
+        // The same for the options that hand over relics. Each reads only its own player's bag
+        // and Rewards stream, so it is exact whatever anyone else picks; only Bones' curse is
+        // shared, and it says so.
+        var relicPayloads = new List<NeowRelicPayloadDto>();
+        for (int slot = 0; slot < players && slot < offers.Length; slot++)
+        {
+            foreach (var relic in offers[slot].All)
+            {
+                switch (NeowRelicPayload.ShapeOf(relic.Slug))
+                {
+                    case RelicPayloadShape.Capsule:
+                        relicPayloads.Add(new NeowRelicPayloadDto(slot, relic.Slug,
+                            NeowRelicPayload.Capsule(runSeed, slot, characters, unlocks, playerUnlocks, relic.Slug)
+                                .Select(r => r.Slug).ToArray(),
+                            null, true));
+                        break;
+                    case RelicPayloadShape.Bones:
+                        var bones = NeowRelicPayload.BonesRelics(runSeed, slot, ctx);
+                        relicPayloads.Add(new NeowRelicPayloadDto(slot, relic.Slug,
+                            bones.Select(r => r.Slug).ToArray(),
+                            CardCatalog.Slug(NeowRelicPayload.BonesCurse(runSeed)),
+                            NeowRelicPayload.CurseIsCertain(runSeed, slot, ctx, bones, offers,
+                                                            characters, unlocks, playerUnlocks)));
+                        break;
+                }
             }
         }
 
@@ -1371,7 +1465,8 @@ public static class Predictions
 
         return new SeedResultDto(
             seed, neow, acts, ancientOffers.ToArray(), firstFight, shops, chests,
-            payloads.ToArray(), specialized.ToArray(), allStar.ToArray(), draft.ToArray());
+            payloads.ToArray(), specialized.ToArray(), allStar.ToArray(), draft.ToArray(),
+            relicPayloads.ToArray());
     }
 }
 

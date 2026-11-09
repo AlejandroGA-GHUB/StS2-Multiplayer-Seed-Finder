@@ -193,6 +193,37 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
             card.Mode == CardMode.MultiplayerOnly);
     }).ToArray();
 
+    // What a capsule can pull and what Neow's Bones can add. A capsule reads its own player's
+    // bag, which is the shared pool plus that character's, so each relic says whose it is.
+    var capsuleRelics = NeowRelicPayload.CapsuleAll.Select(r =>
+    {
+        var text = assets.TryGetText(r.Slug);
+        var owner = Enum.GetValues<Character>()
+            .FirstOrDefault(c => RelicPoolData.RelicsFor(c).Any(x => x.Slug == r.Slug), (Character)(-1));
+        return new CapsuleRelicDto(
+            r.Slug,
+            text?.Title ?? NeowRelicPayload.Display(r.Slug),
+            r.Rarity,
+            (int)owner < 0 ? null : owner.ToString(),
+            assets.AvailableSlugs.Contains(r.Slug),
+            text?.Description);
+    }).ToArray();
+
+    var bonesCurses = NeowRelicPayload.BonesCursePool.Select(name =>
+    {
+        var slug = CardCatalog.Slug(name);
+        var text = assets.TryGetCardText(slug);
+        return new CardDto(slug, text?.Title ?? CardCatalog.Display(name), "Curse",
+            assets.AvailableCardSlugs.Contains(slug), text?.Description, false);
+    }).ToArray();
+
+    var neowRelicPayloads = NeowRelicPayload.Predictable
+        .Select(s => new NeowRelicPayloadKindDto(
+            s,
+            NeowRelicPayload.ShapeOf(s) == RelicPayloadShape.Bones ? "bones" : "capsule",
+            NeowRelicPayload.RelicCount(s)))
+        .ToArray();
+
     var cardPools = CardCatalog.Characters.Select(c => new CardPoolDto(
         c.ToString(),
         CardCatalog.Offerable(c).Select(card =>
@@ -305,7 +336,10 @@ app.MapGet("/api/catalog", (IGameAssetProvider assets) =>
         // Which fights can offer a Rare, per ascension, from the same pity arithmetic the search
         // validates against. The picker greys rares by this rather than keeping its own rule.
         Enumerable.Range(0, AscensionLevels.Max + 1).Select(CardRewardGenerator.RareFights).ToArray(),
-        colorlessPool), json);
+        colorlessPool,
+        neowRelicPayloads,
+        capsuleRelics,
+        bonesCurses), json);
 });
 
 // ---- The player's own profile --------------------------------------------------------------
