@@ -68,6 +68,7 @@ internal static class Program
         failures += CheckShopSlotIsUndrained();
         failures += CheckFirstFightReward();
         failures += CheckNeowCardPayload();
+        failures += CheckNeowRelicPayload();
         failures += CheckCurseFastPath();
 
         Console.WriteLine();
@@ -937,6 +938,122 @@ internal static class Program
                   + "5 characters x 80 seeds x 2 slots matched, and both scroll card counts "
                   + "agree with the game's own CanonicalVars"
                 : string.Join(" | ", bad));
+    }
+
+    /// <summary>
+    /// The capsules' and Neow's Bones' draws, against the GAME's RelicFactory.RollRarity,
+    /// Rng.Shuffle and Rng.NextItem, and Bones' curse list against the game's curse pool.
+    ///
+    /// What this cannot reach is the relic deques themselves and Neow's list of options, which
+    /// both need a live RunState. Those are what <c>--verify-history</c> checks, against relics
+    /// finished runs record being handed.
+    /// </summary>
+    private static int CheckNeowRelicPayload()
+    {
+        const string name = "Neow relic payloads (capsules, Neow's Bones) vs game Rng";
+        var bad = new List<string>();
+        var rngType = _sts2.GetType("MegaCrit.Sts2.Core.Random.Rng", throwOnError: true)!;
+        var roll = _sts2.GetTypes().FirstOrDefault(t => t.Name == "RelicFactory")
+            ?.GetMethod("RollRarity", BindingFlags.Public | BindingFlags.Static, new[] { rngType });
+        var shuffle = rngType.GetMethods().FirstOrDefault(m => m.Name == "Shuffle" && m.IsGenericMethod)
+            ?.MakeGenericMethod(typeof(string));
+        var nextItem = rngType.GetMethods()
+            .FirstOrDefault(m => m.Name == "NextItem" && m.IsGenericMethod && m.GetParameters().Length == 1)
+            ?.MakeGenericMethod(typeof(string));
+        if (roll is null || shuffle is null || nextItem is null)
+            return Check(name, false, "could not find RollRarity(Rng), Rng.Shuffle<T> or Rng.NextItem<T>");
+
+        // 1. Bones' curse list: the curse pool's cards, minus those that refuse to be generated.
+        var pool = CursePoolTypeNames();
+        var generatable = pool.Where(n => !RefusesGeneration(n)).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+        if (!generatable.SequenceEqual(NeowRelicPayload.BonesCursePool))
+            bad.Add($"curse list: game {string.Join(",", generatable)}, "
+                    + $"ours {string.Join(",", NeowRelicPayload.BonesCursePool)}");
+
+        var party = new[] { Sts2.SeedFinder.Core.Acts.Character.Ironclad, Sts2.SeedFinder.Core.Acts.Character.Silent };
+        for (ulong seed = 0; seed < 500 && bad.Count < 5; seed++)
+        {
+            ulong runSeed = seed * 6364136223846793005uL + 1442695040888963407uL;
+
+            for (int slot = 0; slot < 2; slot++)
+            {
+                // 2. Capsule rarity rolls: two of them, for Large Capsule.
+                var ours = Sts2.SeedFinder.Core.Cards.CardRewardGenerator.RewardsRng(runSeed, slot);
+                var theirs = NewGameRng(unchecked(runSeed + (ulong)slot), "rewards");
+                for (int i = 0; i < 2; i++)
+                {
+                    string a = NeowRelicPayload.RollRarity(ours);
+                    string b = roll.Invoke(null, new[] { theirs })!.ToString()!;
+                    if (a != b) bad.Add($"seed {seed} P{slot + 1} roll {i + 1}: game {b}, ours {a}");
+                }
+
+                // 3. The Bones shuffle, through the game's own Rng.Shuffle.
+                foreach (int players in new[] { 1, 2 })
+                {
+                    if (slot >= players) continue;
+                    var ctx = new NeowContext { PlayerCount = players };
+                    var list = NeowRelicPayload.BonesList(slot, ctx).Select(r => r.Slug).ToList();
+                    shuffle.Invoke(NewGameRng(unchecked(runSeed + (ulong)slot), "rewards"), new object[] { list });
+                    var mine = NeowRelicPayload.BonesRelics(runSeed, slot, ctx).Select(r => r.Slug).ToList();
+                    if (!mine.SequenceEqual(list.Take(2)))
+                        bad.Add($"seed {seed} {players}P P{slot + 1} bones: game {string.Join("+", list.Take(2))}, "
+                                + $"ours {string.Join("+", mine)}");
+                }
+            }
+
+            // 4. The curse: one NextItem off the run's Niche stream.
+            var curse = (string)nextItem.Invoke(NewGameRng(runSeed, "niche"),
+                                                new object[] { NeowRelicPayload.BonesCursePool })!;
+            if (curse != NeowRelicPayload.BonesCurse(runSeed))
+                bad.Add($"seed {seed} curse: game {curse}, ours {NeowRelicPayload.BonesCurse(runSeed)}");
+        }
+        _ = party;
+
+        return Check(name, bad.Count == 0,
+            bad.Count == 0
+                ? $"500 seeds x 2 slots: capsule rarity rolls, the Bones shuffle (1P and 2P) and the "
+                  + $"curse pick all matched; curse list matches the game's {generatable.Length} of {pool.Count}"
+                : string.Join(" | ", bad));
+    }
+
+    /// <summary>
+    /// The card types <c>CurseCardPool.GenerateAllCards</c> builds, read off its IL: every
+    /// <c>ModelDb.Card&lt;T&gt;()</c> call is a <c>call</c> to a generic method instance whose
+    /// type argument is the card.
+    /// </summary>
+    private static List<string> CursePoolTypeNames()
+    {
+        var t = _sts2.GetTypes().First(x => x.Name == "CurseCardPool");
+        var m = t.GetMethod("GenerateAllCards", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var il = m.GetMethodBody()!.GetILAsByteArray()!;
+        var names = new List<string>();
+        for (int i = 0; i + 4 < il.Length; i++)
+        {
+            if (il[i] != 0x28) continue; // call <token>
+            try
+            {
+                var target = t.Module.ResolveMethod(BitConverter.ToInt32(il, i + 1));
+                if (target is { Name: "Card", IsGenericMethod: true })
+                {
+                    names.Add(target.GetGenericArguments()[0].Name);
+                    i += 4;
+                }
+            }
+            catch (ArgumentException) { }
+        }
+        return names;
+    }
+
+    /// <summary>Whether this card type overrides CanBeGeneratedByModifiers to a constant false.</summary>
+    private static bool RefusesGeneration(string typeName)
+    {
+        var t = _sts2.GetTypes().First(x => x.Name == typeName && x.Namespace!.EndsWith(".Cards"));
+        var p = t.GetProperty("CanBeGeneratedByModifiers",
+                              BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+        var il = p?.GetGetMethod()?.GetMethodBody()?.GetILAsByteArray();
+        if (il is null) return false;
+        if (il.SequenceEqual(new byte[] { 0x16, 0x2A })) return true; // ldc.i4.0; ret
+        throw new InvalidOperationException($"{typeName}.CanBeGeneratedByModifiers is no longer a constant; re-read it");
     }
 
     private static int CheckDoubleBoss()
