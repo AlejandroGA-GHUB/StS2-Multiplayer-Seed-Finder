@@ -159,6 +159,7 @@ internal static class Program
     private static string Payload(string seed, int slot, NeowRelic relic, Options opts)
     {
         if (opts.Characters.Count != opts.PlayerCount) return "";
+        if (NeowRelicPayload.IsPredictable(relic.Slug)) return RelicPayload(seed, slot, relic, opts);
         if (!NeowCardPayload.IsPredictable(relic.Slug)) return "";
 
         var cards = NeowCardPayload.Generate(
@@ -179,6 +180,30 @@ internal static class Program
             bundles.Add(string.Join(", ", names.GetRange(i, NeowCardPayload.BundleSize)));
 
         return "  -> [" + string.Join("] or [", bundles) + "]";
+    }
+
+    /// <summary>
+    /// "  -> Vajra, Lantern" for a capsule, and Neow's Bones' two relics plus its curse. The curse
+    /// is printed only where it is certain: a run-level draw that a partner's Kaleidoscope or New
+    /// Leaf, taken first, would move.
+    /// </summary>
+    private static string RelicPayload(string seed, int slot, NeowRelic relic, Options opts)
+    {
+        var runSeed = SeedCodec.RunSeed(seed);
+        var unlocks = new UnlockState();
+        if (NeowRelicPayload.ShapeOf(relic.Slug) == RelicPayloadShape.Capsule)
+            return "  -> " + string.Join(", ", NeowRelicPayload.Capsule(
+                runSeed, slot, opts.Characters, unlocks, null, relic.Slug)
+                .Select(r => NeowRelicPayload.Display(r.Slug)));
+
+        var ctx = ContextOf(opts);
+        var bones = NeowRelicPayload.BonesRelics(runSeed, slot, ctx);
+        var text = "  -> " + string.Join(", ", bones.Select(r => r.Name));
+        var curse = NeowRelicPayload.BonesCurse(runSeed);
+        return NeowRelicPayload.CurseIsCertain(runSeed, slot, ctx, bones,
+                   NeowGenerator.PredictAllOffers(runSeed, ctx), opts.Characters, unlocks, null)
+            ? $"{text}, curse {curse}"
+            : $"{text}, curse {curse} unless someone draws from Niche first";
     }
 
     /// <summary>
@@ -470,6 +495,35 @@ internal static class Program
         return resolved;
     }
 
+    /// <summary>
+    /// Resolve the names on a --relic argument for a capsule or Neow's Bones: relics, and for
+    /// Neow's Bones a curse. Relics resolve against everything the option could ever hand over;
+    /// whether THIS lobby's bags can is <c>Validate</c>'s question.
+    /// </summary>
+    private static (IReadOnlyList<string> Relics, string? Curse) ResolvePayloadRelics(NeowRelic relic, string names)
+    {
+        var relics = new List<string>();
+        string? curse = null;
+        bool bones = NeowRelicPayload.ShapeOf(relic.Slug) == RelicPayloadShape.Bones;
+        foreach (var name in names.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (bones && NeowRelicPayload.FindCurse(name) is { } c)
+            {
+                if (curse is not null) throw new ArgumentException("Neow's Bones adds one curse; name at most one.");
+                curse = c;
+                continue;
+            }
+
+            var slug = bones
+                ? NeowRelics.Find(name)?.Slug
+                : NeowRelicPayload.FindCapsuleRelic(name)?.Slug;
+            relics.Add(slug ?? throw new ArgumentException(bones
+                ? $"'{name}' is neither a Neow relic nor a curse Neow's Bones can add."
+                : $"'{name}' is not a Common, Uncommon or Rare relic a capsule can pull."));
+        }
+        return (relics, curse);
+    }
+
     private static int Search(Options opts)
     {
         // Keep the original default: a bare invocation still hunts Silken Tress. But once any
@@ -500,7 +554,16 @@ internal static class Program
                 ? Options.ParseRequireValue(parts[1], opts.PlayerCount)
                 : (opts.Requirement, opts.RequiredSlots);
 
-            var payload = parts.Length == 3 && parts[2].Length > 0
+            bool named = parts.Length == 3 && parts[2].Length > 0;
+            if (named && NeowRelicPayload.IsPredictable(found.Slug))
+            {
+                var (relics, curse) = ResolvePayloadRelics(found, parts[2]);
+                neowWanted.Add(new NeowCriterion(found, rule, slots, opts.Where,
+                                                 PayloadRelics: relics, PayloadCurse: curse));
+                continue;
+            }
+
+            var payload = named
                 ? ResolvePayloadCards(found, parts[2], rule, slots, opts)
                 : null;
 
@@ -729,7 +792,7 @@ internal static class Program
             sts2seed --verify [<run.save>] [--progress <progress.save>]
 
           OPTIONS
-            --relic <name>[:<who>[:<card>,...]]
+            --relic <name>[:<who>[:<card or relic>,...]]
                                Neow relic to look for. Repeatable, and each one may carry its
                                own <who> (any | all | p1,p2,...) so different players can be
                                asked for different relics. Without one it uses --require.
@@ -738,6 +801,11 @@ internal static class Program
                                Arcane Scroll, Hefty Tablet, Massive Scroll, Scroll Boxes and
                                Lead Paperweight may also name the cards they hand over, e.g.
                                lead_paperweight:p1:prowess (one of its two colourless cards).
+                               Small and Large Capsule name the relics they pull, e.g.
+                               large_capsule:p1:vajra,lantern, and Neow's Bones its two
+                               relics and its curse, e.g. neows_bones:p2:golden_pearl,doubt.
+                               Its curse is only matched where no other pick at the table
+                               can move it first.
                                Doing so says that player TAKES it, so their fight rewards are
                                read that relic's draws along.
             --neow-pick <who>:<relic>

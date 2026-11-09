@@ -68,16 +68,29 @@ public enum OfferSlot
 /// player: "somebody is offered Arcane Scroll, and somebody's scroll gives Corruption" is a
 /// weaker thing than asking both of the SAME player, and the weaker one is not what anyone
 /// means. Cards are unordered — Hefty Tablet shows three at once and you keep one.
+///
+/// <paramref name="PayloadRelics"/> and <paramref name="PayloadCurse"/> are the same idea for
+/// the options that hand over RELICS (<see cref="NeowRelicPayload"/>): what a Small or Large
+/// Capsule pulls from that player's bag, the two relics Neow's Bones deals, and the curse it
+/// adds. Relics are slugs, unordered; the curse is a card type name.
 /// </summary>
 public sealed record NeowCriterion(
     NeowRelic Relic,
     SlotRequirement Requirement = SlotRequirement.Any,
     IReadOnlyList<int>? RequiredSlots = null,
     OfferSlot Where = OfferSlot.Anywhere,
-    IReadOnlyList<string>? PayloadCards = null)
+    IReadOnlyList<string>? PayloadCards = null,
+    IReadOnlyList<string>? PayloadRelics = null,
+    string? PayloadCurse = null)
 {
     /// <summary>Cards the relic's payload must include. Never null; empty is the normal case.</summary>
     public IReadOnlyList<string> Cards => PayloadCards ?? Array.Empty<string>();
+
+    /// <summary>Relics the payload must include, as slugs. Never null.</summary>
+    public IReadOnlyList<string> Relics => PayloadRelics ?? Array.Empty<string>();
+
+    /// <summary>Whether this criterion asks about anything the relic hands over.</summary>
+    public bool HasPayload => Cards.Count > 0 || Relics.Count > 0 || PayloadCurse is not null;
 
     /// <summary>Slots this criterion has to hold for. Empty for <see cref="SlotRequirement.Any"/>.</summary>
     public IReadOnlyList<int> ResolveSlots(int playerCount) => Requirement switch
@@ -89,9 +102,13 @@ public sealed record NeowCriterion(
 
     public override string ToString()
     {
-        string what = Cards.Count == 0
+        var given = Cards.Select(CardCatalog.Display)
+            .Concat(Relics.Select(NeowRelicPayload.Display))
+            .Concat(PayloadCurse is { } curse ? [curse] : [])
+            .ToList();
+        string what = given.Count == 0
             ? Relic.Name
-            : $"{Relic.Name} giving {string.Join(" and ", Cards.Select(CardCatalog.Display))}";
+            : $"{Relic.Name} giving {string.Join(" and ", given)}";
 
         return Requirement switch
         {
@@ -481,7 +498,7 @@ public sealed record SearchCriteria
 
         foreach (var want in NeowCriteria)
         {
-            if (want.Cards.Count == 0 || want.Requirement == SlotRequirement.Any) continue;
+            if (!want.HasPayload || want.Requirement == SlotRequirement.Any) continue;
             foreach (var slot in want.ResolveSlots(PlayerCount)) Set(slot, want.Relic.Slug);
         }
 
@@ -535,7 +552,7 @@ public sealed record SearchCriteria
     /// character pool, but they still need the party SIZE, which the context carries.
     /// </summary>
     public bool NeedsCharacters => NeedsRun || Cards.Count > 0 || ShopRelicsWanted.Count > 0
-                                   || NeedsNeowPayloads || NeowPicks.Count > 0
+                                   || NeedsNeowPayloads || NeedsNeowRelicPayloads || NeowPicks.Count > 0
                                    || Specialized.Count > 0 || Draft.Count > 0;
 
     /// <summary>
@@ -543,6 +560,13 @@ public sealed record SearchCriteria
     /// character's own rare pool, so they need the party even though they need no run.
     /// </summary>
     public bool NeedsNeowPayloads => NeowCriteria.Any(n => n.Cards.Count > 0);
+
+    /// <summary>
+    /// Whether any Neow criterion asks what a capsule or Neow's Bones hands over. Those read
+    /// the player's own relic bag, which is built from the party.
+    /// </summary>
+    public bool NeedsNeowRelicPayloads =>
+        NeowCriteria.Any(n => n.Relics.Count > 0 || n.PayloadCurse is not null);
 
     /// <summary>Party in lobby order. Required whenever <see cref="NeedsCharacters"/>.</summary>
     public IReadOnlyList<Character> Characters { get; init; } = Array.Empty<Character>();
@@ -1455,8 +1479,83 @@ public static class SeedSearcher
         }
     }
 
+    private static void ValidateNeowRelicPayloads(SearchCriteria c)
+    {
+        foreach (var want in c.NeowCriteria)
+        {
+            if (want.Relics.Count == 0 && want.PayloadCurse is null) continue;
+
+            var shape = NeowRelicPayload.ShapeOf(want.Relic.Slug);
+            if (shape == RelicPayloadShape.None)
+                throw new ArgumentException(
+                    $"{want.Relic.Name} does not hand out relics this tool can name. Only Small "
+                    + "Capsule, Large Capsule and Neow's Bones do.");
+
+            if (want.PayloadCurse is { } curse)
+            {
+                if (shape != RelicPayloadShape.Bones)
+                    throw new ArgumentException($"{want.Relic.Name} adds no curse; only Neow's Bones does.");
+                if (NeowRelicPayload.FindCurse(curse) is null)
+                    throw new ArgumentException(
+                        $"Neow's Bones never adds {curse}. It picks from "
+                        + string.Join(", ", NeowRelicPayload.BonesCursePool) + ".");
+            }
+
+            // The curse is only promised when the Bones relics themselves cannot draw from Niche
+            // first, so asking for one of those AND the curse can never be satisfied.
+            if (want.PayloadCurse is not null
+                && want.Relics.FirstOrDefault(NeowRelicPayload.MovesCurse) is { } mover)
+                throw new ArgumentException(
+                    $"{NeowRelicPayload.Display(mover)} can draw from the same stream as the curse when "
+                    + "it is claimed, so the curse cannot be promised alongside it. Ask for one or the other.");
+
+            int capacity = NeowRelicPayload.RelicCount(want.Relic.Slug);
+            if (want.Relics.Count > capacity)
+                throw new ArgumentException(
+                    $"{want.Relic.Name} hands out {capacity} relic{(capacity == 1 ? "" : "s")}, so it "
+                    + $"cannot give all {want.Relics.Count} of those.");
+            if (want.Relics.Distinct().Count() < want.Relics.Count)
+                throw new ArgumentException($"{want.Relic.Name} cannot hand out the same relic twice.");
+
+            // Neow's Bones moves this player's Rewards stream by its shuffle AND by whatever the
+            // two relics draw when they are claimed, which differs seed to seed. A fight reward
+            // read past it would be read from the wrong place.
+            if (shape == RelicPayloadShape.Bones && want.Requirement != SlotRequirement.Any)
+                foreach (var slot in want.ResolveSlots(c.PlayerCount))
+                    if (c.Cards.Any(x => x.Slot == slot || x.Slot < 0))
+                        throw new ArgumentException(
+                            $"Neow's Bones shifts P{slot + 1}'s card rewards by an amount that depends "
+                            + "on the seed, so it cannot be combined with a card reward for that player.");
+
+            var slots = want.Requirement == SlotRequirement.Any
+                ? Enumerable.Range(0, c.PlayerCount).ToList()
+                : want.ResolveSlots(c.PlayerCount).ToList();
+            bool everySlot = want.Requirement != SlotRequirement.Any;
+
+            foreach (var relic in want.Relics)
+            {
+                bool Holds(int s) => s < c.Characters.Count && (shape == RelicPayloadShape.Capsule
+                    ? NeowRelicPayload.CapsuleOfferable(c.Characters, c.Unlocks, c.PlayerUnlocks, s)
+                        .Any(r => r.Slug == relic)
+                    : NeowRelicPayload.BonesList(s, c.Context).Any(r => r.Slug == relic));
+
+                bool reachable = everySlot ? slots.Count > 0 && slots.All(Holds) : slots.Any(Holds);
+                if (reachable) continue;
+
+                throw new ArgumentException(shape == RelicPayloadShape.Capsule
+                    ? $"A capsule pulls Common, Uncommon and Rare relics from that player's own bag, "
+                      + $"and {ShopRelics.TitleCase(relic)} is not in "
+                      + (everySlot ? "every named player's" : "anyone's") + " bag in this lobby."
+                    : $"Neow's Bones deals from Neow's own options, and {NeowRelics.Find(relic)?.Name ?? relic} "
+                      + "is not one this lobby can be dealt.");
+            }
+        }
+    }
+
     private static void ValidateNeowPayloads(SearchCriteria c)
     {
+        ValidateNeowRelicPayloads(c);
+
         foreach (var want in c.NeowCriteria)
         {
             if (want.Cards.Count == 0) continue;
@@ -1596,7 +1695,7 @@ public static class SeedSearcher
         // pick naming a different one is two contradictory claims about the same stream.
         foreach (var want in c.NeowCriteria)
         {
-            if (want.Cards.Count == 0 || want.Requirement == SlotRequirement.Any) continue;
+            if (!want.HasPayload || want.Requirement == SlotRequirement.Any) continue;
             foreach (var slot in want.ResolveSlots(c.PlayerCount))
                 foreach (var pick in c.NeowPicks)
                     if (pick.Slot == slot && !string.Equals(pick.RelicSlug, want.Relic.Slug, StringComparison.Ordinal))

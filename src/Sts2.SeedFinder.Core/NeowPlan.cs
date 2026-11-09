@@ -34,7 +34,7 @@ public sealed class NeowPlan
 {
     private readonly record struct Item(
         NeowRelic Relic, OfferSlot Where, int CurseIndex, bool AnySlot, IReadOnlyList<int> Slots,
-        int[][]? WantedBySlot);
+        int[][]? WantedBySlot, PoolRelic[]? WantedCapsule, string[]? WantedBones, string? WantedCurse);
 
     private readonly NeowContext _context;
     private readonly int _playerCount;
@@ -53,10 +53,21 @@ public sealed class NeowPlan
     /// </summary>
     private readonly int _ascension;
 
+    /// <summary>
+    /// The run's and each player's unlock state, as the relic bags are built from them. A
+    /// capsule pulls from a bag whose shuffle position depends on every bag before it, so it
+    /// needs the whole lobby's, not just its own player's.
+    /// </summary>
+    private readonly UnlockState _runUnlocks;
+    private readonly IReadOnlyList<UnlockState>? _playerUnlocks;
+
     private NeowPlan(
         NeowContext context, int curseCandidateCount, Item[] items,
-        IReadOnlyList<Character> characters, UnlockState[] unlocksBySlot, int ascension)
+        IReadOnlyList<Character> characters, UnlockState[] unlocksBySlot, int ascension,
+        UnlockState runUnlocks, IReadOnlyList<UnlockState>? playerUnlocks)
     {
+        _runUnlocks = runUnlocks;
+        _playerUnlocks = playerUnlocks;
         _context = context;
         _playerCount = context.PlayerCount;
         _curseCandidateCount = curseCandidateCount;
@@ -87,17 +98,28 @@ public sealed class NeowPlan
                     fast ? curseIndex : -1,
                     want.Requirement == SlotRequirement.Any,
                     want.ResolveSlots(context.PlayerCount),
-                    WantedTypeIds(want, criteria));
+                    WantedTypeIds(want, criteria),
+                    NeowRelicPayload.ShapeOf(want.Relic.Slug) == RelicPayloadShape.Capsule && want.Relics.Count > 0
+                        ? want.Relics.Select(r => NeowRelicPayload.FindCapsuleRelic(r)!.Value).ToArray()
+                        : null,
+                    NeowRelicPayload.ShapeOf(want.Relic.Slug) == RelicPayloadShape.Bones && want.Relics.Count > 0
+                        ? want.Relics.ToArray()
+                        : null,
+                    want.PayloadCurse is { } curse ? NeowRelicPayload.FindCurse(curse) : null);
             })
             // Cheapest first, and a payload is a handful of draws on top of whatever settled the
             // relic, so it goes behind the bare form of the same branch.
-            .OrderBy(i => (i.CurseIndex >= 0 ? 0 : 2) + (i.WantedBySlot is null ? 0 : 1))
+            .OrderBy(i => (i.CurseIndex >= 0 ? 0 : 2) + (HasPayload(i) ? 1 : 0))
             .ToArray();
 
         return new NeowPlan(
             context, curseCandidates.Count, items, criteria.Characters, criteria.UnlocksBySlot(),
-            criteria.Ascension);
+            criteria.Ascension, criteria.Unlocks, criteria.PlayerUnlocks);
     }
+
+    private static bool HasPayload(in Item i) =>
+        i.WantedBySlot is not null || i.WantedCapsule is not null || i.WantedBones is not null
+        || i.WantedCurse is not null;
 
     /// <summary>Does this run seed satisfy every Neow criterion?</summary>
     public bool Matches(ulong runSeed)
@@ -131,14 +153,41 @@ public sealed class NeowPlan
     private bool SlotMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)
     {
         if (!OfferMatches(runSeed, slot, item, ref offers)) return false;
-        if (item.WantedBySlot is null) return true;
 
         // The offer put the relic in front of this player; now ask what taking it would hand
         // them. One draw for an Arcane Scroll, three for a Hefty Tablet, off a stream nothing
         // else has touched yet.
-        return NeowCardPayload.Offers(
-            runSeed, slot, _characters[slot], item.Relic.Slug, _unlocksBySlot[slot],
-            item.WantedBySlot[slot], _context.IsMultiplayer, _ascension);
+        if (item.WantedBySlot is not null
+            && !NeowCardPayload.Offers(
+                runSeed, slot, _characters[slot], item.Relic.Slug, _unlocksBySlot[slot],
+                item.WantedBySlot[slot], _context.IsMultiplayer, _ascension))
+            return false;
+
+        if (item.WantedCapsule is not null
+            && !NeowRelicPayload.CapsuleGives(
+                runSeed, slot, _characters, _runUnlocks, _playerUnlocks, item.Relic.Slug, item.WantedCapsule))
+            return false;
+
+        if (item.WantedBones is null && item.WantedCurse is null) return true;
+
+        var bones = NeowRelicPayload.BonesRelics(runSeed, slot, _context);
+        if (item.WantedBones is not null)
+            foreach (var want in item.WantedBones)
+                if (!bones.Any(r => r.Slug == want)) return false;
+
+        if (item.WantedCurse is null) return true;
+
+        // The curse is one draw off the run's Niche stream, so it is cheap to test; whether
+        // that draw is still the first one when this player resolves Neow is the expensive
+        // half, because it needs everyone else's offer.
+        if (NeowRelicPayload.BonesCurse(runSeed) != item.WantedCurse) return false;
+
+        offers ??= new NeowOffer?[_playerCount];
+        var all = new NeowOffer[_playerCount];
+        for (int s = 0; s < _playerCount; s++)
+            all[s] = offers[s] ??= NeowGenerator.PredictOffer(runSeed, s, _context);
+        return NeowRelicPayload.CurseIsCertain(
+            runSeed, slot, _context, bones, all, _characters, _runUnlocks, _playerUnlocks);
     }
 
     private bool OfferMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)

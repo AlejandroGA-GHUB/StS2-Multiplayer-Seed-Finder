@@ -222,6 +222,13 @@ public static class NeowRelicPayload
         new(StringComparer.Ordinal) { "war_paint", "whetstone" };
 
     /// <summary>
+    /// Whether dealing this relic out of Neow's Bones rules the curse out of being promised:
+    /// it either draws from Niche itself or, as a capsule, might.
+    /// </summary>
+    public static bool MovesCurse(string relicSlug) =>
+        NicheAtNeow.Contains(relicSlug) || ShapeOf(relicSlug) == RelicPayloadShape.Capsule;
+
+    /// <summary>
     /// Whether this player's Bones curse is the first Niche draw of the run whatever anyone at
     /// the table picks, and so whether <see cref="BonesCurse"/> can be promised.
     ///
@@ -243,8 +250,7 @@ public static class NeowRelicPayload
         UnlockState unlocks, IReadOnlyList<UnlockState>? playerUnlocks)
     {
         foreach (var r in bonesRelics)
-            if (NicheAtNeow.Contains(r.Slug) || ShapeOf(r.Slug) == RelicPayloadShape.Capsule)
-                return false;
+            if (MovesCurse(r.Slug)) return false;
 
         for (int other = 0; other < offers.Count; other++)
         {
@@ -260,6 +266,70 @@ public static class NeowRelicPayload
                     return false;
             }
         }
+        return true;
+    }
+
+    // ---- What a search may ask for -----------------------------------------------------------
+
+    /// <summary>Every relic a capsule could ever hand anyone: Common, Uncommon and Rare.</summary>
+    public static IReadOnlyList<PoolRelic> CapsuleAll { get; } =
+        RelicPoolData.SharedRelics
+            .Concat(Enum.GetValues<Character>().SelectMany(RelicPoolData.RelicsFor))
+            .Where(r => r.Rarity is "Common" or "Uncommon" or "Rare")
+            .ToList();
+
+    /// <summary>"war_paint" to "War Paint", for a capsule relic; a Neow relic by its own name.</summary>
+    public static string Display(string slug) =>
+        NeowRelics.Find(slug)?.Name ?? ShopRelics.TitleCase(slug);
+
+    /// <summary>Look a capsule relic up by slug or type name, punctuation-insensitively.</summary>
+    public static PoolRelic? FindCapsuleRelic(string nameOrSlug)
+    {
+        var key = ShopRelics.Key(nameOrSlug);
+        foreach (var r in CapsuleAll)
+            if (ShopRelics.Key(r.Slug) == key || ShopRelics.Key(r.Name) == key) return r;
+        return null;
+    }
+
+    /// <summary>
+    /// What a capsule could hand the player in <paramref name="slot"/>: their own bag's Common,
+    /// Uncommon and Rare relics, which is the shared pool plus their character's, less anything
+    /// their epochs still hide.
+    /// </summary>
+    public static IReadOnlyList<PoolRelic> CapsuleOfferable(
+        IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks, int slot)
+    {
+        var result = new List<PoolRelic>();
+        foreach (var rarity in new[] { "Common", "Uncommon", "Rare" })
+            if (RunGenerator.PlayerDeques(characters, unlocks, playerUnlocks, rarity)[slot] is { } d)
+                result.AddRange(d.Relics);
+        return result;
+    }
+
+    /// <summary>
+    /// Whether this player's capsule hands over every relic in <paramref name="wanted"/>.
+    ///
+    /// The rarity rolls come first because they are a draw or two each and settle most seeds on
+    /// their own: a wanted Rare needs a Rare roll, which is one seed in six. Only a seed that
+    /// survives pays for replaying the bag shuffles. Rolling a rarity never empties a deque at
+    /// Neow, so the fallback walk cannot rescue a seed this rejects.
+    /// </summary>
+    public static bool CapsuleGives(
+        ulong runSeed, int slot, IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks, string relicSlug, IReadOnlyList<PoolRelic> wanted)
+    {
+        int count = RelicCount(relicSlug);
+        var rewards = CardRewardGenerator.RewardsRng(runSeed, slot);
+        Span<int> rolled = stackalloc int[3];
+        for (int i = 0; i < count; i++)
+            rolled[RollRarity(rewards) switch { "Common" => 0, "Uncommon" => 1, _ => 2 }]++;
+        foreach (var w in wanted)
+            if (--rolled[w.Rarity switch { "Common" => 0, "Uncommon" => 1, _ => 2 }] < 0) return false;
+
+        var got = Capsule(runSeed, slot, characters, unlocks, playerUnlocks, relicSlug);
+        foreach (var w in wanted)
+            if (!got.Any(g => g.Slug == w.Slug)) return false;
         return true;
     }
 

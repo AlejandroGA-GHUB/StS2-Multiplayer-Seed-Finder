@@ -662,7 +662,7 @@ public static class RunGenerator
         ulong runSeed, IReadOnlyList<Character> characters, UnlockState unlocks,
         IReadOnlyList<UnlockState>? playerUnlocks, int slot)
     {
-        var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: false, withChest: false);
+        var plan = AnyPlanFor(characters, unlocks, playerUnlocks);
         var rng = new Rng(runSeed, GameHash.SnakeCase("UpFront"));
         var result = new Dictionary<string, List<PoolRelic>>(3, StringComparer.Ordinal);
 
@@ -722,9 +722,18 @@ public static class RunGenerator
 
         public bool Matches(
             IReadOnlyList<Character> characters, UnlockState unlocks,
-            IReadOnlyList<UnlockState>? playerUnlocks, bool withShop, bool withChest)
+            IReadOnlyList<UnlockState>? playerUnlocks, bool withShop, bool withChest) =>
+            WithShop == withShop && WithChest == withChest
+            && MatchesParty(characters, unlocks, playerUnlocks);
+
+        /// <summary>
+        /// Same party and unlock states, whichever deques were materialised. Enough for a caller
+        /// that reads only <see cref="PlayerBag.Layout"/> and <see cref="PlayerBag.Pool"/>.
+        /// </summary>
+        public bool MatchesParty(
+            IReadOnlyList<Character> characters, UnlockState unlocks,
+            IReadOnlyList<UnlockState>? playerUnlocks)
         {
-            if (WithShop != withShop || WithChest != withChest) return false;
             if (!ReferenceEquals(Unlocks, unlocks) || !ReferenceEquals(PlayerUnlocks, playerUnlocks)) return false;
             if (Characters.Length != characters.Count) return false;
             for (int i = 0; i < Characters.Length; i++)
@@ -755,6 +764,20 @@ public static class RunGenerator
     /// A miss simply rebuilds, which is what every seed used to do, so the worst case is today.
     /// </summary>
     [ThreadStatic] private static BagPlan? _bagPlan;
+
+    /// <summary>
+    /// A plan for this party with whatever deques it happens to materialise. For callers that
+    /// read only layouts and pools, so a search that also generates shop relics does not make
+    /// the two of them evict each other's plan on every seed.
+    /// </summary>
+    private static BagPlan AnyPlanFor(
+        IReadOnlyList<Character> characters, UnlockState unlocks, IReadOnlyList<UnlockState>? playerUnlocks)
+    {
+        var cached = _bagPlan;
+        return cached is not null && cached.MatchesParty(characters, unlocks, playerUnlocks)
+            ? cached
+            : PlanFor(characters, unlocks, playerUnlocks, withShop: false, withChest: false);
+    }
 
     private static BagPlan PlanFor(
         IReadOnlyList<Character> characters, UnlockState unlocks,
