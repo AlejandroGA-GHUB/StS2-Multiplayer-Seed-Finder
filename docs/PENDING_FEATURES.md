@@ -6,18 +6,10 @@ reasons and not holding any in-repo pushable assets, but still overall supports 
 
 # PENDING
 
-1. Massive Scroll's three cards, and Scroll Boxes' two bundles. Both are accounted for in draws, neither is named yet. Arcane Scroll and Hefty Tablet ARE named now, and
-searchable: a Neow row for either one grows a card box, and picking a card there also tells the fight predictor that player took the relic. Massive Scroll is the closer of
-the two to done, since it is the ordinary reward factory with base odds; Scroll Boxes builds two bundles of 2 commons + 1 uncommon out of one shared used-card set, plus a
-1-in-100 all-Claw check per bundle for the Defect. Neow's Bones remains furthest away: it shuffles a lobby-dependent relic list and then offers them through a RewardsSet,
-so even its DRAW COST is unsettled, which is why it is the one option the "took at Neow" control refuses. 
-
-2. Small/Large capsule and Neows Bones offering selections, to choose which relics/curses you will see from those.
-
-3. Shop cards and potions. The third relic slot is confirmed and solid, but the card side of a shop moves with how many shops you've visited and your carried relics can
+1. Shop cards and potions. The third relic slot is confirmed and solid, but the card side of a shop moves with how many shops you've visited and your carried relics can
 rewrite the pool. Sits behind the route work too.
 
-4. Elite fight relics, and a shop's first two relic slots. Grouped because they're held up by the same thing: both depend on your route, which the app doesn't model yet.
+2. Elite fight relics, and a shop's first two relic slots. Grouped because they're held up by the same thing: both depend on your route, which the app doesn't model yet.
 The math is already worked out for both, so what's left is deciding how you hand it your route. They'll arrive together.
  
 
