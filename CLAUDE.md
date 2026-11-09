@@ -10,17 +10,14 @@ no longer the graph but a chosen ROUTE through it, which is a UI question. The a
 re-deriving it wastes a session: read `Core/Acts/`, `Core/Map/` and the shop section of
 `docs/GAME_MECHANICS.md` first, and ask before building.
 
-**Capsule and Neow's Bones payloads are PENDING too** (requested 2026-08-08). What Small
-Capsule, Large Capsule and Neow's Bones actually hand you is not modelled anywhere — only how
-many draws they cost (`CardRewardGenerator.NeowRewardDrawCost`), and Neow's Bones not even that.
-It is new prediction work, not a fix, and it needs three things: a fresh decompile of each
-relic's `AfterObtained` (there is no `sts2src/` in the checkout and `--show` only prints methods
-already mirrored), the shared bag drained IN ORDER across the two capsules, and Oracle coverage
-before it ships. The ordering requirement is not theoretical: the author of searchthespire
-shipped exactly that bug, building the grab bag twice so both capsules pulled from a fresh copy
-and Frozen Egg appeared in both. `ChestRelics.Generate` already solves the same problem correctly
-(its `taken` set, tracked by identity so the Act 3 rarity gate cannot shift an index) and is the
-pattern to copy.
+**Capsule and Neow's Bones payloads are done** (2026-11-08), in `Core/Neow/NeowRelicPayload.cs`:
+the relics Small and Large Capsule pull from the player's own bag, and the two relics plus curse
+Neow's Bones deals. Searchable (`--relic large_capsule:p1:vajra,lantern`,
+`--relic neows_bones:p2:golden_pearl,doubt`), shown on every result, GPU-ported
+(`RelicPayloadFilter`), and checked by the Oracle and by `--verify-history` against real runs.
+The relics are exact per player; the Bones CURSE comes off the run-level Niche stream, so it is
+only promised when nobody at the table can draw from Niche first (`CurseIsCertain`). Read the
+"Relic payloads" part of `docs/GAME_MECHANICS.md` before touching it.
 
 **Five Neow card payloads are done**, in `Core/Cards/NeowCardPayload.cs`, all searchable and
 Oracle-verified draw-for-draw: Arcane Scroll and Hefty Tablet (2026-08-31), Massive Scroll and
@@ -185,6 +182,7 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --chest 1:vajra --che
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:offering:2 --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic arcane_scroll:p1:aggression --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic lead_paperweight:p1:prowess --characters ironclad,silent
+dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --relic large_capsule:p1:vajra,lantern --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --card p1:anger --neow-pick p1:massive_scroll --characters ironclad,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --specialized p1:claw --characters defect,silent
 dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --all-star p1:prowess --players 2   # no --characters needed
@@ -201,7 +199,7 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --verify-history --ve
 ```
 
 **Run the Oracle after any change to Core, and after every game patch.** It loads the real
-`sts2.dll` and asserts our port still matches. As of v0.110.1 all 14 checks pass.
+`sts2.dll` and asserts our port still matches. As of v0.111.0 all 16 checks pass.
 
 **Run `--verify` after any change to `Core/Acts/` or `Core/Map/`.** It checks the act/boss/Ancient
 chain against a save the game itself wrote, and diffs each act map node-for-node against the
@@ -329,7 +327,7 @@ Hybrid, as planned: the hot search path is our own fast C# (`Core`), with a `sts
   `cuda`/`opencl`/`cpu` force a backend.
 
   Ported: acts, Neow (both branches), card rewards, the three modifier payloads, all five Neow
-  card payloads, and run generation for bosses, events, Ancient identity and shop relics. Not
+  card payloads, the capsule and Neow's Bones relic payloads, and run generation for bosses, events, Ancient identity and shop relics. Not
   ported: treasure chests and Ancient offers.
   **Read `docs/GPU.md` before touching `Gpu/`** — it has why each unported thing is unported, and
   the tricks the kernels use instead of materialising a shuffle.

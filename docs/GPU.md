@@ -19,8 +19,17 @@ it, `cuda`/`opencl`/`cpu` force a backend.
 
 Ported so far, all fused into one pass (`SeedFilter`) and ordered cheapest-first: **acts**,
 **Neow (both branches)**, **card rewards**, the **three modifier payloads** (Specialized, All
-Star, Draft), **all five Neow card payloads** and **run generation** for bosses, events, Ancient
-identity and shop relics.
+Star, Draft), **all five Neow card payloads**, the **Neow relic payloads** (capsules and Neow's Bones) and
+**run generation** for bosses, events, Ancient identity and shop relics.
+
+**The relic payloads are their own small stage** (`RelicPayloadFilter`), between Neow and the
+cards. Nothing is materialised: a capsule rolls its rarities on Rewards, burns UpFront to that
+player's deque (`RunGenerator.PlayerDeques` gives `DrawsBefore`, as `ShopDeques` does for shops)
+and follows the wanted relic's index through the shuffle; it was handed over iff it lands in
+front of the number of matching rolls. Bones follows the relic through the Rewards shuffle of the
+player's list (lands at 0 or 1). The curse is one Niche draw; its certainty rule needs everyone's
+offer, so the kernel over-accepts and the CPU decides. "Any player" with two relics gets a bit per
+relic, which can be met by two different players: over-accepting again, never rejecting.
 
 **The Neow payloads are three chains behind one stage.** `PayloadShapeOfSlot` says which to walk
 for each slot, because two players can be asked about different relics. Lead Paperweight is a

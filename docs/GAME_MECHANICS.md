@@ -251,9 +251,41 @@ lobby, so when players differ it keeps only its curse criteria and leaves positi
 Card *payloads* (Hefty Tablet's 3 rare cards, Arcane Scroll's rare, Scroll Boxes' bundles)
 are rolled in `AfterObtained`, not at Neow. **Arcane Scroll's, Hefty Tablet's, Massive
 Scroll's, Scroll Boxes' and Lead Paperweight's are now modelled and searchable**
-(`Core/Cards/NeowCardPayload.cs`, Oracle-verified against v0.111.0); Neow's Bones' is not. For all of them
+(`Core/Cards/NeowCardPayload.cs`, Oracle-verified against v0.111.0). The RELIC payloads of Small
+Capsule, Large Capsule and Neow's Bones are modelled too, in `Core/Neow/NeowRelicPayload.cs`; see
+"Relic payloads" below. For all of them
 **how many draws they cost is** known, because they come off `PlayerRng.Rewards` and therefore
 shift the first fight's reward — see `NeowRewardDrawCost` below.
+
+**Relic payloads: the capsules and Neow's Bones** (2026-11-08, read against v0.111.0, checked
+by the Oracle and by `--verify-history` against three capsule pulls and a Bones deal in finished
+v0.111.0 runs).
+
+- **Small / Large Capsule** take 1 / 2 times: `RelicFactory.RollRarity(PlayerRng.Rewards)` (one
+  `NextFloat`: < 0.5 Common, < 0.83 Uncommon, else Rare; plain constants, no pity, no ascension
+  gate), then `PullFromFront` on THAT PLAYER's own grab bag deque of that rarity, removing it.
+  The deques are the UpFront bag shuffles, untouched at Neow, so a capsule is exact per player
+  whatever anyone else picks. A Large Capsule rolling the same rarity twice takes the deque's
+  first two entries, which is why the second pull must see the first removed (the
+  searchthespire double-bag bug). An empty deque walks Common, Uncommon, Rare; never at Neow.
+- **Neow's Bones** builds `Neow.AllPossibleOptions`' relics: the ten curses, the fourteen
+  positives, then LavaRock, NeowsTalisman, NutritiousOyster, Pomander, SmallCapsule,
+  StoneHumidifier (alphabetical, NOT flip order), filtered by `IsAllowedAtNeow(owner)` and minus
+  itself. `PlayerRng.Rewards.Shuffle` (descending Fisher-Yates, n-1 draws), first two handed over.
+  Then ONE curse: `RunState.Rng.Niche.NextItem` over the curse pool's
+  `CanBeGeneratedByModifiers` cards in id order (Clumsy, Debt, Decay, Doubt, Guilty, Injury,
+  Normality, Regret, Shame, Writhe).
+- **The curse is the only part that is not per player.** Niche is a RUN stream, and Kaleidoscope,
+  New Leaf, another Bones, and War Paint or Whetstone (which a capsule can pull) all draw from it
+  on pickup. Co-op resolution order is unknowable, so `CurseIsCertain` promises the curse only
+  when the Bones player's own two relics hold none of those (or a capsule) and nobody else's
+  offer does either (their capsules are checked for what they would really pull). Search
+  requires certainty; the display marks an uncertain curse.
+- **Known gap:** Lasting Candy is refused while any Ironclad in the lobby is on an account with
+  zero finished runs. Not modelled, so a brand-new Ironclad account can see a capsule skip it.
+- Neow's Bones' own Rewards cost is seed-dependent (its shuffle plus whatever the two relics draw
+  when claimed), so it still cannot be a "took at Neow" pick, and a Bones payload pinned to a
+  player is refused alongside a card reward for that player.
 
 **Hefty Tablet and Arcane Scroll: the draw shape is settled** (established against v0.110.1,
 2026-08-08). Neither relic rolls cards itself. Both hand the ordinary reward factory
