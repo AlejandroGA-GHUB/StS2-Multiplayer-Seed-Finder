@@ -124,10 +124,12 @@ public sealed class GpuSearchPlanner : IDisposable
         public required MemoryBuffer1D<int, Stride1D.Dense> PayloadShapeOfSlot { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> MassiveOfSlot { get; init; }
         public required MemoryBuffer1D<int, Stride1D.Dense> ClawOfSlot { get; init; }
+        public required MemoryBuffer1D<int, Stride1D.Dense> BonesOfSlot { get; init; }
 
         public CardCriteriaView View => new(
             Slot.View, Fight.View, TypeId.View, PoolOfSlot.View, PriorDraws.View, PayloadPicks.View,
-            ColorlessOfSlot.View, PayloadShapeOfSlot.View, MassiveOfSlot.View, ClawOfSlot.View);
+            ColorlessOfSlot.View, PayloadShapeOfSlot.View, MassiveOfSlot.View, ClawOfSlot.View,
+            BonesOfSlot.View);
 
         public void Dispose()
         {
@@ -141,6 +143,7 @@ public sealed class GpuSearchPlanner : IDisposable
             PayloadShapeOfSlot.Dispose();
             MassiveOfSlot.Dispose();
             ClawOfSlot.Dispose();
+            BonesOfSlot.Dispose();
             Pools.Dispose();
         }
     }
@@ -290,6 +293,13 @@ public sealed class GpuSearchPlanner : IDisposable
         bool wantsSpecialized = criteria.Specialized.Count > 0;
         bool wantsAllStar = criteria.AllStar.Count > 0;
         bool wantsDraft = criteria.Draft.Count > 0;
+
+        // A player who took Neow's Bones pays a different amount on every seed, which the kernel
+        // works out itself. It declines the one case whose answer depends on claim order.
+        var bones = knowParty
+            ? CardFilter.BonesLayout(criteria.Characters, criteria.Context, criteria.BonesPickSlots())
+            : new int[Math.Max(criteria.PlayerCount, 1) * CardFilter.BonesStride];
+        if (bones is null) return null;
 
         if (wantsSpecialized && criteria.SpecializedPriorDraws() is null) return null;
         if (wantsAllStar && criteria.AllStarPriorDraws() is null) return null;
@@ -444,6 +454,7 @@ public sealed class GpuSearchPlanner : IDisposable
             PayloadShapeOfSlot = acc.Allocate1D(payloadShape),
             MassiveOfSlot = acc.Allocate1D(pools.MassivePoolOfSlot),
             ClawOfSlot = acc.Allocate1D(pools.ClawOfSlot),
+            BonesOfSlot = acc.Allocate1D(bones),
         };
     }
 

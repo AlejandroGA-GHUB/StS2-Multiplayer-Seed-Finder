@@ -148,6 +148,19 @@ public static class GpuDoctor
                 Report(check with { Name = $"{check.Name} ({draws[0]}/{draws[1]})" });
                 ok &= check.Passed;
             }
+
+            // Neow's Bones, which costs a different amount on every seed: its shuffle, then the
+            // two relics it deals. One taker and two, so per-slot layouts are both exercised.
+            // Not the Defect: the kernel declines a Defect whose list holds Scroll Boxes.
+            var duo = new[] { Character.Ironclad, Character.Silent };
+            foreach (var takers in new[] { new[] { 0 }, new[] { 0, 1 } })
+            {
+                var check = GpuVerifyCards.Run(
+                    engine, duo, ascension: 0, unlocks: null,
+                    start: 10_600_000_000, samples: 20_000, fight: 2, bonesTakers: takers);
+                Report(check with { Name = $"{check.Name} (neows bones {string.Join("+", takers.Select(t => $"p{t + 1}"))})" });
+                ok &= check.Passed;
+            }
         }
 
         // Per-slot pools. Two Silents on different unlock states is the one lobby where the
@@ -560,6 +573,32 @@ public static class GpuDoctor
                     PayloadRelics: new[] { RunGenerator.PlayerDeques(duo, new UnlockState(), null, "Common")[0]!.Relics[0].Slug }),
                 new NeowCriterion(NeowRelics.Find("neows_bones")!, PayloadCurse: "Doubt"),
             },
+        }, 4_000_000);
+
+        // Neow's Bones as the pick ahead of the fights, once named outright and once implied by
+        // a criterion that pins what it deals, which says that player took it.
+        var bonesP1 = CardRewardGenerator.PoolFor(Character.Ironclad, null)
+            .First(e => e.Rarity == CardRarity.Common).TypeName;
+        yield return ("cards p1 fight 2 after neows bones", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            NeowPicks = new[] { new NeowPick(0, "neows_bones") },
+            Cards = new[] { new CardCriterion(0, bonesP1, 2) },
+        }, 400_000);
+
+        var bonesP2 = CardRewardGenerator.PoolFor(Character.Silent, null)
+            .First(e => e.Rarity == CardRarity.Common).TypeName;
+        yield return ("cards p2 after a pinned neows bones deal", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(NeowRelics.Find("neows_bones")!, SlotRequirement.Specific, new[] { 1 },
+                    PayloadRelics: new[] { "golden_pearl" }),
+            },
+            Cards = new[] { new CardCriterion(1, bonesP2, 1) },
         }, 4_000_000);
 
         // A control: with one unlock state for everybody there is nothing for the per-slot

@@ -1,5 +1,9 @@
 using System.Runtime.InteropServices;
 using ILGPU;
+using Sts2.SeedFinder.Core;
+using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Neow;
 
 namespace Sts2.SeedFinder.Gpu;
 
@@ -72,12 +76,20 @@ public readonly struct CardCriteriaView
     /// </summary>
     public readonly ArrayView<int> PayloadPicks;
 
+    /// <summary>
+    /// For a player who took Neow's Bones, what the kernel needs to price it per seed:
+    /// <see cref="CardFilter.BonesStride"/> ints per slot, laid out by
+    /// <see cref="CardFilter.BonesLayout"/>. A zero length means the player did not take it.
+    /// </summary>
+    public readonly ArrayView<int> BonesOfSlot;
+
     public CardCriteriaView(
         ArrayView<int> slot, ArrayView<int> fight, ArrayView<int> typeId, ArrayView<int> poolOfSlot,
         ArrayView<int> priorDraws, ArrayView<int> payloadPicks,
         ArrayView<int> colorlessOfSlot, ArrayView<int> payloadShapeOfSlot,
-        ArrayView<int> massiveOfSlot, ArrayView<int> clawOfSlot)
+        ArrayView<int> massiveOfSlot, ArrayView<int> clawOfSlot, ArrayView<int> bonesOfSlot)
     {
+        BonesOfSlot = bonesOfSlot;
         Slot = slot;
         Fight = fight;
         TypeId = typeId;
@@ -276,6 +288,82 @@ public static class CardFilter
         }
         return rarity;
     }
+
+    /// <summary>How many of a Bones list's relics that draw on pickup the kernel can follow.</summary>
+    public const int BonesTracked = 12;
+
+    /// <summary>Per slot: list length, how many are followed, then (index, cost) for each.</summary>
+    public const int BonesStride = 2 + 2 * BonesTracked;
+
+    /// <summary>
+    /// The Bones layout for these takers, or null when the kernel cannot price it: a Defect
+    /// whose list holds Scroll Boxes, whose cost depends on where in the stream it starts, or a
+    /// list with more drawing relics than <see cref="BonesTracked"/>.
+    /// </summary>
+    public static int[]? BonesLayout(
+        IReadOnlyList<Character> characters, NeowContext ctx, IEnumerable<int> takers)
+    {
+        var layout = new int[Math.Max(characters.Count, 1) * BonesStride];
+        foreach (int slot in takers)
+        {
+            if (slot < 0 || slot >= characters.Count) continue;
+            var list = NeowRelicPayload.BonesList(slot, ctx);
+            int at = slot * BonesStride;
+            int count = 0;
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (characters[slot] == Character.Defect && list[i].Slug == "scroll_boxes") return null;
+                int cost = CardRewardGenerator.NeowRewardDrawCost(list[i].Slug, characters[slot]);
+                if (cost <= 0) continue;
+                if (count == BonesTracked) return null;
+                layout[at + 2 + 2 * count] = i;
+                layout[at + 3 + 2 * count] = cost;
+                count++;
+            }
+            layout[at] = list.Count;
+            layout[at + 1] = count;
+        }
+        return layout;
+    }
+
+    /// <summary>
+    /// Walk the Bones shuffle on <paramref name="rng"/> and return what the two relics it deals
+    /// draw when claimed. Every relic that draws is followed through the swaps at once, in
+    /// fixed fields rather than an array, and the ones ending at 0 or 1 are the ones dealt.
+    /// </summary>
+    private static int BonesClaimDraws(ref GpuRandom rng, CardCriteriaView c, int at)
+    {
+        int length = c.BonesOfSlot[at];
+        int count = c.BonesOfSlot[at + 1];
+        int p0 = Tracked(c, at, count, 0), p1 = Tracked(c, at, count, 1), p2 = Tracked(c, at, count, 2);
+        int p3 = Tracked(c, at, count, 3), p4 = Tracked(c, at, count, 4), p5 = Tracked(c, at, count, 5);
+        int p6 = Tracked(c, at, count, 6), p7 = Tracked(c, at, count, 7), p8 = Tracked(c, at, count, 8);
+        int p9 = Tracked(c, at, count, 9), p10 = Tracked(c, at, count, 10), p11 = Tracked(c, at, count, 11);
+
+        for (int n = length - 1; n >= 1; n--)
+        {
+            int k = rng.NextInt(n + 1);
+            p0 = Swapped(p0, n, k); p1 = Swapped(p1, n, k); p2 = Swapped(p2, n, k);
+            p3 = Swapped(p3, n, k); p4 = Swapped(p4, n, k); p5 = Swapped(p5, n, k);
+            p6 = Swapped(p6, n, k); p7 = Swapped(p7, n, k); p8 = Swapped(p8, n, k);
+            p9 = Swapped(p9, n, k); p10 = Swapped(p10, n, k); p11 = Swapped(p11, n, k);
+        }
+
+        return Dealt(c, at, p0, 0) + Dealt(c, at, p1, 1) + Dealt(c, at, p2, 2)
+             + Dealt(c, at, p3, 3) + Dealt(c, at, p4, 4) + Dealt(c, at, p5, 5)
+             + Dealt(c, at, p6, 6) + Dealt(c, at, p7, 7) + Dealt(c, at, p8, 8)
+             + Dealt(c, at, p9, 9) + Dealt(c, at, p10, 10) + Dealt(c, at, p11, 11);
+    }
+
+    /// <summary>Where the i-th followed relic starts, or -1 (never swapped) past the count.</summary>
+    private static int Tracked(CardCriteriaView c, int at, int count, int i) =>
+        i < count ? c.BonesOfSlot[at + 2 + 2 * i] : -1;
+
+    private static int Swapped(int pos, int n, int k) => pos == n ? k : pos == k ? n : pos;
+
+    /// <summary>The i-th followed relic's cost when it was dealt (ended at 0 or 1), else 0.</summary>
+    private static int Dealt(CardCriteriaView c, int at, int pos, int i) =>
+        pos >= 0 && pos < 2 ? c.BonesOfSlot[at + 3 + 2 * i] : 0;
 
     /// <summary>CardRarityOdds.Roll, including the pity offset it carries between draws.</summary>
     private static int RollRarity(
@@ -645,6 +733,13 @@ public static class CardFilter
         int pool, int poolBase, ref int satisfied)
     {
         var rng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
+
+        // Neow's Bones costs a different amount on every seed: its shuffle, then whatever the
+        // two relics it deals draw when they are claimed. The shuffle is walked for real, which
+        // spends its draws, and the claims are burned after it.
+        int bonesAt = slot * BonesStride;
+        if (criteria.BonesOfSlot[bonesAt] > 0)
+            rng.Burn(BonesClaimDraws(ref rng, criteria, bonesAt));
 
         // Whatever that player's Neow pick already spent. Zero for the great majority of
         // picks, and the whole reason the ten stream-drawing options need naming at all.

@@ -3,6 +3,7 @@ using ILGPU.Runtime;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Cards;
+using Sts2.SeedFinder.Core.Neow;
 
 namespace Sts2.SeedFinder.Gpu;
 
@@ -30,7 +31,8 @@ public static class GpuVerifyCards
         int samples,
         int fight,
         int[]? priorDraws = null,
-        IReadOnlyList<UnlockState?>? unlocksBySlot = null)
+        IReadOnlyList<UnlockState?>? unlocksBySlot = null,
+        IReadOnlyList<int>? bonesTakers = null)
     {
         // A lone character is a solo run, which is the whole of what decides the pool.
         bool isMultiplayer = characters.Count > 1;
@@ -75,6 +77,18 @@ public static class GpuVerifyCards
         // a correct kernel searching a different seed range.
         var draws = priorDraws ?? new int[characters.Count];
 
+        // Players who took Neow's Bones, priced per seed on both sides: the kernel from the
+        // layout, Core from NeowRelicPayload.BonesRewardDraws.
+        var ctx = new NeowContext
+        {
+            PlayerCount = characters.Count,
+            AllCharactersUnlockedBySlot = bySlot.Select(u => (u ?? new UnlockState()).AllCharactersUnlocked).ToArray(),
+        };
+        var takers = bonesTakers ?? Array.Empty<int>();
+        var bones = CardFilter.BonesLayout(characters, ctx, takers);
+        if (bones is null)
+            return new GpuCheck("cards", false, "the Bones layout declined for this party");
+
         var indices = new ulong[samples];
         for (int i = 0; i < samples; i++) indices[i] = start + (ulong)i;
 
@@ -91,6 +105,7 @@ public static class GpuVerifyCards
         using var dShape = acc.Allocate1D(new int[characters.Count]);
         using var dMassive = acc.Allocate1D(pools.MassivePoolOfSlot);
         using var dClaw = acc.Allocate1D(pools.ClawOfSlot);
+        using var dBones = acc.Allocate1D(bones);
         using var dMatched = acc.Allocate1D<int>(samples);
 
         var kernel = acc.LoadAutoGroupedStreamKernel<
@@ -99,7 +114,7 @@ public static class GpuVerifyCards
 
         var criteriaView = new CardCriteriaView(
             dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View, dPayload.View,
-            dColorless.View, dShape.View, dMassive.View, dClaw.View);
+            dColorless.View, dShape.View, dMassive.View, dClaw.View, dBones.View);
         kernel(samples, dIndices.View, p, pools.View, criteriaView, dMatched.View);
         acc.Synchronize();
 
@@ -114,8 +129,11 @@ public static class GpuVerifyCards
             bool want = true;
             for (int slot = 0; slot < characters.Count && want; slot++)
             {
+                int prior = draws[slot];
+                if (takers.Contains(slot))
+                    prior += NeowRelicPayload.BonesRewardDraws(runSeed, slot, ctx, characters[slot])!.Value;
                 var rewards = CardRewardGenerator.Hallway(
-                    runSeed, slot, characters[slot], fight, ascension, bySlot[slot], draws[slot],
+                    runSeed, slot, characters[slot], fight, ascension, bySlot[slot], prior,
                     isMultiplayer);
                 want = rewards.Fight(fight)?.Cards.Any(c => c.TypeName == wanted[slot]) == true;
             }
@@ -231,6 +249,7 @@ public static class GpuVerifyCards
         using var dShape = acc.Allocate1D(payloadShape);
         using var dMassive = acc.Allocate1D(pools.MassivePoolOfSlot);
         using var dClaw = acc.Allocate1D(pools.ClawOfSlot);
+        using var dBones = acc.Allocate1D(new int[characters.Count * CardFilter.BonesStride]);
         using var dMatched = acc.Allocate1D<int>(samples);
 
         var kernel = acc.LoadAutoGroupedStreamKernel<
@@ -240,7 +259,7 @@ public static class GpuVerifyCards
         kernel(samples, dIndices.View, p, pools.View,
             new CardCriteriaView(dSlot.View, dFight.View, dType.View, dPoolOfSlot.View, dPrior.View,
                                  dPayload.View, dColorless.View, dShape.View, dMassive.View,
-                                 dClaw.View),
+                                 dClaw.View, dBones.View),
             dMatched.View);
         acc.Synchronize();
 
