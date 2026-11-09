@@ -18,6 +18,7 @@ public struct SeedFilterParams
     public NeowPrefilterParams Neow;
     public CardFilterParams Cards;
     public RunFilterParams Run;
+    public RelicPayloadParams Relics;
 }
 
 /// <summary>Every stage's device arrays, as one kernel argument. See <see cref="SeedFilterParams"/>.</summary>
@@ -28,19 +29,22 @@ public readonly struct SeedFilterViews
     public readonly CardPoolView Pools;
     public readonly CardCriteriaView Cards;
     public readonly RunFilterView Run;
+    public readonly RelicPayloadView Relics;
 
     public SeedFilterViews(
         ActFilterView acts,
         NeowPrefilterView neow,
         CardPoolView pools,
         CardCriteriaView cards,
-        RunFilterView run)
+        RunFilterView run,
+        RelicPayloadView relics = default)
     {
         Acts = acts;
         Neow = neow;
         Pools = pools;
         Cards = cards;
         Run = run;
+        Relics = relics;
     }
 }
 
@@ -120,6 +124,10 @@ public static class SeedFilter
             // otherwise need full run generation.
             if (p.Acts.Active != 0 && !ActFilter.MatchesRunSeed(runSeed, p.Acts, v.Acts)) continue;
             if (p.Neow.Active != 0 && !NeowPrefilter.MatchesRunSeed(runSeed, p.Neow, v.Neow)) continue;
+
+            // What a capsule or Neow's Bones hands over: a draw or two, then for a capsule a
+            // burn through the bag shuffles that is still far short of run generation.
+            if (p.Relics.Active != 0 && !RelicPayloadFilter.Matches(runSeed, p.Relics, v.Relics)) continue;
             if (p.Cards.Active != 0 && !CardFilter.Matches(runSeed, p.Cards, v.Pools, v.Cards)) continue;
 
             // Last, and by a wide margin the most expensive: several hundred sequential draws

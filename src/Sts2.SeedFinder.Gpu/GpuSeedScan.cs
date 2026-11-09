@@ -163,7 +163,8 @@ public sealed class GpuSeedScan : IDisposable
             v.Neow.Criteria.IsValid ? v.Neow : EmptyNeow,
             v.Pools.Rarity.IsValid ? v.Pools : EmptyPools,
             v.Cards.Slot.IsValid ? v.Cards : EmptyCriteria,
-            v.Run.Info.IsValid ? v.Run : EmptyRun);
+            v.Run.Info.IsValid ? v.Run : EmptyRun,
+            v.Relics.Probes.IsValid ? v.Relics : new RelicPayloadView(_noInts.View));
 
         long maxTile = tileSize;
         long tile = Math.Min(ProbeTileSize, maxTile);

@@ -221,17 +221,24 @@ public sealed class GpuSearchPlanner : IDisposable
         var runStage = GpuRunStage.TryCreate(_engine, criteria);
         var run = runStage?.RunParams ?? default;
 
-        if (actParams.Active == 0 && neow.Active == 0 && cards.Active == 0 && run.Active == 0)
+        var relics = default(RelicPayloadParams);
+        MemoryBuffer1D<int, Stride1D.Dense>? relicProbes = null;
+        if (RelicPayloadFilterFactory.TryBuild(criteria, out relics, out var probes))
+            relicProbes = _engine.Accelerator.Allocate1D(probes);
+
+        if (actParams.Active == 0 && neow.Active == 0 && cards.Active == 0 && run.Active == 0
+            && relics.Active == 0)
         {
             actResources?.Dispose();
             neowResources?.Dispose();
             cardResources?.Dispose();
             runStage?.Dispose();
+            relicProbes?.Dispose();
             return false;
         }
 
-        var p = new SeedFilterParams { Acts = actParams, Neow = neow, Cards = cards, Run = run };
-        candidates = Stream(p, actResources, neowResources, cardResources, runStage,
+        var p = new SeedFilterParams { Acts = actParams, Neow = neow, Cards = cards, Run = run, Relics = relics };
+        candidates = Stream(p, actResources, neowResources, cardResources, runStage, relicProbes,
             startIndex, count, cancellationToken, progress);
         return true;
     }
@@ -450,6 +457,7 @@ public sealed class GpuSearchPlanner : IDisposable
         NeowResources? neowResources,
         CardResources? cardResources,
         GpuRunStage? runStage,
+        MemoryBuffer1D<int, Stride1D.Dense>? relicProbes,
         ulong start,
         ulong count,
         CancellationToken cancellationToken,
@@ -467,7 +475,8 @@ public sealed class GpuSearchPlanner : IDisposable
                 neowResources?.View ?? default,
                 cardResources?.Pools.View ?? default,
                 cardResources?.View ?? default,
-                runStage?.View ?? default);
+                runStage?.View ?? default,
+                relicProbes is null ? default : new RelicPayloadView(relicProbes.View));
 
             foreach (var index in _search!.Scan(
                          p, views, start, (long)count, cancellationToken,
@@ -480,6 +489,7 @@ public sealed class GpuSearchPlanner : IDisposable
             neowResources?.Dispose();
             cardResources?.Dispose();
             runStage?.Dispose();
+            relicProbes?.Dispose();
             _gate.Release();
         }
     }

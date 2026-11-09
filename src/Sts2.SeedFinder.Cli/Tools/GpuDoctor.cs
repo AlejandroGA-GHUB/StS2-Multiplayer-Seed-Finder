@@ -191,6 +191,16 @@ public static class GpuDoctor
             }
         }
 
+        // Capsules and Neow's Bones, against NeowRelicPayload. The capsule probes burn through
+        // the bag shuffles to the player's own deque, so the partly unlocked partner is the case
+        // that matters: their deques both start elsewhere and hold fewer relics.
+        foreach (var (label, criteria, samples) in RelicPayloadCases())
+        {
+            var check = GpuVerifyRelicPayload.Run(engine, criteria, start: 11_500_000_000, samples: samples, label: label);
+            Report(check);
+            ok &= check.Passed;
+        }
+
         // Run generation, against RunGenerator. The most demanding of these checks by far: the
         // stage walks several hundred sequential draws, so every case here is really asking
         // whether the stream is still in step at the far end of it.
@@ -467,10 +477,90 @@ public static class GpuDoctor
     /// Searches for the planner checks. Each has to be one the planner accelerates, and the
     /// ranges stay small because the plain half of every comparison is the CPU searcher.
     /// </summary>
+    /// <summary>
+    /// Shapes the relic payload stage answers exactly: one relic for "any player", or pinned
+    /// slots. A Common at the front, a Rare behind it, and a Large Capsule, whose second pull of
+    /// the same rarity is the only way position 1 is ever taken.
+    /// </summary>
+    private static IEnumerable<(string Label, SearchCriteria Criteria, int Samples)> RelicPayloadCases()
+    {
+        var duo = new[] { Character.Ironclad, Character.Silent };
+        var ctx = new NeowContext { PlayerCount = 2 };
+        var mixed = new[] { new UnlockState(), PartlyUnlocked };
+        var full = new UnlockState();
+
+        string First(string rarity, int slot, IReadOnlyList<UnlockState>? players) =>
+            RunGenerator.PlayerDeques(duo, players is null ? full : UnlockState.Union(players), players, rarity)[slot]!
+                .Relics[0].Slug;
+
+        NeowCriterion Want(string relic, SlotRequirement rule, int[]? slots, string[]? relics = null, string? curse = null) =>
+            new(NeowRelics.Find(relic)!, rule, slots, PayloadRelics: relics, PayloadCurse: curse);
+
+        yield return ("small capsule any player, a Common", new SearchCriteria
+        {
+            Context = ctx, Characters = duo,
+            NeowRelicsWanted = new[] { Want("small_capsule", SlotRequirement.Any, null, new[] { First("Common", 0, null) }) },
+        }, 20_000);
+
+        yield return ("large capsule p1, a Rare", new SearchCriteria
+        {
+            Context = ctx, Characters = duo,
+            NeowRelicsWanted = new[] { Want("large_capsule", SlotRequirement.Specific, new[] { 0 }, new[] { First("Rare", 0, null) }) },
+        }, 40_000);
+
+        yield return ("large capsule p2, two Commons", new SearchCriteria
+        {
+            Context = ctx, Characters = duo,
+            NeowRelicsWanted = new[]
+            {
+                Want("large_capsule", SlotRequirement.Specific, new[] { 1 }, new[]
+                {
+                    RunGenerator.PlayerDeques(duo, full, null, "Common")[1]!.Relics[0].Slug,
+                    RunGenerator.PlayerDeques(duo, full, null, "Common")[1]!.Relics[1].Slug,
+                }),
+            },
+        }, 400_000);
+
+        yield return ("large capsule p2, partner partly unlocked", new SearchCriteria
+        {
+            Context = ctx, Characters = duo,
+            Unlocks = UnlockState.Union(mixed), PlayerUnlocks = mixed,
+            NeowRelicsWanted = new[] { Want("large_capsule", SlotRequirement.Specific, new[] { 1 }, new[] { First("Uncommon", 1, mixed) }) },
+        }, 40_000);
+
+        yield return ("neows bones every player, Golden Pearl", new SearchCriteria
+        {
+            Context = ctx, Characters = duo,
+            NeowRelicsWanted = new[] { Want("neows_bones", SlotRequirement.All, null, new[] { "golden_pearl" }) },
+        }, 40_000);
+
+        // Solo, where the list loses Massive Scroll and gains Silver Crucible and Winged Boots,
+        // so a list built for the wrong mode is the wrong length.
+        yield return ("neows bones solo, Winged Boots, and a curse", new SearchCriteria
+        {
+            Context = new NeowContext { PlayerCount = 1 }, Characters = new[] { Character.Defect },
+            NeowRelicsWanted = new[] { Want("neows_bones", SlotRequirement.Any, null, new[] { "winged_boots" }, "Regret") },
+        }, 100_000);
+    }
+
     private static IEnumerable<(string Label, SearchCriteria Criteria, ulong Count)> PlannerCases()
     {
         var duo = new[] { Character.Ironclad, Character.Silent };
         var ctx = new NeowContext { PlayerCount = 2 };
+
+        // The relic payload stage through TryPlan, with the offer on top: the CPU then has to
+        // agree that the capsule was offered at all, and a Bones curse has to be certain.
+        yield return ("large capsule p1 + neows bones curse any player", new SearchCriteria
+        {
+            Context = ctx,
+            Characters = duo,
+            NeowRelicsWanted = new[]
+            {
+                new NeowCriterion(NeowRelics.Find("large_capsule")!, SlotRequirement.Specific, new[] { 0 },
+                    PayloadRelics: new[] { RunGenerator.PlayerDeques(duo, new UnlockState(), null, "Common")[0]!.Relics[0].Slug }),
+                new NeowCriterion(NeowRelics.Find("neows_bones")!, PayloadCurse: "Doubt"),
+            },
+        }, 4_000_000);
 
         // A control: with one unlock state for everybody there is nothing for the per-slot
         // pools to get wrong, so a failure here is the comparison itself, not the unlocks.
