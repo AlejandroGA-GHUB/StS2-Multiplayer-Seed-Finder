@@ -970,7 +970,6 @@ internal static class Program
             bad.Add($"curse list: game {string.Join(",", generatable)}, "
                     + $"ours {string.Join(",", NeowRelicPayload.BonesCursePool)}");
 
-        var party = new[] { Sts2.SeedFinder.Core.Acts.Character.Ironclad, Sts2.SeedFinder.Core.Acts.Character.Silent };
         for (ulong seed = 0; seed < 500 && bad.Count < 5; seed++)
         {
             ulong runSeed = seed * 6364136223846793005uL + 1442695040888963407uL;
@@ -1007,7 +1006,6 @@ internal static class Program
             if (curse != NeowRelicPayload.BonesCurse(runSeed))
                 bad.Add($"seed {seed} curse: game {curse}, ours {NeowRelicPayload.BonesCurse(runSeed)}");
         }
-        _ = party;
 
         return Check(name, bad.Count == 0,
             bad.Count == 0
