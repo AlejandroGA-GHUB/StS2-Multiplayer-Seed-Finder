@@ -4375,18 +4375,34 @@ function renderNeow() {
       row.appendChild(field);
 
       if (relicPayload.kind === 'bones') {
-        const curses = dropdown(
-          [{ label: 'Any curse', value: '' },
-           ...(catalog.bonesCurses ?? []).map(c => ({ label: c.name, value: c.slug }))],
-          crit.curse,
-          v => {
-            crit.curse = v;
-            // A relic that moves the curse cannot be named alongside one.
-            if (v) crit.relics = crit.relics.filter(s => !MOVES_BONES_CURSE.has(s));
-            renderNeow();
-          });
-        curses.classList.add('span');
-        row.appendChild(curses);
+        // A field and a picker with the curses' own art, like every other choice here.
+        const curses = catalog.bonesCurses ?? [];
+        const curseField = el('button', 'relic-field card-field span');
+        curseField.type = 'button';
+        const current = curses.find(c => c.slug === crit.curse);
+        if (!current) {
+          curseField.appendChild(anyIcon(28));
+          curseField.appendChild(el('span', 'name', 'Any curse'));
+        } else {
+          const icon = iconFor(current.slug, current.name, 28, 'card');
+          curseField.appendChild(withTip(icon, current.slug, current.name, 'card'));
+          curseField.appendChild(el('span', 'name', current.name));
+          const clear = el('span', 'clear', '×');
+          clear.dataset.clear = '1';
+          clear.title = 'Clear';
+          curseField.appendChild(clear);
+        }
+        curseField.onclick = async e => {
+          if (e.target.dataset.clear) { crit.curse = ''; renderNeow(); return; }
+          const picked = await openPicker('Neow’s Bones adds the curse…',
+            [{ title: 'Curse', items: curses }], 'card');
+          if (!picked) return;
+          crit.curse = picked.slug;
+          // A relic that moves the curse cannot be named alongside one.
+          crit.relics = crit.relics.filter(s => !MOVES_BONES_CURSE.has(s));
+          renderNeow();
+        };
+        row.appendChild(curseField);
 
         if (crit.curse) {
           const why = el('div', 'branch span');
