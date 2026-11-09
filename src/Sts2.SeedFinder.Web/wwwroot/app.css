@@ -23,18 +23,21 @@
 
 * { box-sizing: border-box; }
 
-/* The shell is exactly one viewport tall and never scrolls itself: the two panels inside it
-   do. Previously .layout subtracted a hard-coded header height, which was a few pixels short
-   of the real one, so the window scrolled a sliver — putting a second, useless scrollbar
-   immediately right of the one that actually moves through seeds. Measuring with flex instead
-   of guessing means there is only ever one scrollbar on the right. */
-html, body { height: 100%; }
+/* The app is exactly one viewport tall and the two panels inside it scroll. Previously .layout
+   subtracted a hard-coded header height, which was a few pixels short of the real one, so the
+   window scrolled a sliver. Measuring with flex instead of guessing keeps the app one window
+   tall.
+
+   The window itself scrolls only to reach the credits band below the app, which a panel hands
+   on to once it reaches its end. Its scrollbar is hidden, so there is still only ever one
+   scrollbar on the right: the one that moves through seeds. */
+html { scrollbar-width: none; }
+html::-webkit-scrollbar { display: none; }
+
+.app { height: 100vh; display: flex; flex-direction: column; }
 
 body {
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
   background: var(--bg-0);
   color: var(--text-0);
   font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
@@ -86,16 +89,23 @@ header .meta { color: var(--text-2); font-size: 12px; }
    without it they grow to fit and push the scrolling back out to the window. */
 .layout { display: grid; grid-template-columns: 380px 1fr; flex: 1; min-height: 0; }
 
-/* Sits below both columns for the life of the page. `flex: none` for the same reason the credit
-   banner needs it: the body is a flex column whose only growing child is .layout, and without it
-   this would be shrunk away at short viewport heights, which is exactly when a legal notice must
-   not quietly vanish. */
-.disclaimer {
-  flex: none; padding: 8px 20px;
-  background: var(--bg-0); border-top: 1px solid var(--border);
-  color: var(--text-2); font-size: 11px; line-height: 1.5;
+/* Credits and the fan-project notice, in a full-width band below the app. Two short sections
+   side by side, credits first, each with a small heading, so neither reads as a wall of text.
+   They stack on a narrow window. */
+.about {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px 56px;
+  padding: 22px 24px 28px; background: var(--bg-1); border-top: 1px solid var(--border);
+  color: var(--text-1); font-size: 15px; line-height: 1.6;
 }
-.disclaimer b { color: var(--text-1); font-weight: 600; }
+.about h3 {
+  margin: 0 0 6px; color: var(--text-0); font-size: 13px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .8px;
+}
+.about p { margin: 0 0 6px; }
+.about p:last-child { margin-bottom: 0; }
+.about b { color: var(--text-0); font-weight: 600; }
+.about a { color: var(--accent); text-decoration: none; }
+.about a:hover { text-decoration: underline; }
 .criteria { overflow-y: auto; border-right: 1px solid var(--border); padding: 16px; }
 .results { overflow-y: auto; padding: 16px 20px; }
 
@@ -173,16 +183,6 @@ label.with-info { display: flex; align-items: center; gap: 6px; }
 /* Credit banner, directly under the header and spanning both columns. `flex: none` because the
    body is a flex column whose one growing child is .layout — without it this would be a flex
    item eligible for shrinking and lose its padding at short viewport heights. */
-.credit {
-  flex: none; margin: 0; padding: 9px 20px;
-  background: var(--bg-1); border-bottom: 1px solid var(--border);
-  border-left: 3px solid var(--accent-dim);
-  color: var(--text-1); font-size: 12.5px; line-height: 1.5;
-}
-.credit b { color: var(--text-0); font-weight: 600; }
-.credit a { color: var(--accent); text-decoration: none; white-space: nowrap; }
-.credit a:hover { text-decoration: underline; }
-
 /* Which of Neow's three options a relic arrives as. A statement, not a control: the relic
    decides its own branch. Sized and coloured like .hint so it reads as annotation on the
    relic field above it rather than as another thing to set. */

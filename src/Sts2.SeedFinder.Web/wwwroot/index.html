@@ -8,6 +8,8 @@
 </head>
 <body>
 
+<div class="app">
+
 <header>
   <h1>Slay the Spire 2 <span>Co-op Seed Finder</span></h1>
   <span class="meta" id="meta"></span>
@@ -23,12 +25,6 @@
             title="Compare this copy with the newest release on GitHub">Check for updates</button>
   </div>
 </header>
-
-<p class="credit">
-  Huge shoutout to <b>the creator of searchthespire</b> for strong UI and functionality references.
-  Check out their site for single player seeds
-  <a href="https://searchthespire.app/" target="_blank" rel="noopener noreferrer">SearchTheSpire</a>
-</p>
 
 <div class="layout">
   <form class="criteria" id="form" autocomplete="off">
@@ -276,12 +272,30 @@
   </main>
 </div>
 
-<footer class="disclaimer">
-  <b>Unofficial fan project.</b>
-  Not affiliated with, endorsed by, or sponsored by Mega Crit.
-  <i>Slay the Spire 2</i>, its artwork and its trademarks are the property of Mega Crit.
-  Relic, card and event art and descriptions are read from your own installed copy of the game at
-  runtime; none of it is distributed with this tool.
+</div>
+
+<!-- Below the app rather than inside it: the app fills exactly one window, so this band is off
+     screen until you scroll past the end of a column, and takes nothing from the options. -->
+<footer class="about">
+  <section>
+    <h3>Credits</h3>
+    <p>
+      Huge shoutout to <b>the creator of SearchTheSpire</b> for strong UI and functionality
+      references for the tool early on. Check out their site:
+      <a href="https://searchthespire.app/" target="_blank" rel="noopener noreferrer">SearchTheSpire</a>
+    </p>
+  </section>
+  <section>
+    <h3>Unofficial fan project</h3>
+    <p>
+      Not affiliated with, endorsed by, or sponsored by Mega Crit. <i>Slay the Spire 2</i>, its
+      artwork and its trademarks are the property of Mega Crit.
+    </p>
+    <p>
+      Relic, card and event art and descriptions are read from your own installed copy of the
+      game at runtime. None of it is distributed with this tool.
+    </p>
+  </section>
 </footer>
 
 <dialog class="picker" id="picker">
