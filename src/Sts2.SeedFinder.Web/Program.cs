@@ -627,7 +627,8 @@ app.MapGet("/api/explain", (HttpContext http, IConfiguration config, string seed
             Query.RewardPriorDraws(http.Request.Query, players, Query.Characters(characters)),
             unlocks.PerPlayer,
             Query.Modifiers(http.Request.Query),
-            Query.CharacterCardPools(http.Request.Query)), json);
+            Query.CharacterCardPools(http.Request.Query),
+            Query.BonesTakers(http.Request.Query, players)), json);
     }
     catch (ArgumentException ex)
     {
@@ -812,7 +813,7 @@ app.MapGet("/api/search", async (HttpContext http, IConfiguration config) =>
             await Send("hit", Predictions.Describe(
                 hit.Seed, players, chars, hit, criteria.Ascension, criteria.Unlocks,
                 criteria.ExtraChestPicks, criteria.RewardPriorDraws(), criteria.PlayerUnlocks,
-                criteria.Modifiers, criteria.CharacterCardPools));
+                criteria.Modifiers, criteria.CharacterCardPools, criteria.BonesPickSlots()));
         }
     }
     catch (OperationCanceledException) { /* client navigated away or hit cancel */ }

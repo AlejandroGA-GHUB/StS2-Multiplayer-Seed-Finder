@@ -806,6 +806,10 @@ public static class Query
     /// ?pick= as per-slot draws off the Rewards stream, which is the only thing a prediction
     /// does with it. Zero for a player who took nothing that hands out cards.
     /// </summary>
+    /// <summary>Slots whose ?pick= is Neow's Bones, whose cost is worked out per seed.</summary>
+    public static int[] BonesTakers(IQueryCollection q, int players) =>
+        NeowPicks(q, players).Where(p => p.RelicSlug == "neows_bones").Select(p => p.Slot).ToArray();
+
     public static int[] RewardPriorDraws(
         IQueryCollection q, int players, IReadOnlyList<Character> chars)
     {
@@ -1208,7 +1212,8 @@ public static class Predictions
         int ascension = 0, UnlockState? unlocks = null, int extraChestPicks = 0,
         int[]? priorDraws = null, IReadOnlyList<UnlockState>? playerUnlocks = null,
         IReadOnlyList<RunModifier>? modifiers = null,
-        IReadOnlyList<Character>? characterCardPools = null)
+        IReadOnlyList<Character>? characterCardPools = null,
+        IReadOnlyList<int>? bonesTakers = null)
     {
         unlocks ??= new UnlockState();
 
@@ -1368,7 +1373,21 @@ public static class Predictions
             }
         }
 
-        var firstFight = Enumerable.Range(0, players).SelectMany(slot =>
+        // Neow's Bones costs this player a different amount on every seed: its shuffle, plus
+        // what the two relics it deals draw. Null for the one case the claim order decides (a
+        // Defect dealt Scroll Boxes and a relic that draws), whose fights are then not shown.
+        prior = (int[])prior.Clone();
+        var unreadable = new HashSet<int>();
+        foreach (int slot in bonesTakers ?? Array.Empty<int>())
+        {
+            if (slot < 0 || slot >= players || slot >= characters.Count) continue;
+            if (NeowRelicPayload.BonesRewardDraws(runSeed, slot, ctx, characters[slot]) is { } cost)
+                prior[slot] += cost;
+            else
+                unreadable.Add(slot);
+        }
+
+        var firstFight = Enumerable.Range(0, players).Where(slot => !unreadable.Contains(slot)).SelectMany(slot =>
             CardRewardGenerator
                 .Hallway(runSeed, slot, characters[slot],
                          CardRewardGenerator.MaxPredictableFight, ascension, Own(slot),

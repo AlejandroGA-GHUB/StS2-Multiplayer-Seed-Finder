@@ -2552,12 +2552,13 @@ function cardPoolFor(slot) {
  * PINS the slot can do this: "for any player" does not say whose stream moved.
  */
 function pinnedPick(slot) {
-  // A capsule row that names its relics settles the pick the same way. Neow's Bones does not:
-  // what it costs the stream depends on the seed, so there is no honest number to set.
+  // A capsule or Neow's Bones row that names what it hands over settles the pick the same way.
+  // Bones costs a different amount on every seed, which the server works out per result.
   const row = state.neow.find(n =>
     n.relic
     && ((n.cards?.length ?? 0) > 0
-        || ((n.relics?.length ?? 0) > 0 && neowRelicPayload(n.relic)?.kind === 'capsule'))
+        || ((n.relics?.length ?? 0) > 0 && neowRelicPayload(n.relic))
+        || (n.curse && neowRelicPayload(n.relic)?.kind === 'bones'))
     && (n.require === 'all' || n.require === `p${slot + 1}`));
   return row ? row.relic : null;
 }
@@ -2573,14 +2574,14 @@ function pinnedPick(slot) {
  * this and `pinnedPick`.
  *
  * Only rows that name a player, for the same reason the server derives nothing from an "any
- * player" row: it does not say WHOSE stream moves. Only relics that actually draw, which leaves
- * out Neow's Bones, whose shuffle length is not modelled.
+ * player" row: it does not say WHOSE stream moves. Only relics that actually draw, Neow's Bones
+ * included (its draw count is negative, meaning it depends on the seed).
  */
 function impliedPick(slot) {
   const row = state.neow.find(n =>
     n.relic
     && (n.require === 'all' || n.require === `p${slot + 1}`)
-    && (neowCardRelic(n.relic)?.draws ?? 0) > 0);
+    && (neowCardRelic(n.relic)?.draws ?? 0) !== 0);
   return row ? row.relic : null;
 }
 
@@ -2680,9 +2681,13 @@ function renderCards() {
       : [
           { label: 'Nothing that shifts rewards', value: '' },
           ...(catalog.neowCardRelics ?? [])
-            .filter(r => r.draws > 0 && allowedHere(r))
+            .filter(r => r.draws !== 0 && allowedHere(r))
             .map(r => ({
-              label: `${r.name} (${pickDraws(i, r.slug)} draw${pickDraws(i, r.slug) === 1 ? '' : 's'})`,
+              // Neow's Bones has no single number: its shuffle, plus whatever the two relics
+              // it deals draw. Each result is read with that seed's own count.
+              label: pickDraws(i, r.slug) < 0
+                ? `${r.name} (draws depend on the seed)`
+                : `${r.name} (${pickDraws(i, r.slug)} draw${pickDraws(i, r.slug) === 1 ? '' : 's'})`,
               value: r.slug,
             })),
         ];
