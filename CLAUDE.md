@@ -48,8 +48,11 @@ NOTHING to the used-card set, so treating its three Claws as drawn moves the nex
 also skips that bundle's three draws, which makes the Defect's TOTAL Scroll Boxes cost
 seed-dependent where `NeowRewardDrawCost` can only state the common case of 8.
 
-Neow's Bones is still the odd one out: it shuffles a lobby-dependent relic list, so even its draw
-cost is unsettled, and the "took at Neow" control refuses it rather than guessing.
+Neow's Bones is the one pick whose draw cost is per SEED: its shuffle plus whatever the two relics
+it deals draw (`NeowRelicPayload.BonesRewardDraws`). `RewardPriorDraws` counts it as zero and
+`RewardPriorDrawsFor(seed)` adds it; the GPU card stage follows the shuffle itself. Null, and
+declined on the GPU, only for a Defect dealt Scroll Boxes plus a drawing relic, where claim order
+decides.
 
 `docs/plan.md` holds the open queue, what was built, and the reasoning behind each decision.
 **It is gitignored and exists only in the author's checkout** — it is personal working notes, so

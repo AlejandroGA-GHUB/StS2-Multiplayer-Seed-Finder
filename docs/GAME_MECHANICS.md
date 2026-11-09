@@ -283,9 +283,12 @@ v0.111.0 runs).
   requires certainty; the display marks an uncertain curse.
 - **Known gap:** Lasting Candy is refused while any Ironclad in the lobby is on an account with
   zero finished runs. Not modelled, so a brand-new Ironclad account can see a capsule skip it.
-- Neow's Bones' own Rewards cost is seed-dependent (its shuffle plus whatever the two relics draw
-  when claimed), so it still cannot be a "took at Neow" pick, and a Bones payload pinned to a
-  player is refused alongside a card reward for that player.
+- Neow's Bones' own Rewards cost is seed-dependent: its shuffle (list length - 1) plus whatever
+  the two relics draw when claimed, worked out per seed by `BonesRewardDraws` (2026-11-08,
+  confirmed by `--verify-history` against a real fight 1 after a Bones pick). Every relic's cost
+  is fixed, so claim order does not matter, except Scroll Boxes for a Defect: its 1-in-100 Claw
+  check skips a bundle's three draws, so its cost depends on where it starts. Dealt next to a
+  relic that draws, the two orders can disagree, and that seed has no answer (null).
 
 **Hefty Tablet and Arcane Scroll: the draw shape is settled** (established against v0.110.1,
 2026-08-08). Neither relic rolls cards itself. Both hand the ordinary reward factory

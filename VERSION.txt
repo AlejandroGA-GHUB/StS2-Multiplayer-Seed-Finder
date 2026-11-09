@@ -1,26 +1,29 @@
-v1.7.0
+v1.8.0
 
-Release Date: 10/27/2026
+Release Date: 11/08/2026
 
 v0.111.0 beta steam release
 
 # CHANGELOG
 
-1. Saved searches. Set up a search, hit Save and give it a name, and Load brings the whole thing
-back later: the lobby, the characters, the ascension and every criterion. Handy for the searches
-you run again and again, like two players as Ironclad and Silent looking for Silken Tress.
+1. Small Capsule, Large Capsule and Neow's Bones can now be searched on. Pick one in the Neow
+panel, then name the relics you want it to hand over, and for Neow's Bones the curse too. Every
+result also shows what these options would give each player.
 
-2. Your presets are kept outside the app folder, so installing a new build of the seed finder
-leaves them alone. The Save and Load windows both show you exactly where they are, with a button
-to copy the path.
+2. Lead Paperweight can now be searched on. Pick it in the Neow panel, then name the colourless
+cards you want it to offer.
 
-3. Massive Scroll and Scroll Boxes can now be searched on, the same way Arcane Scroll and Hefty
-Tablet already could. Pick the relic in the Neow panel, then name the cards you want it to hand
-over.
+3. Neow's Bones can now be set under "took at Neow". Fight card rewards are then read from where
+that player's stream really starts on each seed, since what Neow's Bones costs depends on the two
+relics it deals.
 
-4. Scroll Boxes knows about bundles. It offers you two bundles of three and you keep a whole
-bundle, so cards you ask for have to turn up in the same one. Results show the two bundles
-separately instead of as a list of six.
+4. The shoutout and the fan-project notice now sit in their own band at the bottom of the page,
+reached by scrolling down, instead of always taking up space on screen.
 
-5. Loading a preset saved on an older game version still works. Anything a patch has retired is
-dropped and the tool tells you how much, instead of quietly loading a weaker search.
+# FIXES
+
+1. Massive Scroll searches and results now use your ascension. From Ascension 7 its rare odds are
+lower, and the tool was using the Ascension 0 odds, so some cards it showed were wrong.
+
+2. Map Visual now draws the map for the ascension and lobby a result was found with. Changing
+either setting after a search no longer changes the map of a result already on screen.

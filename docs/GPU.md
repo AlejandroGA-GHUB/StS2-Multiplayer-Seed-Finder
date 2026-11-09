@@ -28,7 +28,12 @@ player's deque (`RunGenerator.PlayerDeques` gives `DrawsBefore`, as `ShopDeques`
 and follows the wanted relic's index through the shuffle; it was handed over iff it lands in
 front of the number of matching rolls. Bones follows the relic through the Rewards shuffle of the
 player's list (lands at 0 or 1). The curse is one Niche draw; its certainty rule needs everyone's
-offer, so the kernel over-accepts and the CPU decides. "Any player" with two relics gets a bit per
+offer, so the kernel over-accepts and the CPU decides.
+
+**A Neow's Bones pick** is priced per seed inside the card stage: `CardFilter.BonesLayout` lists
+each relic in the taker's Bones list that draws, and the kernel walks the shuffle on the Rewards
+stream itself, following all of them at once in fixed fields, then burns the cost of the two that
+land at 0 or 1. A Defect whose list holds Scroll Boxes declines the stage. "Any player" with two relics gets a bit per
 relic, which can be met by two different players: over-accepting again, never rejecting.
 
 **The Neow payloads are three chains behind one stage.** `PayloadShapeOfSlot` says which to walk
