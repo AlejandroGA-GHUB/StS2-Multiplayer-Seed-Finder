@@ -477,7 +477,10 @@ public sealed record SearchCriteria
     /// stream moves, so it sets nothing and the explicit pick stands.
     ///
     /// Computed once per search rather than per seed — it depends on the party and the
-    /// criteria, neither of which the scan changes.
+    /// criteria, neither of which the scan changes. The one exception is Neow's Bones, whose
+    /// cost depends on what the seed deals: it counts as zero here, and
+    /// <see cref="RewardPriorDrawsFor"/> adds it per seed for the slots in
+    /// <see cref="BonesPickSlots"/>.
     /// </summary>
     public int[] RewardPriorDraws()
     {
@@ -489,8 +492,8 @@ public sealed record SearchCriteria
             var character = slot < Characters.Count ? Characters[slot] : Character.Ironclad;
             int cost = CardRewardGenerator.NeowRewardDrawCost(slug, character);
 
-            // -1 is Neow's Bones, whose shuffle length this tool does not model. Treating it as
-            // zero would be a silent lie; the validator rejects it before we get here.
+            // -1 is Neow's Bones, whose cost depends on the seed. Zero here, and added per seed
+            // by RewardPriorDrawsFor.
             draws[slot] = Math.Max(cost, 0);
         }
 
@@ -512,6 +515,47 @@ public sealed record SearchCriteria
         if (RunModifiers.TotalNeowRewardDraws(Modifiers) is { } fromModifiers)
             for (int slot = 0; slot < draws.Length; slot++) draws[slot] += fromModifiers;
 
+        return draws;
+    }
+
+    /// <summary>
+    /// Slots whose player takes Neow's Bones: an explicit pick, or a criterion that pins a slot
+    /// and names what Bones gives them, which says they took it.
+    /// </summary>
+    public IReadOnlyList<int> BonesPickSlots()
+    {
+        var slots = new List<int>();
+        foreach (var pick in NeowPicks)
+            if (pick.RelicSlug == "neows_bones" && !slots.Contains(pick.Slot)) slots.Add(pick.Slot);
+        foreach (var want in NeowCriteria)
+        {
+            if (want.Relic.Slug != "neows_bones" || !want.HasPayload || want.Requirement == SlotRequirement.Any) continue;
+            foreach (var slot in want.ResolveSlots(PlayerCount))
+                if (!slots.Contains(slot)) slots.Add(slot);
+        }
+        return slots;
+    }
+
+    /// <summary>
+    /// <see cref="RewardPriorDraws"/> for one seed, with each Neow's Bones player's cost added.
+    /// Null when a Bones player's cost is not settled by the seed (see
+    /// <see cref="NeowRelicPayload.BonesRewardDraws"/>), so their fight rewards cannot be read.
+    /// </summary>
+    public int[]? RewardPriorDrawsFor(ulong runSeed) =>
+        RewardPriorDrawsFor(runSeed, RewardPriorDraws(), BonesPickSlots());
+
+    /// <summary>The same, from a base and slots the caller already holds, for the hot path.</summary>
+    public int[]? RewardPriorDrawsFor(ulong runSeed, int[] baseDraws, IReadOnlyList<int> bonesSlots)
+    {
+        if (bonesSlots.Count == 0) return baseDraws;
+        var draws = (int[])baseDraws.Clone();
+        foreach (var slot in bonesSlots)
+        {
+            if (slot < 0 || slot >= draws.Length || slot >= Characters.Count) continue;
+            if (NeowRelicPayload.BonesRewardDraws(runSeed, slot, Context, Characters[slot]) is not { } cost)
+                return null;
+            draws[slot] += cost;
+        }
         return draws;
     }
 
@@ -725,8 +769,10 @@ public static class SeedSearcher
         bool NeowMatches(ulong runSeed) => neowPlan.Matches(runSeed);
 
         // What each player's Neow pick costs their Rewards stream before the first fight ever
-        // rolls. Resolved once: it depends on the party and the criteria, not on the seed.
-        var priorDraws = criteria.RewardPriorDraws();
+        // rolls. Resolved once: it depends on the party and the criteria, not on the seed,
+        // except for a player who took Neow's Bones, whose cost is added per seed below.
+        var baseDraws = criteria.RewardPriorDraws();
+        var bonesSlots = criteria.BonesPickSlots();
 
         // Each player's first card reward, tested against that player's own Rewards stream.
         // Roughly fourteen draws per slot, so this sits between the Neow filter and the run.
@@ -737,6 +783,11 @@ public static class SeedSearcher
             // Walk each player's stream once, as far as the deepest fight anyone asked about,
             // and cache it — fight 2 is a continuation of fight 1's stream, not a fresh one, so
             // computing them separately would both duplicate work and risk them disagreeing.
+            // A seed whose Bones cost the claim order would decide has no single answer for
+            // that player's fights, so it cannot match a card asked of them.
+            var priorDraws = criteria.RewardPriorDrawsFor(runSeed, baseDraws, bonesSlots);
+            if (priorDraws is null) return false;
+
             int deepest = DeepestFight(criteria);
             var offered = new HallwayRewards?[playerCount];
             HallwayRewards For(int slot) => offered[slot] ??= CardRewardGenerator.Hallway(
@@ -1517,16 +1568,6 @@ public static class SeedSearcher
             if (want.Relics.Distinct().Count() < want.Relics.Count)
                 throw new ArgumentException($"{want.Relic.Name} cannot hand out the same relic twice.");
 
-            // Neow's Bones moves this player's Rewards stream by its shuffle AND by whatever the
-            // two relics draw when they are claimed, which differs seed to seed. A fight reward
-            // read past it would be read from the wrong place.
-            if (shape == RelicPayloadShape.Bones && want.Requirement != SlotRequirement.Any)
-                foreach (var slot in want.ResolveSlots(c.PlayerCount))
-                    if (c.Cards.Any(x => x.Slot == slot || x.Slot < 0))
-                        throw new ArgumentException(
-                            $"Neow's Bones shifts P{slot + 1}'s card rewards by an amount that depends "
-                            + "on the seed, so it cannot be combined with a card reward for that player.");
-
             var slots = want.Requirement == SlotRequirement.Any
                 ? Enumerable.Range(0, c.PlayerCount).ToList()
                 : want.ResolveSlots(c.PlayerCount).ToList();
@@ -1674,17 +1715,8 @@ public static class SeedSearcher
                 throw new ArgumentException(
                     $"a Neow pick names P{pick.Slot + 1}, but the lobby has {c.PlayerCount} players.");
 
-            var relic = NeowRelics.Find(pick.RelicSlug)
+            _ = NeowRelics.Find(pick.RelicSlug)
                 ?? throw new ArgumentException($"'{pick.RelicSlug}' is not a relic Neow offers.");
-
-            // Neow's Bones shuffles a list whose length depends on the lobby's own Neow pool,
-            // and that shuffle is not modelled. Guessing zero would silently predict the wrong
-            // cards for every fight that player has.
-            if (CardRewardGenerator.NeowRewardDrawCost(relic.Slug, Character.Ironclad) < 0)
-                throw new ArgumentException(
-                    $"{relic.Name} shifts the card rewards by an amount this tool does not model "
-                    + "yet, so it cannot be assumed as a pick. Leave it unset and read the card "
-                    + "rewards as though nothing was taken.");
         }
 
         foreach (var group in c.NeowPicks.GroupBy(p => p.Slot).Where(g => g.Count() > 1))

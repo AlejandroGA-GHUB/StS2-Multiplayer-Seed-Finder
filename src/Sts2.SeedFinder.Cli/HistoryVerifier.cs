@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Sts2.SeedFinder.Core;
 using Sts2.SeedFinder.Core.Acts;
+using Sts2.SeedFinder.Core.Cards;
 using Sts2.SeedFinder.Core.Install;
 using Sts2.SeedFinder.Core.Neow;
 using Sts2.SeedFinder.Core.Saves;
@@ -60,6 +61,11 @@ public static class HistoryVerifier
         /// there in claim order (the option itself first), and every card.
         /// </summary>
         List<NeowTaken?> NeowPerPlayer,
+        /// <summary>
+        /// The three cards each player was offered after the first fight, or null. Floor 1 is
+        /// always a Monster room, so this is the fight the map forces.
+        /// </summary>
+        List<List<string>?> FirstFightCards,
         List<Character> Characters,
         int Ascension,
         string Seed,
@@ -386,6 +392,22 @@ public static class HistoryVerifier
                         if (dealt is null || NeowRelicPayload.FindCurse(dealt) != curse)
                             failures.Add($"P{p + 1} neows_bones curse: game {dealt ?? "(none)"}, ours {curse}");
                     }
+
+                    // What taking Bones cost this player's Rewards stream, read off fight 1: the
+                    // shuffle plus whatever the two relics drew when they were claimed.
+                    if (p < run.FirstFightCards.Count && run.FirstFightCards[p] is { } offered
+                        && NeowRelicPayload.BonesRewardDraws(runSeed, p, ctx, run.Characters[p]) is { } cost)
+                    {
+                        asserts++;
+                        var fight = CardRewardGenerator.Hallway(
+                            runSeed, p, run.Characters[p], 1, run.Ascension,
+                            playerUnlocks is { } pu2 && p < pu2.Count ? pu2[p] : unlocks,
+                            cost, run.Characters.Count > 1).Fights[0];
+                        var ours = fight.Cards.Select(c => CardCatalog.Slug(c.TypeName)).ToList();
+                        if (!ours.OrderBy(x => x).SequenceEqual(offered.OrderBy(x => x), StringComparer.OrdinalIgnoreCase))
+                            failures.Add($"P{p + 1} fight 1 after neows_bones ({cost} draws): game "
+                                         + $"{string.Join("+", offered)}, ours {string.Join("+", ours)}");
+                    }
                     break;
                 }
             }
@@ -584,7 +606,10 @@ public static class HistoryVerifier
             .Select(_ => new List<string>()).ToList();
         var neow = Enumerable.Range(0, Math.Max(characters.Count, 1))
             .Select(_ => (NeowTaken?)null).ToList();
+        var fight1 = Enumerable.Range(0, Math.Max(characters.Count, 1))
+            .Select(_ => (List<string>?)null).ToList();
         bool firstPoint = true;
+        int pointIndex = 0;
 
         if (root.TryGetProperty("map_point_history", out var mph) && mph.ValueKind == JsonValueKind.Array)
         {
@@ -651,7 +676,24 @@ public static class HistoryVerifier
                             neow[slot] = new NeowTaken(option, relicsGot, cardsGot);
                         }
                     }
+                    // The point after Neow is the first fight. Its card offer is the one a
+                    // Neow pick that draws off the Rewards stream moves.
+                    if (pointIndex == 1 && type == "monster" && point.TryGetProperty("player_stats", out var f1))
+                    {
+                        foreach (var ps in f1.EnumerateArray())
+                        {
+                            if (!ps.TryGetProperty("player_id", out var pid)) continue;
+                            if (!slotOf.TryGetValue(pid.ToString(), out int slot) || slot >= fight1.Count) continue;
+                            if (!ps.TryGetProperty("card_choices", out var cc)) continue;
+                            var offered = new List<string>();
+                            foreach (var c in cc.EnumerateArray())
+                                if (c.TryGetProperty("card", out var card) && card.TryGetProperty("id", out var cid))
+                                    offered.Add(Entry(cid.GetString()).ToLowerInvariant());
+                            if (offered.Count > 0) fight1[slot] = offered;
+                        }
+                    }
                     firstPoint = false;
+                    pointIndex++;
 
                     if (isShop && point.TryGetProperty("player_stats", out var stats))
                     {
@@ -683,7 +725,7 @@ public static class HistoryVerifier
         while (bosses.Count < acts.Count) { bosses.Add(new()); monsters.Add(new()); ancients.Add(null); }
 
         return new Visited(
-            acts, bosses, monsters, ancients, shopRelics, neow, characters,
+            acts, bosses, monsters, ancients, shopRelics, neow, fight1, characters,
             root.TryGetProperty("ascension", out var asc) && asc.ValueKind == JsonValueKind.Number ? asc.GetInt32() : 0,
             root.TryGetProperty("seed", out var s) ? s.GetString() ?? "" : "",
             root.TryGetProperty("build_id", out var bd) ? bd.GetString() ?? "" : "",

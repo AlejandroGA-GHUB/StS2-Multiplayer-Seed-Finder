@@ -119,7 +119,7 @@ public static class CardRewardGenerator
         "small_capsule" => 1,          // a relic reward: one rarity roll
         "large_capsule" => 2,          // two relics, one rarity roll each
         "scroll_boxes" => character == Character.Defect ? 8 : 6,
-        "neows_bones" => -1,           // shuffle length depends on the Neow pool; see NeowGenerator
+        "neows_bones" => -1,           // depends on the seed; see NeowRelicPayload.BonesRewardDraws
         _ => 0,
     };
 

@@ -224,7 +224,7 @@ internal static class Program
             NeowPicks = opts.NeowPicks,
             Modifiers = opts.Modifiers,
             CharacterCardPools = opts.CharacterCardPools,
-        }.RewardPriorDraws();
+        }.RewardPriorDrawsFor(SeedCodec.RunSeed(seed));
 
         for (int slot = 0; slot < opts.PlayerCount; slot++)
             foreach (var line in FightLines(seed, slot, opts, priorDraws))
@@ -236,7 +236,7 @@ internal static class Program
         Console.WriteLine("  the next monster room each time, with no shop, elite, event or rest between");
         Console.WriteLine("  them, so they have to be consecutive.");
         var told = opts.NeowPicks
-            .Where(x => CardRewardGenerator.NeowRewardDrawCost(x.RelicSlug, opts.Characters[x.Slot]) > 0)
+            .Where(x => CardRewardGenerator.NeowRewardDrawCost(x.RelicSlug, opts.Characters[x.Slot]) != 0)
             .ToList();
 
         if (told.Count > 0)
@@ -270,8 +270,15 @@ internal static class Program
     /// number and the lines printed under each hit used the other.
     /// </summary>
     private static IEnumerable<string> FightLines(
-        string seed, int slot, Options opts, int[] priorDraws)
+        string seed, int slot, Options opts, int[]? priorDraws)
     {
+        // Null when a Neow's Bones pick's cost depends on which of its two relics is claimed
+        // first, which only happens to a Defect dealt Scroll Boxes and a relic that draws.
+        if (priorDraws is null)
+        {
+            yield return $"P{slot + 1}: depends on which Neow's Bones relic is taken first";
+            yield break;
+        }
         int prior = slot < priorDraws.Length ? priorDraws[slot] : 0;
 
         var hallway = CardRewardGenerator.Hallway(
@@ -683,7 +690,7 @@ internal static class Program
         int n = 0;
         // The same numbers the search matched on, so a printed reward can never be read from a
         // different point in the stream than the one that accepted the seed.
-        var hitPriorDraws = criteria.RewardPriorDraws();
+
         foreach (var hit in SeedSearcher.Search(criteria, opts.Start, opts.Count, opts.MaxResults,
                      CancellationToken.None, candidates))
         {
@@ -732,7 +739,8 @@ internal static class Program
             {
                 int deepest = opts.Cards.Max(c => c.Fight);
                 for (int i = 0; i < opts.PlayerCount; i++)
-                    foreach (var line in FightLines(hit.Seed, i, opts, hitPriorDraws).Take(deepest))
+                    foreach (var line in FightLines(hit.Seed, i, opts,
+                                 criteria.RewardPriorDrawsFor(SeedCodec.RunSeed(hit.Seed))).Take(deepest))
                         Console.WriteLine("      " + line);
             }
             if (hit.Run is not null)
