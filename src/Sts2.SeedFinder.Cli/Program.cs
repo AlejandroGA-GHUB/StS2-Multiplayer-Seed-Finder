@@ -356,7 +356,7 @@ internal static class Program
         }
         Console.WriteLine();
         Console.WriteLine("  Counted by shops VISITED, not by floor, so skipping one shifts the rest along.");
-        Console.WriteLine("  The other two relic slots roll off a pity counter your run has already moved.");
+        Console.WriteLine("  The other two relic slots are not predicted.");
     }
 
     /// <summary>How many alternates to show per chest slot, for when the bag has been drained.</summary>

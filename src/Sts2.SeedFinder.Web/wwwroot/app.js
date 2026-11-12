@@ -948,7 +948,7 @@ const INFO = {
   shops: {
     title: 'Shop relic (third slot)',
     body: () => [
-      { lead: 'A merchant stocks three relics and only the third is knowable from the seed. Its '
+      { lead: 'A merchant stocks three relics and only the third is predicted here. Its '
             + 'rarity is fixed rather than rolled, and filling it draws no randomness at all, so '
             + 'it is simply the next relic off that player’s bag.' },
       'Each shop takes one relic off the back of your bag, so this is a fixed order rather than a '
@@ -2802,10 +2802,10 @@ function renderCards() {
 
 // ---- Shop relics ---------------------------------------------------------------------------
 //
-// A merchant stocks three relics. Only the third is knowable from the seed: its rarity is
-// hardcoded to Shop rather than rolled, and filling it draws no RNG at all, so it is simply the
-// back of that player's Shop-rarity relic bag, shuffled once during generation. The other two
-// roll against a pity counter that every reward taken so far has moved.
+// A merchant stocks three relics. Only the third is predicted: its rarity is hardcoded to Shop
+// rather than rolled, and filling it draws no RNG at all, so it is simply the back of that
+// player's Shop-rarity relic bag, shuffled once during generation. The other two roll their
+// rarity on the Shops stream since v0.113 (Rewards before it); see GAME_MECHANICS.md, shops.
 //
 // Per player, because each player has their own bag and their own merchant. The visit number is
 // a count of shops entered, not a floor, so walking past one shifts the rest along.
