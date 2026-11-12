@@ -680,6 +680,14 @@ route. Given a known route it is computable, which means these two slots are rea
 rather than a hard limit. Unbuilt because that route input means modelling the map graph, the
 same dependency elite relics carry.
 
+**v0.113 removed that blocker (read 2026-11-12, not built).** `GetDefaultRelicEntries` and a
+restocked slot now roll rarity on `PlayerRng.Shops`, and merchant cards roll rarity and upgrade
+on Shops too (`RngOverride`), so a merchant draws nothing from Rewards at all. Only merchants
+draw Shops. So slots 1 and 2 look predictable per shop VISITED, like slot 3, with no route, as
+long as each visit's Shops draw count is fixed (to confirm: card and potion stocking, and
+restocks after a purchase). Same consequence for cards: a shop no longer moves fight card
+rewards, so the "no shop between fights" assumption is now stricter than the game needs.
+
 The rest still holds:
 - They then pull from the Common/Uncommon/Rare deques, which combat and chest rewards have been
   draining since floor 1. (They pull from the BACK, which front-draining rewards do not disturb
