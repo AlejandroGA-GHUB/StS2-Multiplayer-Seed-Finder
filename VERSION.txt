@@ -1,29 +1,30 @@
-v1.8.0
+v2.0.0
 
-Release Date: 11/08/2026
+Release Date: 11/12/2026
 
-v0.111.0 beta steam release
+v0.113.0 beta steam release
+
+This version predicts v0.113.0 only. The patch changed how the game shuffles, so seeds found
+with it will not match on v0.111.0, and v1.8.0 does not match on v0.113.0.
 
 # CHANGELOG
 
-1. Small Capsule, Large Capsule and Neow's Bones can now be searched on. Pick one in the Neow
-panel, then name the relics you want it to hand over, and for Neow's Bones the curse too. Every
-result also shows what these options would give each player.
+1. The Fool can now be picked as a character, with its own cards and relics in every search,
+and as a Character Cards tickbox in Custom runs.
 
-2. Lead Paperweight can now be searched on. Pick it in the Neow panel, then name the colourless
-cards you want it to offer.
+2. The new events can be searched on: Waterfall of Obvious Secrets and Wuppy in Trouble in the
+Underdocks, Shrine of the Warlord and Thermae Nonupeipe in Glory, and Museum of Torture in Act 2.
 
-3. Neow's Bones can now be set under "took at Neow". Fight card rewards are then read from where
-that player's stream really starts on each seed, since what Neow's Bones costs depends on the two
-relics it deals.
-
-4. The shoutout and the fan-project notice now sit in their own band at the bottom of the page,
-reached by scrolling down, instead of always taking up space on screen.
+3. The curse Neow's Bones adds is now exact for every player in co-op, so it can always be
+searched on. It can also be combined with any relic Neow's Bones deals, including Kaleidoscope
+and Phial Holster.
 
 # FIXES
 
-1. Massive Scroll searches and results now use your ascension. From Ascension 7 its rare odds are
-lower, and the tool was using the Ascension 0 odds, so some cards it showed were wrong.
+1. Bosses, events, Ancients, shop relics, chests, card rewards, Neow's offer and the act maps
+all match v0.113.0 again.
 
-2. Map Visual now draws the map for the ascension and lobby a result was found with. Changing
-either setting after a search no longer changes the map of a result already on screen.
+2. When your game updates, the warning banner no longer claims Neow's offer and the Act 1 map are
+still correct, since a patch like this one can change them too.
+
+3. Checking a run played with a modded character now says so, instead of crashing.
