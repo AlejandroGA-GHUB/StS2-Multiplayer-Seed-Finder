@@ -26,8 +26,8 @@ public static class CharacterCardsModifier
     /// <summary>
     /// <c>ModelDb.AllCharacters</c> order, which is NOT <see cref="Character"/>'s order.
     ///
-    /// TRAP 1. The game lists Ironclad, Silent, Regent, Necrobinder, Defect; our enum is
-    /// declared Ironclad, Silent, Defect, Regent, Necrobinder. The tickbox list is built in the
+    /// TRAP 1. The game lists Ironclad, Silent, Regent, Necrobinder, Defect, Fool; our enum is
+    /// declared Ironclad, Silent, Defect, Regent, Necrobinder, Fool. The tickbox list is built in the
     /// game's order and <c>GetModifiersTickedOn</c> returns ticked boxes in that same order,
     /// which becomes <c>RunState.Modifiers</c> and therefore the order the hooks run in. With
     /// two or more of these on, the pools concatenate in hook order, so sorting by our enum
@@ -41,6 +41,7 @@ public static class CharacterCardsModifier
         Character.Regent,
         Character.Necrobinder,
         Character.Defect,
+        Character.Fool,
     ];
 
     /// <summary>
@@ -88,12 +89,12 @@ public static class CharacterCardsModifier
 
     /// <summary>
     /// How many tickboxes the game shows for a given character count, which is what a user
-    /// counts on screen. Five for a clean install, and more with modded characters, since
+    /// counts on screen. Six for a clean install, and more with modded characters, since
     /// <c>AllCharacters</c> is what the list expands over.
     ///
     /// TRAP 3, and the reason this is a comment rather than a feature: a modded character's
     /// tickbox unions a pool that does not exist in <c>sts2.dll</c>, so nothing here can predict
-    /// a reward under it. Only the five vanilla characters are offered, and a lobby using a
+    /// a reward under it. Only the six vanilla characters are offered, and a lobby using a
     /// modded one is not predictable at all.
     /// </summary>
     public static int TickboxCount(int characterCount) =>

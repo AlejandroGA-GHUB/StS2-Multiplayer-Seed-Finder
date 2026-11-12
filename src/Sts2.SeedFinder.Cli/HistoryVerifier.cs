@@ -768,18 +768,9 @@ public static class HistoryVerifier
         return dot >= 0 ? modelId[(dot + 1)..] : modelId;
     }
 
-    private static bool TryParseCharacter(string entry, out Character character)
-    {
-        switch (entry.ToUpperInvariant())
-        {
-            case "IRONCLAD": character = Character.Ironclad; return true;
-            case "SILENT": character = Character.Silent; return true;
-            case "DEFECT": character = Character.Defect; return true;
-            case "REGENT": character = Character.Regent; return true;
-            case "NECROBINDER": character = Character.Necrobinder; return true;
-            default: character = default; return false;
-        }
-    }
+    /// <summary>A save's character id ("FOOL") against our enum, which mirrors the game's names.</summary>
+    private static bool TryParseCharacter(string entry, out Character character) =>
+        Enum.TryParse(entry, ignoreCase: true, out character) && Enum.IsDefined(character);
 
     private static UnlockState ReadCurrentUnlocks()
     {

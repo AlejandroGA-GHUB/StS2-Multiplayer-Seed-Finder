@@ -1216,7 +1216,7 @@ function addedPoolsFor(slot) {
  * order and the picker shows it the same way.
  */
 function charCardOrder() {
-  const wanted = ['Ironclad', 'Silent', 'Regent', 'Necrobinder', 'Defect'];
+  const wanted = ['Ironclad', 'Silent', 'Regent', 'Necrobinder', 'Defect', 'Fool'];
   const known = (catalog.cardPools ?? []).map(p => p.character);
   return wanted.filter(c => known.includes(c));
 }

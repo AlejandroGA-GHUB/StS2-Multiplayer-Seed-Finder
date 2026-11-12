@@ -38,12 +38,12 @@ public sealed record UnlockState
     /// <summary>
     /// The epochs that unlock each character after the Ironclad. The game's
     /// <c>UnlockState.Characters</c> starts from every character and drops each one whose first
-    /// epoch is not revealed, so these four ARE the character unlocks. Hand-kept, like
+    /// epoch is not revealed, so these five ARE the character unlocks. Hand-kept, like
     /// <see cref="RunGenerator.DefaultActs"/>: <c>sts2seed --refresh</c> does not read that
     /// getter, so a patch adding a character has to be checked against this list by hand.
     /// </summary>
     public static readonly IReadOnlyList<string> CharacterEpochs =
-        ["Silent1Epoch", "Regent1Epoch", "Necrobinder1Epoch", "Defect1Epoch"];
+        ["Silent1Epoch", "Regent1Epoch", "Necrobinder1Epoch", "Defect1Epoch", "Fool1Epoch"];
 
     /// <summary>
     /// Whether this player has every character unlocked, which is what Kaleidoscope's

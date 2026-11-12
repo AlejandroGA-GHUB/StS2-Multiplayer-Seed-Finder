@@ -15,7 +15,8 @@ namespace Sts2.SeedFinder.Core.Cards;
 public static class CardCatalog
 {
     public static readonly Character[] Characters =
-        [Character.Ironclad, Character.Silent, Character.Defect, Character.Regent, Character.Necrobinder];
+        [Character.Ironclad, Character.Silent, Character.Defect, Character.Regent, Character.Necrobinder,
+         Character.Fool];
 
     /// <summary>Rarities a combat card reward can actually offer.</summary>
     public static readonly CardRarity[] RewardRarities =

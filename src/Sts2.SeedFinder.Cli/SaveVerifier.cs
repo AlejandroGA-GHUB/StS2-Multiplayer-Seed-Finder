@@ -58,7 +58,18 @@ public static class SaveVerifier
 
         var characters = new List<Character>();
         foreach (var p in root.GetProperty("players").EnumerateArray())
-            characters.Add(ParseCharacter(Entry(p.GetProperty("character_id").GetString())));
+        {
+            var entry = Entry(p.GetProperty("character_id").GetString());
+            if (!Enum.TryParse<Character>(entry, ignoreCase: true, out var character))
+            {
+                Console.Error.WriteLine(
+                    $"This run is played as {entry}, which is not a character this build of the game "
+                    + "ships (a mod?). Its pools are unknown, so it cannot be verified. Start a run "
+                    + "with an unmodded character and try again.");
+                return 1;
+            }
+            characters.Add(character);
+        }
 
         bool isMultiplayer = characters.Count > 1;
         var runSeed = SeedCodec.RunSeed(seedString!);
@@ -384,16 +395,6 @@ public static class SaveVerifier
         int dot = modelId.IndexOf('.');
         return dot >= 0 ? modelId[(dot + 1)..] : modelId;
     }
-
-    private static Character ParseCharacter(string entry) => entry.ToUpperInvariant() switch
-    {
-        "IRONCLAD" => Character.Ironclad,
-        "SILENT" => Character.Silent,
-        "DEFECT" => Character.Defect,
-        "REGENT" => Character.Regent,
-        "NECROBINDER" => Character.Necrobinder,
-        _ => throw new InvalidOperationException($"Unknown character in save: {entry}"),
-    };
 
     private static UnlockState ReadUnlocks(string progressPath)
     {
