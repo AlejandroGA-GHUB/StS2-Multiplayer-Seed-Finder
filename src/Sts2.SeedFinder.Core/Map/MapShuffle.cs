@@ -7,25 +7,16 @@ namespace Sts2.SeedFinder.Core.Map;
 internal static class MapShuffle
 {
     /// <summary>
-    /// Descending Fisher-Yates, the same algorithm RunGenerator.Shuffle implements. "Unstable"
-    /// because the outcome depends on the order it was handed, so callers that want a
-    /// reproducible result from an arbitrarily ordered list must sort first.
+    /// <see cref="Rng.UnstableShuffle{T}(List{T})"/>. "Unstable" because the outcome depends on
+    /// the order it was handed, so callers that want a reproducible result from an arbitrarily
+    /// ordered list must sort first.
     /// </summary>
-    public static void Unstable<T>(List<T> list, Rng rng)
-    {
-        int n = list.Count;
-        while (n > 1)
-        {
-            n--;
-            int k = rng.NextInt(n + 1);
-            (list[k], list[n]) = (list[n], list[k]);
-        }
-    }
+    public static void Unstable<T>(List<T> list, Rng rng) => rng.UnstableShuffle(list);
 
     /// <summary>
     /// Sort, then shuffle. The sort is what makes it "stable" in the game's sense: two lists
-    /// holding the same items in different orders come out identical. Both cost the same draws,
-    /// since a shuffle of n always spends n-1 whatever the contents.
+    /// holding the same items in different orders come out identical. Both cost the same single
+    /// draw whatever the contents.
     /// </summary>
     public static void Stable<T>(List<T> list, Rng rng, IComparer<T>? comparer = null)
     {

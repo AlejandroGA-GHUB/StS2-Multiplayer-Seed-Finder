@@ -3380,13 +3380,15 @@ function relicPayloadRow(pay) {
   }
   if (pay.curse) {
     const curseName = cardNames.get(pay.curse) ?? pay.curse;
-    const p = el('span', 'pill is-card is-curse' + (wantedCurse.has(pay.curse) && pay.curseCertain ? ' is-match' : ''));
+    const p = el('span', 'pill is-card is-curse' + (wantedCurse.has(pay.curse) ? ' is-match' : ''));
     p.appendChild(iconFor(pay.curse, curseName, 20, 'card'));
-    p.appendChild(el('span', null, pay.curseCertain ? curseName : `${curseName} (if taken first)`));
-    if (!pay.curseCertain)
-      p.title = 'Another option at this table draws from the same stream when it is taken, so '
-        + 'this is the curse only if this player resolves Neow first.';
+    p.appendChild(el('span', null, curseName));
     offer.appendChild(withTip(p, pay.curse, curseName, 'card'));
+  } else if (pay.relic === 'neows_bones') {
+    const p = el('span', 'pill is-card is-curse', 'Curse depends on which relic is claimed first');
+    p.title = 'A capsule here could pull War Paint or Whetstone, which draw from the same stream '
+      + 'as the curse, and which one it pulls depends on the order the two relics are claimed.';
+    offer.appendChild(p);
   }
   row.appendChild(offer);
   return row;
@@ -4028,12 +4030,6 @@ function neowRelicPayload(slug) {
 }
 
 /**
- * Relics whose pickup draws from the stream Neow's Bones' curse comes off, so the curse cannot
- * be promised alongside them. The server refuses the pair; this keeps the picker from offering it.
- */
-const MOVES_BONES_CURSE = new Set(['kaleidoscope', 'new_leaf', 'neows_bones', 'small_capsule', 'large_capsule']);
-
-/**
  * What a capsule or Neow's Bones row can name.
  *
  * A capsule pulls from its own player's bag: the shared relics plus that character's, so a row
@@ -4361,7 +4357,6 @@ function renderNeow() {
           ordered: false,
           unique: true,
           itemFor: slug => pool.find(r => r.slug === slug),
-          disableAt: r => relicPayload.kind === 'bones' && !!crit.curse && MOVES_BONES_CURSE.has(r.slug),
           hint: relicPayload.kind === 'bones'
             ? 'Neow’s Bones hands over two of Neow’s own options. Name one or both. Close this '
               + 'when you have the ones you want.'
@@ -4398,21 +4393,10 @@ function renderNeow() {
             [{ title: 'Curse', items: curses }], 'card');
           if (!picked) return;
           crit.curse = picked.slug;
-          // A relic that moves the curse cannot be named alongside one.
-          crit.relics = crit.relics.filter(s => !MOVES_BONES_CURSE.has(s));
           renderNeow();
         };
         row.appendChild(curseField);
 
-        if (crit.curse) {
-          const why = el('div', 'branch span');
-          why.append(
-            el('span', 'branch-tag', 'Curse'),
-            el('span', null, 'only matched where nobody at the table can move it first. It comes '
-              + 'off a stream the whole run shares, and a Kaleidoscope, New Leaf or capsule taken '
-              + 'by anyone would draw from it too.'));
-          row.appendChild(why);
-        }
       }
     } else if (chosen) {
       crit.relics = [];

@@ -99,4 +99,36 @@ public sealed class Rng
     /// test a candidate seed with a single draw and no allocation.
     /// </summary>
     public int NextItemIndex(int count) => NextInt(0, count);
+
+    /// <summary>Rng.NextUnsignedLong — one raw 64-bit draw.</summary>
+    public ulong NextUnsignedLong()
+    {
+        Counter++;
+        return _random.NextULong();
+    }
+
+    /// <summary>
+    /// ListExtensions.UnstableShuffle as of v0.113: ONE draw off this stream seeds a fresh
+    /// <see cref="Rng"/>, and a descending Fisher-Yates runs on that instead. So a shuffle of any
+    /// length, including 0 or 1, costs its parent exactly one draw. Before v0.113 the swaps were
+    /// drawn off the parent itself, at n - 1 draws.
+    /// </summary>
+    public void UnstableShuffle<T>(Span<T> items)
+    {
+        var sub = new Rng(NextUnsignedLong());
+        int n = items.Length;
+        while (n > 1)
+        {
+            n--;
+            int k = sub.NextInt(n + 1);
+            (items[k], items[n]) = (items[n], items[k]);
+        }
+    }
+
+    /// <inheritdoc cref="UnstableShuffle{T}(Span{T})"/>
+    public void UnstableShuffle<T>(List<T> list) =>
+        UnstableShuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(list));
+
+    /// <summary>What an <see cref="UnstableShuffle{T}(Span{T})"/> costs this stream, without the list.</summary>
+    public void BurnShuffle() => NextUnsignedLong();
 }

@@ -102,7 +102,8 @@ public static class CardRewardGenerator
     ///
     /// Scroll Boxes is listed at its floor. It draws 6 for the two bundles, plus one extra
     /// per bundle for Defect only (a 1-in-100 all-Claw check), so a Defect player's cost is 8.
-    /// Neow's Bones shuffles the other Neow relics, which is <c>count - 1</c> draws.
+    /// Neow's Bones draws only what the two relics it deals draw: its shuffle is on
+    /// NonCombatGeneration since v0.113.
     ///
     /// Lead Paperweight, Lost Coffer and both Capsules were confirmed against finished v0.110.1
     /// and v0.111.0 runs, whose fight 1 matched only at these offsets. Kaleidoscope is from

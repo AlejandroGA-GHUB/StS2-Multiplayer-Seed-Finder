@@ -110,6 +110,9 @@ public struct CardFilterParams
     /// <summary>GameHash.Deterministic(SnakeCase("Rewards")), hashed host-side.</summary>
     public ulong RewardsNameHash;
 
+    /// <summary>The same for "NonCombatGeneration", the stream Neow's Bones shuffles on.</summary>
+    public ulong NonCombatNameHash;
+
     /// <summary>CardRarityOdds' rare base, which Scarcity (A7+) halves. Resolved host-side.</summary>
     public float RareOdds;
 
@@ -327,12 +330,14 @@ public static class CardFilter
     }
 
     /// <summary>
-    /// Walk the Bones shuffle on <paramref name="rng"/> and return what the two relics it deals
-    /// draw when claimed. Every relic that draws is followed through the swaps at once, in
-    /// fixed fields rather than an array, and the ones ending at 0 or 1 are the ones dealt.
+    /// Walk the Bones shuffle on <paramref name="nonCombat"/>, the player's NonCombatGeneration
+    /// stream, and return what the two relics it deals draw off Rewards when claimed. Every relic
+    /// that draws is followed through the swaps at once, in fixed fields rather than an array,
+    /// and the ones ending at 0 or 1 are the ones dealt.
     /// </summary>
-    private static int BonesClaimDraws(ref GpuRandom rng, CardCriteriaView c, int at)
+    private static int BonesClaimDraws(ref GpuRandom nonCombat, CardCriteriaView c, int at)
     {
+        var rng = nonCombat.ShuffleStream();
         int length = c.BonesOfSlot[at];
         int count = c.BonesOfSlot[at + 1];
         int p0 = Tracked(c, at, count, 0), p1 = Tracked(c, at, count, 1), p2 = Tracked(c, at, count, 2);
@@ -734,12 +739,15 @@ public static class CardFilter
     {
         var rng = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.RewardsNameHash);
 
-        // Neow's Bones costs a different amount on every seed: its shuffle, then whatever the
-        // two relics it deals draw when they are claimed. The shuffle is walked for real, which
-        // spends its draws, and the claims are burned after it.
+        // Neow's Bones costs a different amount on every seed: whatever the two relics it deals
+        // draw when they are claimed. Which two is a shuffle on NonCombatGeneration, walked for
+        // real, and the claims are burned off Rewards.
         int bonesAt = slot * BonesStride;
         if (criteria.BonesOfSlot[bonesAt] > 0)
-            rng.Burn(BonesClaimDraws(ref rng, criteria, bonesAt));
+        {
+            var nonCombat = GpuRandom.Named(unchecked(runSeed + (ulong)slot), p.NonCombatNameHash);
+            rng.Burn(BonesClaimDraws(ref nonCombat, criteria, bonesAt));
+        }
 
         // Whatever that player's Neow pick already spent. Zero for the great majority of
         // picks, and the whole reason the ten stream-drawing options need naming at all.

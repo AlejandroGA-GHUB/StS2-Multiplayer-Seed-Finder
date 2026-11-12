@@ -74,7 +74,7 @@ public static class NeowGenerator
         //    player's pool and not another's in the same lobby.
         positives.RemoveAll(r => !ctx.IsAllowedFor(r, slot));
 
-        // 7. Shuffle (consumes count-1 draws) and take the first two.
+        // 7. Shuffle (one draw, seeding the swaps' own stream) and take the first two.
         Shuffle(positives, rng);
         return new NeowOffer(curse, positives[0], positives[1]);
     }
@@ -90,18 +90,5 @@ public static class NeowGenerator
 
     private static void Remove(List<NeowRelic> list, string slug) => list.RemoveAll(r => r.Slug == slug);
 
-    /// <summary>
-    /// ListExtensions.UnstableShuffle — a reverse Fisher-Yates whose exact draw count and
-    /// swap order must match the game.
-    /// </summary>
-    private static void Shuffle<T>(List<T> list, Rng rng)
-    {
-        int n = list.Count;
-        while (n > 1)
-        {
-            n--;
-            int k = rng.NextInt(n + 1);
-            (list[k], list[n]) = (list[n], list[k]);
-        }
-    }
+    private static void Shuffle<T>(List<T> list, Rng rng) => rng.UnstableShuffle(list);
 }

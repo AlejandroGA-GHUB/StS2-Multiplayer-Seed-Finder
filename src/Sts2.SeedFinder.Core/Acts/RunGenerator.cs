@@ -335,7 +335,7 @@ public static class RunGenerator
         var shared = ActData.SharedAncients
             .Where(_ => unlocks.IsEpochRevealed(ActData.SharedAncientEpoch))
             .ToArray();
-        Shuffle(shared, rng);
+        rng.UnstableShuffle<string>(shared);
 
         var sharedSubsets = new ArraySegment<string>[acts.Length];
         for (int i = 0; i < acts.Length; i++) sharedSubsets[i] = ArraySegment<string>.Empty;
@@ -415,7 +415,7 @@ public static class RunGenerator
         //    act; the copy here exists because the shuffle scrambles it and the result is handed
         //    out in GeneratedAct.
         var events = new List<string>(act.EventsFor(unlocks));
-        Shuffle(events, rng);
+        rng.UnstableShuffle(events);
 
         // 2. Weak, then regular encounters — both accumulate into the same list, so the
         //    tag-repeat check for the first regular draw sees the last weak encounter.
@@ -535,12 +535,12 @@ public static class RunGenerator
             if (source is not null)
             {
                 var deque = new List<PoolRelic>(source);
-                Shuffle(deque, rng);
+                rng.UnstableShuffle(deque);
                 sharedDeques![plan.Shared[i].Rarity] = deque;   // chests pull from the FRONT, so no reverse
             }
             else
             {
-                BurnShuffle(rng, plan.Shared[i].Count);
+                rng.BurnShuffle();
             }
         }
 
@@ -555,13 +555,13 @@ public static class RunGenerator
                 if (source is not null)
                 {
                     var deque = new List<PoolRelic>(source);
-                    Shuffle(deque, rng);
+                    rng.UnstableShuffle(deque);
                     deque.Reverse();   // shops pull from the BACK, one per visit
                     result!.Add(deque);
                 }
                 else
                 {
-                    BurnShuffle(rng, bag.Layout[i].Count);
+                    rng.BurnShuffle();
                 }
             }
         }
@@ -571,10 +571,9 @@ public static class RunGenerator
     /// <summary>
     /// How many UpFront draws the relic-bag shuffles take, before act generation starts.
     ///
-    /// A shuffle of n costs exactly n-1 draws whatever it produces, and every bounded draw
-    /// consumes one step of the stream regardless of its bound, so the whole of
-    /// <see cref="PopulateRelicGrabBags"/> collapses to a single number for anything that only
-    /// needs to arrive at the right stream position. Materialising or burning a deque changes
+    /// A shuffle costs exactly one draw whatever its length (v0.113; n-1 before that), so the
+    /// whole of <see cref="PopulateRelicGrabBags"/> collapses to one draw per deque for anything
+    /// that only needs to arrive at the right stream position. Materialising or burning a deque changes
     /// nothing here, which is why the flags are not parameters.
     ///
     /// Exists for the accelerator, which cannot walk the bags: it has no dictionaries, no pool
@@ -589,10 +588,8 @@ public static class RunGenerator
     {
         var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: false, withChest: false);
 
-        int draws = 0;
-        foreach (var (_, count) in plan.Shared) draws += count > 1 ? count - 1 : 0;
-        foreach (var bag in plan.Players)
-            foreach (var (_, count) in bag.Layout) draws += count > 1 ? count - 1 : 0;
+        int draws = plan.Shared.Length;
+        foreach (var bag in plan.Players) draws += bag.Layout.Length;
         return draws;
     }
 
@@ -600,8 +597,8 @@ public static class RunGenerator
     /// One of a player's relic deques, located within the UpFront stream.
     /// </summary>
     /// <param name="DrawsBefore">
-    /// Draws taken by every shuffle ahead of this one. Its own shuffle then costs
-    /// <c>Relics.Count - 1</c>.
+    /// Draws taken by every shuffle ahead of this one, one per deque. Its own shuffle is then the
+    /// next draw, which seeds the stream its swaps run on.
     /// </param>
     /// <param name="Relics">The deque's contents in POOL order, before shuffling.</param>
     public sealed record ShopDeque(int DrawsBefore, IReadOnlyList<PoolRelic> Relics);
@@ -634,8 +631,7 @@ public static class RunGenerator
         var plan = PlanFor(characters, unlocks, playerUnlocks, withShop: false, withChest: false);
         var result = new ShopDeque?[characters.Count];
 
-        int draws = 0;
-        foreach (var (_, count) in plan.Shared) draws += count > 1 ? count - 1 : 0;
+        int draws = plan.Shared.Length;
 
         for (int p = 0; p < plan.Players.Length; p++)
         {
@@ -644,7 +640,7 @@ public static class RunGenerator
             {
                 if (bag.Layout[i].Rarity == rarity)
                     result[p] = new ShopDeque(draws, OfRarity(bag.Pool, rarity));
-                draws += bag.Layout[i].Count > 1 ? bag.Layout[i].Count - 1 : 0;
+                draws++;
             }
         }
         return result;
@@ -666,22 +662,22 @@ public static class RunGenerator
         var rng = new Rng(runSeed, GameHash.SnakeCase("UpFront"));
         var result = new Dictionary<string, List<PoolRelic>>(3, StringComparer.Ordinal);
 
-        foreach (var (_, count) in plan.Shared) BurnShuffle(rng, count);
+        for (int i = 0; i < plan.Shared.Length; i++) rng.BurnShuffle();
         for (int p = 0; p < slot; p++)
-            foreach (var (_, count) in plan.Players[p].Layout) BurnShuffle(rng, count);
+            for (int i = 0; i < plan.Players[p].Layout.Length; i++) rng.BurnShuffle();
 
         var bag = plan.Players[slot];
-        foreach (var (rarity, count) in bag.Layout)
+        foreach (var (rarity, _) in bag.Layout)
         {
             if (ChestRarities.Contains(rarity))
             {
                 var deque = new List<PoolRelic>(OfRarity(bag.Pool, rarity));
-                Shuffle(deque, rng);
+                rng.UnstableShuffle(deque);
                 result[rarity] = deque;
             }
             else
             {
-                BurnShuffle(rng, count);
+                rng.BurnShuffle();
             }
         }
         return result;
@@ -887,33 +883,4 @@ public static class RunGenerator
         }
         return order;
     }
-
-    private static void BurnShuffle(Rng rng, int count)
-    {
-        for (int n = count; n > 1; n--) rng.NextInt(n);
-    }
-
-    /// <summary>ListExtensions.UnstableShuffle — reverse Fisher-Yates, exact draw order.</summary>
-    /// <summary>
-    /// Reverse Fisher-Yates, matching <c>ListExtensions.UnstableShuffle</c>. Descending, so the
-    /// BACK of the list settles first and the FRONT settles last, which is why shop relics (drawn
-    /// from the back) and chest relics (drawn from the front) behave differently under a partial
-    /// pass. Oracle-verified.
-    ///
-    /// Takes a span so arrays and lists share one implementation, and so the list case indexes
-    /// backing storage directly rather than through List's bounds-checked indexer twice a swap.
-    /// </summary>
-    private static void Shuffle<T>(Span<T> items, Rng rng)
-    {
-        int n = items.Length;
-        while (n > 1)
-        {
-            n--;
-            int k = rng.NextInt(n + 1);
-            (items[k], items[n]) = (items[n], items[k]);
-        }
-    }
-
-    private static void Shuffle<T>(List<T> list, Rng rng) =>
-        Shuffle(CollectionsMarshal.AsSpan(list), rng);
 }

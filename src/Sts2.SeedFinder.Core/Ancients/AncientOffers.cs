@@ -280,17 +280,7 @@ public static class AncientOffers
         return picks.Take(3).ToList();
     }
 
-    /// <summary>ListExtensions.UnstableShuffle — reverse Fisher-Yates, n-1 draws.</summary>
-    private static void Shuffle<T>(List<T> list, Rng rng)
-    {
-        int n = list.Count;
-        while (n > 1)
-        {
-            n--;
-            int k = rng.NextInt(n + 1);
-            (list[k], list[n]) = (list[n], list[k]);
-        }
-    }
+    private static void Shuffle<T>(List<T> list, Rng rng) => rng.UnstableShuffle(list);
 
     // ---- Naming ------------------------------------------------------------------------
 

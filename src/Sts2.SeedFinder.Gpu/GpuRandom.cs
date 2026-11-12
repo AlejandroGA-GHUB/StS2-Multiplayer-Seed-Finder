@@ -152,6 +152,32 @@ public struct GpuRandom
     }
 
     /// <summary>
+    /// <c>ListExtensions.UnstableShuffle</c>'s own stream (v0.113+): one draw off this one seeds
+    /// a fresh generator, and the swaps are drawn from that. So a shuffle of any length costs
+    /// its parent exactly one draw.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public GpuRandom ShuffleStream() => new(NextULongInner());
+
+    /// <summary>
+    /// Where the entry at <paramref name="pos"/> of a <paramref name="length"/>-long list ends up
+    /// after <c>UnstableShuffle</c> on this stream, without shuffling anything. The shuffle is a
+    /// descending Fisher-Yates, so it is a sequence of swaps and one index can be followed through
+    /// them. Spends this stream's one draw.
+    /// </summary>
+    public int FollowShuffle(int length, int pos)
+    {
+        var s = ShuffleStream();
+        for (int n = length - 1; n >= 1; n--)
+        {
+            int k = s.NextInt(n + 1);
+            if (pos == k) pos = n;
+            else if (pos == n) pos = k;
+        }
+        return pos;
+    }
+
+    /// <summary>
     /// The game's named-generator constructor, <c>new Rng(seed, name)</c>, which derives a
     /// decorrelated stream as <c>seed + hash(name)</c>. Kernels have no strings, so the name
     /// is hashed host-side once and passed in as the constant it always was.

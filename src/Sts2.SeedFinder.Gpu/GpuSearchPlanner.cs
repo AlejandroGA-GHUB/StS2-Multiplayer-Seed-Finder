@@ -419,6 +419,7 @@ public sealed class GpuSearchPlanner : IDisposable
         p = new CardFilterParams
         {
             RewardsNameHash = GameHash.Deterministic(GameHash.SnakeCase("Rewards")),
+            NonCombatNameHash = GameHash.Deterministic(GameHash.SnakeCase("NonCombatGeneration")),
             RareOdds = criteria.Ascension >= CardRewardGenerator.Scarcity ? 0.0149f : 0.03f,
             RarityGrowth = criteria.Ascension >= CardRewardGenerator.Scarcity ? 0.005f : 0.01f,
             PlayerCount = criteria.PlayerCount,

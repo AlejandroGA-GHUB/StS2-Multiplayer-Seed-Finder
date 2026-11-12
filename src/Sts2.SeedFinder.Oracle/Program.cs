@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using Sts2.SeedFinder.Core;
+using Sts2.SeedFinder.Core.Acts;
 using Sts2.SeedFinder.Core.Ancients;
 using Sts2.SeedFinder.Core.Neow;
 
@@ -179,13 +180,47 @@ internal static class Program
         var il = p.GetGetMethod(nonPublic: true)?.GetMethodBody()?.GetILAsByteArray()
                  ?? throw new InvalidOperationException($"{typeName}.{property} has no IL body");
 
+        // Walk the IL opcode by opcode, so a metadata token's bytes are never read as a literal.
+        // A plain byte scan did exactly that once v0.113 built CardsVar from an int.
         var found = new List<int>();
-        for (int i = 0; i < il.Length; i++)
+        for (int i = 0; i < il.Length;)
         {
-            if (il[i] >= 0x16 && il[i] <= 0x1E) found.Add(il[i] - 0x16);
-            else if (il[i] == 0x1F && i + 1 < il.Length) { found.Add(il[i + 1]); i++; }
+            var op = il[i] == 0xFE && i + 1 < il.Length ? TwoByteOps[il[i + 1]] : OneByteOps[il[i]];
+            i += op.Size;
+            switch (op.Value)
+            {
+                case >= 0x16 and <= 0x1E: found.Add(op.Value - 0x16); break;   // ldc.i4.0 .. ldc.i4.8
+                case 0x1F: found.Add((sbyte)il[i]); break;                      // ldc.i4.s
+                case 0x20: found.Add(BitConverter.ToInt32(il, i)); break;       // ldc.i4
+            }
+            i += op.OperandType switch
+            {
+                System.Reflection.Emit.OperandType.InlineNone => 0,
+                System.Reflection.Emit.OperandType.ShortInlineBrTarget
+                    or System.Reflection.Emit.OperandType.ShortInlineI
+                    or System.Reflection.Emit.OperandType.ShortInlineVar => 1,
+                System.Reflection.Emit.OperandType.InlineVar => 2,
+                System.Reflection.Emit.OperandType.InlineI8
+                    or System.Reflection.Emit.OperandType.InlineR => 8,
+                System.Reflection.Emit.OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, i),
+                _ => 4,
+            };
         }
         return found.ToArray();
+    }
+
+    private static readonly System.Reflection.Emit.OpCode[] OneByteOps = new System.Reflection.Emit.OpCode[256];
+    private static readonly System.Reflection.Emit.OpCode[] TwoByteOps = new System.Reflection.Emit.OpCode[256];
+
+    static Program()
+    {
+        foreach (var f in typeof(System.Reflection.Emit.OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static))
+        {
+            var op = (System.Reflection.Emit.OpCode)f.GetValue(null)!;
+            ushort v = (ushort)op.Value;
+            if (op.Size == 1) OneByteOps[v] = op;
+            else TwoByteOps[v & 0xFF] = op;
+        }
     }
 
     // ---- checks ---------------------------------------------------------
@@ -365,16 +400,7 @@ internal static class Program
         return (List<int>)m.Invoke(null, new object[] { items, rng })!;
     }
 
-    private static void MyShuffle<T>(List<T> list, Sts2.SeedFinder.Core.Rng rng)
-    {
-        int n = list.Count;
-        while (n > 1)
-        {
-            n--;
-            int k = rng.NextInt(n + 1);
-            (list[k], list[n]) = (list[n], list[k]);
-        }
-    }
+    private static void MyShuffle<T>(List<T> list, Sts2.SeedFinder.Core.Rng rng) => rng.UnstableShuffle(list);
 
     /// <summary>
     /// The Ascension 10 second-boss draw, against the game's own <c>Rng.NextItem</c>.
@@ -942,7 +968,11 @@ internal static class Program
 
     /// <summary>
     /// The capsules' and Neow's Bones' draws, against the GAME's RelicFactory.RollRarity,
-    /// Rng.Shuffle and Rng.NextItem, and Bones' curse list against the game's curse pool.
+    /// ListExtensions.UnstableShuffle and Rng.NextItem, and Bones' curse list against the game's
+    /// curse pool. The curse is replayed on the game's NonCombatGeneration stream with what each
+    /// dealt relic draws from it when claimed (Kaleidoscope's two StableShuffles, Phial Holster's
+    /// two potions); a deal with a capsule needs the player's bag and is left to
+    /// <c>--verify-history</c>.
     ///
     /// What this cannot reach is the relic deques themselves and Neow's list of options, which
     /// both need a live RunState. Those are what <c>--verify-history</c> checks, against relics
@@ -955,13 +985,16 @@ internal static class Program
         var rngType = _sts2.GetType("MegaCrit.Sts2.Core.Random.Rng", throwOnError: true)!;
         var roll = _sts2.GetTypes().FirstOrDefault(t => t.Name == "RelicFactory")
             ?.GetMethod("RollRarity", BindingFlags.Public | BindingFlags.Static, new[] { rngType });
-        var shuffle = rngType.GetMethods().FirstOrDefault(m => m.Name == "Shuffle" && m.IsGenericMethod)
+        var shuffle = _sts2.GetType("MegaCrit.Sts2.Core.Extensions.ListExtensions")
+            ?.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(x => x.Name == "UnstableShuffle" && x.GetParameters().Length == 2)
             ?.MakeGenericMethod(typeof(string));
         var nextItem = rngType.GetMethods()
             .FirstOrDefault(m => m.Name == "NextItem" && m.IsGenericMethod && m.GetParameters().Length == 1)
             ?.MakeGenericMethod(typeof(string));
         if (roll is null || shuffle is null || nextItem is null)
-            return Check(name, false, "could not find RollRarity(Rng), Rng.Shuffle<T> or Rng.NextItem<T>");
+            return Check(name, false, "could not find RollRarity(Rng), ListExtensions.UnstableShuffle<T> or Rng.NextItem<T>");
+        int curses = 0;
 
         // 1. Bones' curse list: the curse pool's cards, minus those that refuse to be generated.
         var pool = CursePoolTypeNames();
@@ -986,31 +1019,43 @@ internal static class Program
                     if (a != b) bad.Add($"seed {seed} P{slot + 1} roll {i + 1}: game {b}, ours {a}");
                 }
 
-                // 3. The Bones shuffle, through the game's own Rng.Shuffle.
+                // 3. The Bones shuffle, through the game's own UnstableShuffle on the player's
+                //    NonCombatGeneration stream, then 4. the curse off the same stream.
                 foreach (int players in new[] { 1, 2 })
                 {
                     if (slot >= players) continue;
                     var ctx = new NeowContext { PlayerCount = players };
                     var list = NeowRelicPayload.BonesList(slot, ctx).Select(r => r.Slug).ToList();
-                    shuffle.Invoke(NewGameRng(unchecked(runSeed + (ulong)slot), "rewards"), new object[] { list });
-                    var mine = NeowRelicPayload.BonesRelics(runSeed, slot, ctx).Select(r => r.Slug).ToList();
+                    var ncg = NewGameRng(unchecked(runSeed + (ulong)slot), "non_combat_generation");
+                    shuffle.Invoke(null, new object[] { list, ncg });
+                    var bones = NeowRelicPayload.BonesRelics(runSeed, slot, ctx);
+                    var mine = bones.Select(r => r.Slug).ToList();
                     if (!mine.SequenceEqual(list.Take(2)))
                         bad.Add($"seed {seed} {players}P P{slot + 1} bones: game {string.Join("+", list.Take(2))}, "
                                 + $"ours {string.Join("+", mine)}");
+
+                    if (mine.Any(s => NeowRelicPayload.ShapeOf(s) == RelicPayloadShape.Capsule)) continue;
+                    foreach (var dealt in mine)
+                    {
+                        if (dealt == "kaleidoscope")
+                            for (int i = 0; i < 2; i++) shuffle.Invoke(null, new object[] { new List<string> { "a", "b", "c", "d" }, ncg });
+                        if (dealt == "phial_holster")
+                            for (int i = 0; i < 2; i++) { GameNextFloat(ncg); GameNextInt(ncg, 0, 5); }
+                    }
+                    var curse = (string)nextItem.Invoke(ncg, new object[] { NeowRelicPayload.BonesCursePool })!;
+                    var ourCurse = NeowRelicPayload.BonesCurse(runSeed, slot, ctx, bones,
+                        Enumerable.Repeat(Character.Ironclad, players).ToList(), new UnlockState(), null);
+                    curses++;
+                    if (curse != ourCurse)
+                        bad.Add($"seed {seed} {players}P P{slot + 1} curse ({string.Join("+", mine)}): game {curse}, ours {ourCurse}");
                 }
             }
-
-            // 4. The curse: one NextItem off the run's Niche stream.
-            var curse = (string)nextItem.Invoke(NewGameRng(runSeed, "niche"),
-                                                new object[] { NeowRelicPayload.BonesCursePool })!;
-            if (curse != NeowRelicPayload.BonesCurse(runSeed))
-                bad.Add($"seed {seed} curse: game {curse}, ours {NeowRelicPayload.BonesCurse(runSeed)}");
         }
 
         return Check(name, bad.Count == 0,
             bad.Count == 0
-                ? $"500 seeds x 2 slots: capsule rarity rolls, the Bones shuffle (1P and 2P) and the "
-                  + $"curse pick all matched; curse list matches the game's {generatable.Length} of {pool.Count}"
+                ? $"500 seeds x 2 slots: capsule rarity rolls, the Bones shuffle (1P and 2P) and "
+                  + $"{curses} curse picks all matched; curse list matches the game's {generatable.Length} of {pool.Count}"
                 : string.Join(" | ", bad));
     }
 
@@ -1099,20 +1144,25 @@ internal static class Program
     {
         var bad = new List<string>();
         // Cover the pool sizes Neow actually produces (roughly 12-17 positives).
-        foreach (int size in new[] { 2, 3, 9, 12, 13, 14, 15, 16, 17, 30 })
+        // 0 and 1 included: since v0.113 even those spend a draw, which the follow-up draw shows.
+        foreach (int size in new[] { 0, 1, 2, 3, 9, 12, 13, 14, 15, 16, 17, 30 })
         {
             for (ulong seed = 0; seed < 40 && bad.Count < 3; seed++)
             {
                 var mine = Enumerable.Range(0, size).ToList();
                 var theirs = Enumerable.Range(0, size).ToList();
-                MyShuffle(mine, new Sts2.SeedFinder.Core.Rng(seed * 6364136223846793005uL + (ulong)size));
-                GameShuffle(theirs, NewGameRng(seed * 6364136223846793005uL + (ulong)size));
-                if (!mine.SequenceEqual(theirs))
-                    bad.Add($"size={size} seed#{seed}: ours=[{string.Join(",", mine)}] game=[{string.Join(",", theirs)}]");
+                var ourRng = new Sts2.SeedFinder.Core.Rng(seed * 6364136223846793005uL + (ulong)size);
+                var gameRng = NewGameRng(seed * 6364136223846793005uL + (ulong)size);
+                MyShuffle(mine, ourRng);
+                GameShuffle(theirs, gameRng);
+                int ourNext = ourRng.NextInt(0, 1000), gameNext = GameNextInt(gameRng, 0, 1000);
+                if (!mine.SequenceEqual(theirs) || ourNext != gameNext)
+                    bad.Add($"size={size} seed#{seed}: ours=[{string.Join(",", mine)}]+{ourNext} "
+                            + $"game=[{string.Join(",", theirs)}]+{gameNext}");
             }
         }
         return Check("ListExtensions.UnstableShuffle", bad.Count == 0,
-            bad.Count == 0 ? "10 sizes x 40 seeds matched" : string.Join(" | ", bad));
+            bad.Count == 0 ? "12 sizes x 40 seeds matched, and the stream after each" : string.Join(" | ", bad));
     }
 
     /// <summary>

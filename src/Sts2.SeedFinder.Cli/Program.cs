@@ -199,11 +199,9 @@ internal static class Program
         var ctx = ContextOf(opts);
         var bones = NeowRelicPayload.BonesRelics(runSeed, slot, ctx);
         var text = "  -> " + string.Join(", ", bones.Select(r => r.Name));
-        var curse = NeowRelicPayload.BonesCurse(runSeed);
-        return NeowRelicPayload.CurseIsCertain(runSeed, slot, ctx, bones,
-                   NeowGenerator.PredictAllOffers(runSeed, ctx), opts.Characters, unlocks, null)
+        return NeowRelicPayload.BonesCurse(runSeed, slot, ctx, bones, opts.Characters, unlocks, null) is { } curse
             ? $"{text}, curse {curse}"
-            : $"{text}, curse {curse} unless someone draws from Niche first";
+            : $"{text}, curse depends on which relic is claimed first";
     }
 
     /// <summary>

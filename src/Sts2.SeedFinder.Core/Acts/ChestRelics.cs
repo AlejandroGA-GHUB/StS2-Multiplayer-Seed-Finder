@@ -75,10 +75,10 @@ public sealed record ChestOffers(IReadOnlyList<IReadOnlyList<ChestSlot>> Slots)
 /// thresholds — no pity counter, no ascension term. So a chest's rarities depend on exactly one
 /// thing: how many chest picks came before it.
 ///
-/// GOOD: the award phase is free in the ordinary case. It only draws when players contest a relic
-/// (rock-paper-scissors) or leave one unclaimed (<c>StableShuffle</c> of the leftovers), and
-/// <c>UnstableShuffle</c> of 0 or 1 element consumes nothing. Everyone picking a different relic
-/// costs zero.
+/// GOOD: the award phase costs a fixed ONE draw in the ordinary case. It always runs a
+/// <c>StableShuffle</c> of the unclaimed relics, and as of v0.113 a shuffle of any length, even an
+/// empty one, spends exactly one draw seeding the stream its swaps run on (before v0.113 an empty
+/// shuffle was free). Only a contested relic (rock-paper-scissors) costs more.
 ///
 /// LESS GOOD, and the reason for <see cref="ChestSlot.Candidates"/>: <c>PullFromFront</c> takes the
 /// front of the SHARED bag, and every relic anyone obtains — elite rewards, a merchant's stock,
@@ -176,8 +176,8 @@ public static class ChestRelics
     /// <param name="actCount">Acts in the run, normally 3.</param>
     /// <param name="extraPicksBefore">
     /// Treasure picks the party took before Act 1's chest — i.e. <c>?</c> rooms that resolved into
-    /// treasure rooms. Each one costs a full <paramref name="playerCount"/> of draws. Pass the
-    /// count seen so far to re-align a run in progress.
+    /// treasure rooms. Each one costs a full <paramref name="playerCount"/> of draws, plus the
+    /// award shuffle's one. Pass the count seen so far to re-align a run in progress.
     /// </param>
     public static ChestOffers Generate(
         ulong runSeed,
@@ -197,11 +197,15 @@ public static class ChestRelics
         // A ? room that became a treasure room is a chest in every respect: it draws a rarity per
         // player AND takes those relics out of the shared bag. Burning only the rng draws would
         // get the later rarities right and the later relics wrong.
-        for (int i = 0; i < extraPicksBefore * playerCount; i++)
+        for (int pick = 0; pick < extraPicksBefore; pick++)
         {
-            string rarity = RollRarity(rng.NextFloat());
-            var available = Available(sharedDeques, rarity, taken, afterGate: false);
-            if (available.Count > 0) taken.Add(available[0].Name);
+            for (int p = 0; p < playerCount; p++)
+            {
+                string rarity = RollRarity(rng.NextFloat());
+                var available = Available(sharedDeques, rarity, taken, afterGate: false);
+                if (available.Count > 0) taken.Add(available[0].Name);
+            }
+            rng.BurnShuffle();   // the award phase's StableShuffle of the unclaimed relics
         }
 
         var acts = new List<IReadOnlyList<ChestSlot>>(actCount);
@@ -223,6 +227,7 @@ public static class ChestRelics
                 // The undisturbed prediction is that the front went to this slot.
                 if (candidates.Count > 0) taken.Add(candidates[0].Name);
             }
+            rng.BurnShuffle();   // the award phase's StableShuffle of the unclaimed relics
             acts.Add(slots);
         }
         return new ChestOffers(acts);

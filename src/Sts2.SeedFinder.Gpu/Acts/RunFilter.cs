@@ -307,19 +307,10 @@ public static class RunFilter
     /// The shuffle swaps positions, never consulting the values, so following a single index
     /// through the same swaps gives its final position exactly. The rng is taken by value: each
     /// criterion re-runs the same draws from the same state, and the caller advances the real
-    /// stream once afterwards.
+    /// stream by the shuffle's one draw afterwards.
     /// </summary>
-    private static int FinalPosition(GpuRandom rng, int length, int startIndex)
-    {
-        int pos = startIndex;
-        for (int n = length - 1; n >= 1; n--)
-        {
-            int k = rng.NextInt(n + 1);
-            if (pos == k) pos = n;
-            else if (pos == n) pos = k;
-        }
-        return pos;
-    }
+    private static int FinalPosition(GpuRandom rng, int length, int startIndex) =>
+        rng.FollowShuffle(length, startIndex);
 
     /// <summary>Does this seed satisfy every boss, event and Ancient-identity criterion?</summary>
     public static bool Matches(ulong runSeed, RunFilterParams p, RunFilterView v)
@@ -359,8 +350,8 @@ public static class RunFilter
         var actRng = GpuRandom.Named(runSeed, p.ActNameHash);
 
         // Shared Ancients are shuffled, then acts 2+ take a prefix each. The shuffle is burned:
-        // with one entry it costs nothing, and the factory turns identity off above one.
-        if (p.SharedAncientCount > 1) rng.Burn(p.SharedAncientCount - 1);
+        // one draw whatever its length, and the factory turns identity off above one entry.
+        rng.Burn(1);
 
         // Each act's share, four bits apiece. Packed rather than kept in an array because the
         // shares are drawn for every act before generation begins, and a kernel that allocates
@@ -396,7 +387,7 @@ public static class RunFilter
                 if (from < 0) return false;
                 if (FinalPosition(rng, events, from) >= v.EventCriteria[c * 2 + 1]) return false;
             }
-            if (events > 1) rng.Burn(events - 1);
+            rng.Burn(1);   // the event shuffle: one draw, however many events
 
             // 2. Weak then regular encounters, sharing the tag-repeat state; elites separately.
             int lastId = -1;

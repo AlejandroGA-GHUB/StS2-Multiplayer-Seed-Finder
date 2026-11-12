@@ -13,7 +13,7 @@ public struct RelicPayloadParams
     public int Active;
     public ulong UpFrontNameHash;
     public ulong RewardsNameHash;
-    public ulong NicheNameHash;
+    public ulong NonCombatNameHash;
     public int ProbeCount;
 
     /// <summary>One bit per thing asked; a seed passes when every bit is set.</summary>
@@ -38,11 +38,13 @@ public readonly struct RelicPayloadView
 /// somewhere in front of the number of R rolls: the first R pull takes position 0, the second
 /// position 1. Where it ends is found by following its index through the shuffle's swaps, as the
 /// shop probes do, after burning every shuffle ahead of it.</item>
-/// <item><b>Neow's Bones.</b> Follow the wanted relic's index through the Rewards shuffle of
-/// that player's Bones list; dealt means it ends at 0 or 1.</item>
-/// <item><b>Curse.</b> One draw off Niche. Whether that draw is still first when the player
-/// resolves Neow depends on everyone's offer, which this stage does not build, so it can only
-/// over-accept: the CPU re-checks every candidate.</item>
+/// <item><b>Neow's Bones.</b> Follow the wanted relic's index through the NonCombatGeneration
+/// shuffle of that player's Bones list; dealt means it ends at 0 or 1.</item>
+/// <item><b>Curse.</b> The next NonCombatGeneration draw after the shuffle and after what the
+/// two dealt relics draw from it when claimed. Kaleidoscope (2) and Phial Holster (4) are
+/// followed through the shuffle and priced exactly. A dealt capsule may add one draw per pull,
+/// for War Paint or Whetstone, which this stage does not resolve, so every offset it allows is
+/// tried: that over-accepts, and the CPU re-checks every candidate.</item>
 /// </list>
 ///
 /// Probes for "any player" set the same bit from several slots, so they are alternatives, and
@@ -52,7 +54,7 @@ public readonly struct RelicPayloadView
 /// </summary>
 public static class RelicPayloadFilter
 {
-    public const int Stride = 8;
+    public const int Stride = 10;
 
     public const int KindCapsule = 1, KindBones = 2, KindCurse = 3;
 
@@ -62,9 +64,13 @@ public static class RelicPayloadFilter
     // where its deque sits in UpFront.
     public const int FldPulls = 3, FldRarity = 4, FldDrawsBefore = 5, FldDequeSize = 6, FldFrom = 7;
 
-    // Bones: list length and the wanted relic's index in it. Curse: the wanted index and the
-    // pool length.
+    // Bones: list length and the wanted relic's index in it.
     public const int FldLength = 3, FldIndex = 4;
+
+    // Curse: the Bones list length (FldLength), the wanted curse's index (FldIndex), the curse
+    // pool's length, and where Kaleidoscope, Phial Holster and the two capsules sit in the
+    // Bones list (-1 when absent).
+    public const int FldPool = 5, FldKaleidoscope = 6, FldPhial = 7, FldSmallCapsule = 8, FldLargeCapsule = 9;
 
     public static bool Matches(ulong runSeed, RelicPayloadParams p, RelicPayloadView v)
     {
@@ -80,26 +86,19 @@ public static class RelicPayloadFilter
 
             if (kind == KindCurse)
             {
-                var niche = GpuRandom.Named(runSeed, p.NicheNameHash);
-                if (niche.NextInt(0, v.Probes[at + FldLength]) == v.Probes[at + FldIndex]) satisfied |= bit;
+                if (CurseMatches(slotSeed, p, v, at)) satisfied |= bit;
+                continue;
+            }
+
+            if (kind == KindBones)
+            {
+                var nonCombat = GpuRandom.Named(slotSeed, p.NonCombatNameHash);
+                if (nonCombat.FollowShuffle(v.Probes[at + FldLength], v.Probes[at + FldIndex]) < 2)
+                    satisfied |= bit;
                 continue;
             }
 
             var rewards = GpuRandom.Named(slotSeed, p.RewardsNameHash);
-
-            if (kind == KindBones)
-            {
-                int length = v.Probes[at + FldLength];
-                int pos = v.Probes[at + FldIndex];
-                for (int n = length - 1; n >= 1; n--)
-                {
-                    int k = rewards.NextInt(n + 1);
-                    if (pos == k) pos = n;
-                    else if (pos == n) pos = k;
-                }
-                if (pos < 2) satisfied |= bit;
-                continue;
-            }
 
             // Capsule. RelicFactory.RollRarity: < 0.5 Common, < 0.83 Uncommon, else Rare.
             int pulls = v.Probes[at + FldPulls];
@@ -115,17 +114,46 @@ public static class RelicPayloadFilter
 
             var upFront = GpuRandom.Named(runSeed, p.UpFrontNameHash);
             upFront.Burn(v.Probes[at + FldDrawsBefore]);
-            int landed = v.Probes[at + FldFrom];
-            for (int n = v.Probes[at + FldDequeSize] - 1; n >= 1; n--)
-            {
-                int k = upFront.NextInt(n + 1);
-                if (landed == k) landed = n;
-                else if (landed == n) landed = k;
-            }
-            if (landed < hits) satisfied |= bit;
+            if (upFront.FollowShuffle(v.Probes[at + FldDequeSize], v.Probes[at + FldFrom]) < hits)
+                satisfied |= bit;
         }
         return satisfied == p.AllMask;
     }
+
+    /// <summary>
+    /// Whether the Bones curse can be the wanted one: the shuffle, with the four relics that can
+    /// move the curse followed through it at once, then the curse draw at each offset the dealt
+    /// ones allow.
+    /// </summary>
+    private static bool CurseMatches(ulong slotSeed, RelicPayloadParams p, RelicPayloadView v, int at)
+    {
+        var nonCombat = GpuRandom.Named(slotSeed, p.NonCombatNameHash);
+        var swaps = nonCombat.ShuffleStream();
+        int kal = v.Probes[at + FldKaleidoscope], phial = v.Probes[at + FldPhial];
+        int small = v.Probes[at + FldSmallCapsule], large = v.Probes[at + FldLargeCapsule];
+        for (int n = v.Probes[at + FldLength] - 1; n >= 1; n--)
+        {
+            int k = swaps.NextInt(n + 1);
+            kal = Swapped(kal, n, k); phial = Swapped(phial, n, k);
+            small = Swapped(small, n, k); large = Swapped(large, n, k);
+        }
+
+        int before = (Dealt(kal) ? 2 : 0) + (Dealt(phial) ? 4 : 0);
+        int spread = (Dealt(small) ? 1 : 0) + (Dealt(large) ? 2 : 0);
+        nonCombat.Burn(before);
+        int pool = v.Probes[at + FldPool], wanted = v.Probes[at + FldIndex];
+        for (int extra = 0; extra <= spread; extra++)
+        {
+            var probe = nonCombat;
+            probe.Burn(extra);
+            if (probe.NextInt(0, pool) == wanted) return true;
+        }
+        return false;
+    }
+
+    private static int Swapped(int pos, int n, int k) => pos == n ? k : pos == k ? n : pos;
+
+    private static bool Dealt(int pos) => pos >= 0 && pos < 2;
 }
 
 /// <summary>Builds the relic payload stage's probes from a search, or declines.</summary>
@@ -153,8 +181,9 @@ public static class RelicPayloadFilterFactory
         var list = new List<int>();
         int bits = 0;
 
-        void Add(int kind, int bit, int slot, int a, int b, int c = 0, int d = 0, int e = 0) =>
-            list.AddRange(new[] { kind, bit, slot, a, b, c, d, e });
+        void Add(int kind, int bit, int slot, int a, int b, int c = 0, int d = 0, int e = 0,
+                 int f = 0, int g = 0) =>
+            list.AddRange(new[] { kind, bit, slot, a, b, c, d, e, f, g });
 
         foreach (var want in criteria.NeowCriteria)
         {
@@ -203,7 +232,20 @@ public static class RelicPayloadFilterFactory
             {
                 int index = Array.IndexOf(NeowRelicPayload.BonesCursePool, NeowRelicPayload.FindCurse(curse));
                 if (index < 0) return false;
-                Add(RelicPayloadFilter.KindCurse, bits++, 0, NeowRelicPayload.BonesCursePool.Length, index);
+                int anyBit = any ? bits++ : -1;
+                foreach (var slot in slots)
+                {
+                    var bones = NeowRelicPayload.BonesList(slot, criteria.Context);
+                    int At(string slug)
+                    {
+                        for (int i = 0; i < bones.Count; i++)
+                            if (bones[i].Slug == slug) return i;
+                        return -1;
+                    }
+                    Add(RelicPayloadFilter.KindCurse, any ? anyBit : bits++, slot, bones.Count, index,
+                        NeowRelicPayload.BonesCursePool.Length, At("kaleidoscope"), At("phial_holster"),
+                        At("small_capsule"), At("large_capsule"));
+                }
             }
 
             if (bits > MaxBits) return false;
@@ -211,8 +253,8 @@ public static class RelicPayloadFilterFactory
 
         if (bits == 0) return false;
 
-        // Cheapest probes first: the curse is one draw, Bones a shuffle of thirty, and a capsule
-        // a burn of a few hundred, so a seed the cheap ones reject never pays for the others.
+        // Cheapest probes first: the curse and Bones are a shuffle of thirty, and a capsule a
+        // burn of a few dozen, so a seed the cheap ones reject never pays for the others.
         var ordered = Enumerable.Range(0, list.Count / RelicPayloadFilter.Stride)
             .OrderBy(i => list[i * RelicPayloadFilter.Stride + RelicPayloadFilter.FldKind] switch
             {
@@ -229,7 +271,7 @@ public static class RelicPayloadFilterFactory
             Active = 1,
             UpFrontNameHash = GameHash.Deterministic(GameHash.SnakeCase("UpFront")),
             RewardsNameHash = GameHash.Deterministic(GameHash.SnakeCase("Rewards")),
-            NicheNameHash = GameHash.Deterministic(GameHash.SnakeCase("Niche")),
+            NonCombatNameHash = GameHash.Deterministic(GameHash.SnakeCase("NonCombatGeneration")),
             ProbeCount = ordered.Length / RelicPayloadFilter.Stride,
             AllMask = bits == 31 ? int.MaxValue : (1 << bits) - 1,
         };

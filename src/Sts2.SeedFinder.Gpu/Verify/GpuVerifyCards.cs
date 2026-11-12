@@ -64,6 +64,7 @@ public static class GpuVerifyCards
         var p = new CardFilterParams
         {
             RewardsNameHash = GameHash.Deterministic(GameHash.SnakeCase("Rewards")),
+            NonCombatNameHash = GameHash.Deterministic(GameHash.SnakeCase("NonCombatGeneration")),
             RareOdds = ascension >= CardRewardGenerator.Scarcity ? 0.0149f : 0.03f,
             RarityGrowth = ascension >= CardRewardGenerator.Scarcity ? 0.005f : 0.01f,
             PlayerCount = characters.Count,
@@ -226,6 +227,7 @@ public static class GpuVerifyCards
         var p = new CardFilterParams
         {
             RewardsNameHash = GameHash.Deterministic(GameHash.SnakeCase("Rewards")),
+            NonCombatNameHash = GameHash.Deterministic(GameHash.SnakeCase("NonCombatGeneration")),
             RareOdds = 0.03f,
             RarityGrowth = 0.01f,
             PlayerCount = characters.Count,

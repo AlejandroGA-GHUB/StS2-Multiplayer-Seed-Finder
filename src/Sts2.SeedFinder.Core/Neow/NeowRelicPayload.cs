@@ -32,24 +32,17 @@ public enum RelicPayloadShape
 ///     list = Neow.AllPossibleOptions' relics: the ten curses, the fourteen positives, then
 ///            LavaRock, NeowsTalisman, NutritiousOyster, Pomander, SmallCapsule,
 ///            StoneHumidifier; filtered by IsAllowedAtNeow(owner), minus Neow's Bones itself
-///     PlayerRng.Rewards.Shuffle(list)                  descending Fisher-Yates, count - 1 draws
-///     the first two, as rewards that cannot be skipped
-///     then one curse: RunState.Rng.Niche.NextItem over the curse pool's generatable cards,
-///     ordered by id
+///     list.UnstableShuffle(PlayerRng.NonCombatGeneration)   one draw
+///     the first two, as rewards that cannot be skipped, each drawing what it draws when claimed
+///     then one curse: PlayerRng.NonCombatGeneration.NextItem over the curse pool's
+///     generatable cards, ordered by id
 /// </code>
 ///
-/// Two properties decide what is safe to promise:
-///
-/// <list type="bullet">
-/// <item><b>The capsules and the Bones relics are per player and exact.</b> Each reads only
-/// its own player's bag and Rewards stream, both of which nothing else has touched at Neow,
-/// so what a partner picks cannot move them.</item>
-/// <item><b>The Bones curse is NOT per player.</b> Niche is a RUN stream shared by the whole
-/// lobby, and Kaleidoscope, New Leaf, another Neow's Bones, and the War Paint or Whetstone a
-/// capsule can hand out all draw from it on pickup. Who resolves Neow first is not knowable,
-/// so the curse is only promised when no such draw can happen anywhere at the table: see
-/// <see cref="CurseIsCertain"/>.</item>
-/// </list>
+/// Everything here is per player and exact: each piece reads only its own player's bag and
+/// streams, which nothing else has touched at Neow, so what a partner picks cannot move it.
+/// Before v0.113 the Bones shuffle ran on Rewards and the curse came off the RUN-level Niche
+/// stream, which the whole table shared; both moved to the player's own NonCombatGeneration.
+/// The one thing left open is claim order, see <see cref="BonesCurse"/>.
 ///
 /// Lasting Candy is the one relic in these bags with an <c>IsAllowed</c> gate that can fail at
 /// Neow: it is refused while any Ironclad in the lobby is on an account with no finished runs.
@@ -152,6 +145,14 @@ public static class NeowRelicPayload
     // ---- Neow's Bones -----------------------------------------------------------------------
 
     /// <summary>
+    /// The player's NonCombatGeneration stream, added in v0.113 and seeded like every other
+    /// <c>PlayerRngSet</c> generator. Neow's Bones, Kaleidoscope, Phial Holster, War Paint and
+    /// Whetstone draw from it on pickup.
+    /// </summary>
+    public static Rng NonCombatRng(ulong runSeed, int playerSlotIndex) =>
+        new(unchecked(runSeed + (ulong)playerSlotIndex), GameHash.SnakeCase("NonCombatGeneration"));
+
+    /// <summary>
     /// The list Neow's Bones shuffles, for this player, in the order the game builds it.
     ///
     /// <c>Neow.AllPossibleOptions</c> is curses, positives, then six coin-flip relics in an order
@@ -178,36 +179,24 @@ public static class NeowRelicPayload
     public static IReadOnlyList<NeowRelic> BonesRelics(ulong runSeed, int slot, NeowContext ctx)
     {
         var list = BonesList(slot, ctx).ToArray();
-        var rewards = CardRewardGenerator.RewardsRng(runSeed, slot);
-
-        // Rng.Shuffle: descending Fisher-Yates, the same swaps as UnstableShuffle.
-        for (int n = list.Length - 1; n > 0; n--)
-        {
-            int k = rewards.NextInt(n + 1);
-            (list[k], list[n]) = (list[n], list[k]);
-        }
+        NonCombatRng(runSeed, slot).UnstableShuffle<NeowRelic>(list);
         return list.Length >= 2 ? [list[0], list[1]] : list;
     }
-
-    /// <summary>Draws the Bones shuffle takes off the Rewards stream for this player.</summary>
-    public static int BonesShuffleDraws(int slot, NeowContext ctx) =>
-        Math.Max(BonesList(slot, ctx).Count - 1, 0);
 
     /// <summary>
     /// Everything taking Neow's Bones costs this player's Rewards stream before their first
     /// fight, or null when the seed does not settle it.
     ///
-    /// The shuffle, then whatever the two relics it deals draw when they are claimed. Both are
-    /// always handed over, so both always draw, and for every relic but one the total is the same
-    /// in either claim order. The exception is Scroll Boxes for a Defect: each bundle rolls a
-    /// 1-in-100 all-Claw check that skips the bundle's three draws, so what it costs depends on
-    /// where in the stream it starts. Dealt alongside a relic that draws nothing, that is still
-    /// one answer. Dealt alongside one that draws, the two claim orders can disagree, and only
-    /// then is this null.
+    /// Whatever the two relics it deals draw when they are claimed; the shuffle itself is on
+    /// NonCombatGeneration and costs Rewards nothing. Both relics are always handed over, so both
+    /// always draw, and for every relic but one the total is the same in either claim order. The
+    /// exception is Scroll Boxes for a Defect: each bundle rolls a 1-in-100 all-Claw check that
+    /// skips the bundle's three draws, so what it costs depends on where in the stream it starts.
+    /// Dealt alongside a relic that draws nothing, that is still one answer. Dealt alongside one
+    /// that draws, the two claim orders can disagree, and only then is this null.
     /// </summary>
     public static int? BonesRewardDraws(ulong runSeed, int slot, NeowContext ctx, Character character)
     {
-        int shuffle = BonesShuffleDraws(slot, ctx);
         int others = 0;
         bool defectBoxes = false;
         foreach (var r in BonesRelics(runSeed, slot, ctx))
@@ -215,22 +204,26 @@ public static class NeowRelicPayload
             if (character == Character.Defect && r.Slug == "scroll_boxes") { defectBoxes = true; continue; }
             others += Math.Max(CardRewardGenerator.NeowRewardDrawCost(r.Slug, character), 0);
         }
-        if (!defectBoxes) return shuffle + others;
+        if (!defectBoxes) return others;
 
-        int boxesFirst = DefectScrollBoxesDraws(runSeed, slot, shuffle);
-        if (others == 0) return shuffle + boxesFirst;
-        int boxesSecond = DefectScrollBoxesDraws(runSeed, slot, shuffle + others);
-        return boxesFirst == boxesSecond ? shuffle + others + boxesFirst : null;
+        int boxesFirst = DefectScrollBoxes(Skip(CardRewardGenerator.RewardsRng(runSeed, slot), 0));
+        if (others == 0) return boxesFirst;
+        int boxesSecond = DefectScrollBoxes(Skip(CardRewardGenerator.RewardsRng(runSeed, slot), others));
+        return boxesFirst == boxesSecond ? others + boxesFirst : null;
+    }
+
+    private static Rng Skip(Rng rng, int draws)
+    {
+        for (int i = 0; i < draws; i++) rng.NextInt();
+        return rng;
     }
 
     /// <summary>
-    /// What Scroll Boxes costs a Defect starting <paramref name="priorDraws"/> into the stream:
-    /// per bundle, the Claw check, then three picks unless the check fired.
+    /// Scroll Boxes for a Defect, drawn off <paramref name="rng"/> where it stands: per bundle,
+    /// the Claw check, then three picks unless the check fired. Returns the draws it took.
     /// </summary>
-    private static int DefectScrollBoxesDraws(ulong runSeed, int slot, int priorDraws)
+    private static int DefectScrollBoxes(Rng rng)
     {
-        var rng = CardRewardGenerator.RewardsRng(runSeed, slot);
-        for (int i = 0; i < priorDraws; i++) rng.NextInt();
         int draws = 0;
         for (int bundle = 0; bundle < NeowCardPayload.Bundles; bundle++)
         {
@@ -253,69 +246,84 @@ public static class NeowRelicPayload
         ["Clumsy", "Debt", "Decay", "Doubt", "Guilty", "Injury", "Normality", "Regret", "Shame", "Writhe"];
 
     /// <summary>
-    /// The curse Neow's Bones adds, assuming its draw is the first one taken off Niche this run.
-    /// Whether that assumption holds is <see cref="CurseIsCertain"/>'s question.
+    /// What claiming this Neow relic draws off NonCombatGeneration, other than through a capsule.
+    /// Kaleidoscope runs one <c>StableShuffle</c> per reward (two), and Phial Holster rolls two
+    /// potions at two draws each (rarity, then pick). Fishing Rod uses the stream too, but only
+    /// after combats, and New Leaf moved to Transformations in v0.113.
     /// </summary>
-    public static string BonesCurse(ulong runSeed)
+    public static int NonCombatDrawsOnClaim(string relicSlug) => relicSlug switch
     {
-        var niche = new Rng(runSeed, GameHash.SnakeCase("Niche"));
-        return BonesCursePool[niche.NextInt(0, BonesCursePool.Length)];
-    }
+        "kaleidoscope" => 2,
+        "phial_holster" => 4,
+        _ => 0,
+    };
 
-    /// <summary>Neow options that draw from Niche the moment they are taken.</summary>
-    private static readonly HashSet<string> NicheAtNeow =
-        new(StringComparer.Ordinal) { "kaleidoscope", "new_leaf", "neows_bones" };
-
-    /// <summary>Capsule pulls that draw from Niche on pickup: both upgrade random cards.</summary>
-    private static readonly HashSet<string> NicheOnPickup =
+    /// <summary>
+    /// Capsule pulls that draw from NonCombatGeneration on pickup: each upgrades random cards
+    /// through one <c>StableShuffle</c>, so one draw whatever the deck holds.
+    /// </summary>
+    private static readonly HashSet<string> NonCombatOnPickup =
         new(StringComparer.Ordinal) { "war_paint", "whetstone" };
 
     /// <summary>
-    /// Whether dealing this relic out of Neow's Bones rules the curse out of being promised:
-    /// it either draws from Niche itself or, as a capsule, might.
+    /// The curse Neow's Bones adds to this player's deck, or null when claim order decides it.
+    ///
+    /// It is the next NonCombatGeneration draw after the shuffle and after whatever the two dealt
+    /// relics draw from that stream when claimed. Every relic's own cost is fixed, so this is one
+    /// answer, with a single exception: a capsule pulls from the player's bag off Rewards, and
+    /// whether it lands on War Paint or Whetstone (one draw each) depends on how far into Rewards
+    /// the other dealt relic has already gone. Both orders are played out, and only when they
+    /// disagree is the curse left open.
     /// </summary>
-    public static bool MovesCurse(string relicSlug) =>
-        NicheAtNeow.Contains(relicSlug) || ShapeOf(relicSlug) == RelicPayloadShape.Capsule;
+    public static string? BonesCurse(
+        ulong runSeed, int slot, NeowContext ctx, IReadOnlyList<NeowRelic> bonesRelics,
+        IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks)
+    {
+        int? before = NonCombatDrawsBeforeCurse(runSeed, slot, bonesRelics, characters, unlocks, playerUnlocks);
+        if (before is not { } draws) return null;
+        var rng = Skip(NonCombatRng(runSeed, slot), draws);
+        return BonesCursePool[rng.NextInt(0, BonesCursePool.Length)];
+    }
 
     /// <summary>
-    /// Whether this player's Bones curse is the first Niche draw of the run whatever anyone at
-    /// the table picks, and so whether <see cref="BonesCurse"/> can be promised.
-    ///
-    /// Two conditions, both strict on purpose. A search that refuses a seed it could have kept
-    /// costs a few matches; one that promises a curse the game then does not deal costs trust.
-    /// <list type="number">
-    /// <item>Neither of the Bones relics draws from Niche before the curse. Kaleidoscope and New
-    /// Leaf do so directly. A capsule might, through War Paint or Whetstone, but which it pulls
-    /// depends on which of the two rewards the player claims first, so a capsule here is
-    /// refused rather than guessed.</item>
-    /// <item>Nobody else's Neow offer holds anything that could. Their capsules are exact, so
-    /// they are checked for what they would really pull; anything in
-    /// <see cref="NicheAtNeow"/> refuses outright.</item>
-    /// </list>
+    /// NonCombatGeneration draws ahead of the Bones curse: one for the shuffle, plus the two
+    /// relics' claims, played out in both claim orders. Null when the orders disagree.
     /// </summary>
-    public static bool CurseIsCertain(
-        ulong runSeed, int slot, NeowContext ctx, IReadOnlyList<NeowRelic> bonesRelics,
-        IReadOnlyList<NeowOffer> offers, IReadOnlyList<Character> characters,
-        UnlockState unlocks, IReadOnlyList<UnlockState>? playerUnlocks)
+    private static int? NonCombatDrawsBeforeCurse(
+        ulong runSeed, int slot, IReadOnlyList<NeowRelic> bonesRelics,
+        IReadOnlyList<Character> characters, UnlockState unlocks,
+        IReadOnlyList<UnlockState>? playerUnlocks)
     {
+        int fixedCost = 1;
+        bool capsule = false;
         foreach (var r in bonesRelics)
-            if (MovesCurse(r.Slug)) return false;
-
-        for (int other = 0; other < offers.Count; other++)
         {
-            if (other == slot) continue;
-            var o = offers[other];
-            foreach (var r in new[] { o.Positive1, o.Positive2, o.Curse })
-            {
-                if (NicheAtNeow.Contains(r.Slug)) return false;
-                if (ShapeOf(r.Slug) == RelicPayloadShape.Capsule
-                    && characters.Count > other
-                    && Capsule(runSeed, other, characters, unlocks, playerUnlocks, r.Slug)
-                        .Any(p => NicheOnPickup.Contains(p.Slug)))
-                    return false;
-            }
+            fixedCost += NonCombatDrawsOnClaim(r.Slug);
+            capsule |= ShapeOf(r.Slug) == RelicPayloadShape.Capsule;
         }
-        return true;
+        if (!capsule) return fixedCost;
+
+        int? first = null;
+        for (int order = 0; order < Math.Min(bonesRelics.Count, 2); order++)
+        {
+            var deques = RunGenerator.PlayerRelicDeques(runSeed, characters, unlocks, playerUnlocks, slot);
+            var rewards = CardRewardGenerator.RewardsRng(runSeed, slot);
+            int pickups = 0;
+            for (int i = 0; i < bonesRelics.Count; i++)
+            {
+                string slug = bonesRelics[(i + order) % bonesRelics.Count].Slug;
+                if (ShapeOf(slug) == RelicPayloadShape.Capsule)
+                    pickups += Pull(rewards, deques, RelicCount(slug)).Count(p => NonCombatOnPickup.Contains(p.Slug));
+                else if (characters.Count > slot && characters[slot] == Character.Defect && slug == "scroll_boxes")
+                    DefectScrollBoxes(rewards);
+                else
+                    Skip(rewards, Math.Max(CardRewardGenerator.NeowRewardDrawCost(slug, characters.Count > slot ? characters[slot] : Character.Ironclad), 0));
+            }
+            if (first is null) first = pickups;
+            else if (first != pickups) return null;
+        }
+        return fixedCost + first;
     }
 
     // ---- What a search may ask for -----------------------------------------------------------

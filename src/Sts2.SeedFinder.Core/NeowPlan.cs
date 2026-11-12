@@ -177,17 +177,9 @@ public sealed class NeowPlan
 
         if (item.WantedCurse is null) return true;
 
-        // The curse is one draw off the run's Niche stream, so it is cheap to test; whether
-        // that draw is still the first one when this player resolves Neow is the expensive
-        // half, because it needs everyone else's offer.
-        if (NeowRelicPayload.BonesCurse(runSeed) != item.WantedCurse) return false;
-
-        offers ??= new NeowOffer?[_playerCount];
-        var all = new NeowOffer[_playerCount];
-        for (int s = 0; s < _playerCount; s++)
-            all[s] = offers[s] ??= NeowGenerator.PredictOffer(runSeed, s, _context);
-        return NeowRelicPayload.CurseIsCertain(
-            runSeed, slot, _context, bones, all, _characters, _runUnlocks, _playerUnlocks);
+        // Per player and a few draws past the shuffle; only a dealt capsule costs a bag replay.
+        return NeowRelicPayload.BonesCurse(
+            runSeed, slot, _context, bones, _characters, _runUnlocks, _playerUnlocks) == item.WantedCurse;
     }
 
     private bool OfferMatches(ulong runSeed, int slot, in Item item, ref NeowOffer?[]? offers)

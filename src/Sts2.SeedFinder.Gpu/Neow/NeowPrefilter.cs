@@ -173,13 +173,7 @@ public static class NeowPrefilter
         if (pos < 0) return false;
 
         // ListExtensions.UnstableShuffle, followed for one element. See the class remarks.
-        int count = baseLength + appended;
-        for (int n = count - 1; n >= 1; n--)
-        {
-            int k = rng.NextInt(n + 1);
-            if (pos == k) pos = n;
-            else if (pos == n) pos = k;
-        }
+        pos = rng.FollowShuffle(baseLength + appended, pos);
 
         // Positive1 and Positive2 are the first two the shuffle leaves.
         return pos < 2;

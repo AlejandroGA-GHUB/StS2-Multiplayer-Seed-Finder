@@ -332,14 +332,13 @@ public sealed record NeowPayloadDto(int Slot, string Relic, string[] Cards);
 /// What a Small or Large Capsule, or Neow's Bones, would hand this player.
 /// </summary>
 /// <param name="Relics">Relic slugs, in pull order for a capsule and list order for Bones.</param>
-/// <param name="Curse">Neow's Bones' curse as a card slug, or null for a capsule.</param>
-/// <param name="CurseCertain">
-/// False when someone at the table could draw from the same run-level stream first (a
-/// Kaleidoscope, a New Leaf, a capsule pulling War Paint or Whetstone), so the curse shown is
-/// only what it would be if this player resolved Neow first.
+/// <param name="Curse">
+/// Neow's Bones' curse as a card slug. Null for a capsule, and for the Bones deals whose curse
+/// depends on which of the two relics is claimed first (a capsule that may pull War Paint or
+/// Whetstone).
 /// </param>
 public sealed record NeowRelicPayloadDto(
-    int Slot, string Relic, string[] Relics, string? Curse, bool CurseCertain);
+    int Slot, string Relic, string[] Relics, string? Curse);
 
 /// <summary>
 /// A Neow option whose RELIC payload can be named, and how many relics it hands over.
@@ -1359,22 +1358,22 @@ public static class Predictions
                         relicPayloads.Add(new NeowRelicPayloadDto(slot, relic.Slug,
                             NeowRelicPayload.Capsule(runSeed, slot, characters, unlocks, playerUnlocks, relic.Slug)
                                 .Select(r => r.Slug).ToArray(),
-                            null, true));
+                            null));
                         break;
                     case RelicPayloadShape.Bones:
                         var bones = NeowRelicPayload.BonesRelics(runSeed, slot, ctx);
                         relicPayloads.Add(new NeowRelicPayloadDto(slot, relic.Slug,
                             bones.Select(r => r.Slug).ToArray(),
-                            CardCatalog.Slug(NeowRelicPayload.BonesCurse(runSeed)),
-                            NeowRelicPayload.CurseIsCertain(runSeed, slot, ctx, bones, offers,
-                                                            characters, unlocks, playerUnlocks)));
+                            NeowRelicPayload.BonesCurse(runSeed, slot, ctx, bones, characters, unlocks,
+                                                        playerUnlocks) is { } curse
+                                ? CardCatalog.Slug(curse) : null));
                         break;
                 }
             }
         }
 
-        // Neow's Bones costs this player a different amount on every seed: its shuffle, plus
-        // what the two relics it deals draw. Null for the one case the claim order decides (a
+        // Neow's Bones costs this player a different amount on every seed: what the two relics
+        // it deals draw. Null for the one case the claim order decides (a
         // Defect dealt Scroll Boxes and a relic that draws), whose fights are then not shown.
         prior = (int[])prior.Clone();
         var unreadable = new HashSet<int>();

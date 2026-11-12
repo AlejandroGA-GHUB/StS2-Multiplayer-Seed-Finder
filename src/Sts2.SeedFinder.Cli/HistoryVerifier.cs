@@ -382,19 +382,17 @@ public static class HistoryVerifier
                         failures.Add($"P{p + 1} neows_bones relics: game {string.Join("+", got)}, "
                                      + $"ours {string.Join("+", predicted)}");
 
-                    var offers = NeowGenerator.PredictAllOffers(runSeed, ctx);
-                    if (NeowRelicPayload.CurseIsCertain(runSeed, p, ctx, bones, offers, run.Characters,
-                                                        unlocks, playerUnlocks))
+                    if (NeowRelicPayload.BonesCurse(runSeed, p, ctx, bones, run.Characters,
+                                                    unlocks, playerUnlocks) is { } curse)
                     {
                         asserts++;
-                        var curse = NeowRelicPayload.BonesCurse(runSeed);
                         var dealt = took.Cards.FirstOrDefault(c => NeowRelicPayload.FindCurse(c) is not null);
                         if (dealt is null || NeowRelicPayload.FindCurse(dealt) != curse)
                             failures.Add($"P{p + 1} neows_bones curse: game {dealt ?? "(none)"}, ours {curse}");
                     }
 
-                    // What taking Bones cost this player's Rewards stream, read off fight 1: the
-                    // shuffle plus whatever the two relics drew when they were claimed.
+                    // What taking Bones cost this player's Rewards stream, read off fight 1:
+                    // whatever the two relics drew when they were claimed.
                     if (p < run.FirstFightCards.Count && run.FirstFightCards[p] is { } offered
                         && NeowRelicPayload.BonesRewardDraws(runSeed, p, ctx, run.Characters[p]) is { } cost)
                     {

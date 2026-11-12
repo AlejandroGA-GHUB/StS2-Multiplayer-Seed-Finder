@@ -1552,14 +1552,6 @@ public static class SeedSearcher
                         + string.Join(", ", NeowRelicPayload.BonesCursePool) + ".");
             }
 
-            // The curse is only promised when the Bones relics themselves cannot draw from Niche
-            // first, so asking for one of those AND the curse can never be satisfied.
-            if (want.PayloadCurse is not null
-                && want.Relics.FirstOrDefault(NeowRelicPayload.MovesCurse) is { } mover)
-                throw new ArgumentException(
-                    $"{NeowRelicPayload.Display(mover)} can draw from the same stream as the curse when "
-                    + "it is claimed, so the curse cannot be promised alongside it. Ask for one or the other.");
-
             int capacity = NeowRelicPayload.RelicCount(want.Relic.Slug);
             if (want.Relics.Count > capacity)
                 throw new ArgumentException(
