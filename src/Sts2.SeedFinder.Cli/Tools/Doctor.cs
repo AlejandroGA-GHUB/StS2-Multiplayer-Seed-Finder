@@ -88,9 +88,12 @@ public static class Doctor
             return 0;
         }
 
-        Console.WriteLine("  Still correct regardless: Neow's offer and the Act 1 map.");
-        Console.WriteLine("  Those run on their own RNG streams over fixed lists, so a content patch");
-        Console.WriteLine("  does not move them.");
+        if (!codeBroken)
+        {
+            Console.WriteLine("  Still correct regardless: Neow's offer and the Act 1 map.");
+            Console.WriteLine("  Those run on their own RNG streams over fixed lists, so a content patch");
+            Console.WriteLine("  does not move them.");
+        }
         Console.WriteLine();
         Console.WriteLine($"  Fixable by command:  {(dataBroken ? "yes" : "no")}");
         Console.WriteLine($"  Needs a code edit:   {(codeBroken ? "yes" : "no")}");

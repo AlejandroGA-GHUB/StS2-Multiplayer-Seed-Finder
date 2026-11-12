@@ -1,5 +1,5 @@
 {
-  "gameVersion": "v0.109.1",
+  "gameVersion": "v0.113.0",
   "decompilerVersion": "10.1.1.8388",
   "methods": {
     "MegaCrit.Sts2.Core.Random.MegaRandom.NextULong": {
@@ -39,23 +39,23 @@
     },
     "MegaCrit.Sts2.Core.Extensions.ListExtensions.UnstableShuffle": {
       "key": "MegaCrit.Sts2.Core.Extensions.ListExtensions.UnstableShuffle",
-      "hash": "FFA90FCC8176A03B",
-      "lines": 18
+      "hash": "5515DD291A43A0C0",
+      "lines": 19
     },
     "MegaCrit.Sts2.Core.Runs.RunManager.GenerateRooms": {
       "key": "MegaCrit.Sts2.Core.Runs.RunManager.GenerateRooms",
-      "hash": "CEC52DBD49F64AFD",
+      "hash": "69B58F3B70AA2FAB",
       "lines": 33
     },
     "MegaCrit.Sts2.Core.Runs.RunManager.InitializeNewRun": {
       "key": "MegaCrit.Sts2.Core.Runs.RunManager.InitializeNewRun",
-      "hash": "68FFB068F6B33AA3",
-      "lines": 20
+      "hash": "DD31C79B4AE46450",
+      "lines": 24
     },
     "MegaCrit.Sts2.Core.Models.ActModel.GenerateRooms": {
       "key": "MegaCrit.Sts2.Core.Models.ActModel.GenerateRooms",
-      "hash": "2D177A551B95528D",
-      "lines": 81
+      "hash": "1FFE37DC48E47604",
+      "lines": 92
     },
     "MegaCrit.Sts2.Core.Models.ActModel.AddWithoutRepeatingTags": {
       "key": "MegaCrit.Sts2.Core.Models.ActModel.AddWithoutRepeatingTags",
@@ -84,8 +84,13 @@
     },
     "MegaCrit.Sts2.Core.Models.Events.Neow.GenerateInitialOptions": {
       "key": "MegaCrit.Sts2.Core.Models.Events.Neow.GenerateInitialOptions",
-      "hash": "4BFEF0F04A7B2775",
-      "lines": 113
+      "hash": "FE32AA593774850B",
+      "lines": 103
+    },
+    "MegaCrit.Sts2.Core.Models.Relics.NeowsBones.AfterObtained": {
+      "key": "MegaCrit.Sts2.Core.Models.Relics.NeowsBones.AfterObtained",
+      "hash": "CC866E0CB8B767CE",
+      "lines": 38
     },
     "MegaCrit.Sts2.Core.Entities.Players.Player.PlayerRng": {
       "key": "MegaCrit.Sts2.Core.Entities.Players.Player.PlayerRng",
@@ -99,23 +104,48 @@
     },
     "MegaCrit.Sts2.Core.Factories.CardFactory.CreateForReward": {
       "key": "MegaCrit.Sts2.Core.Factories.CardFactory.CreateForReward",
-      "hash": "D7492C18101DCE58",
+      "hash": "324B6B637A07374C",
       "lines": 76
     },
-    "MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory.PopulateRelicEntries": {
-      "key": "MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory.PopulateRelicEntries",
-      "hash": "CA42F46492A51671",
-      "lines": 16
+    "MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory.GetDefaultRelicEntries": {
+      "key": "MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory.GetDefaultRelicEntries",
+      "hash": "3A3C872E14248F34",
+      "lines": 20
     },
     "MegaCrit.Sts2.Core.Factories.RelicFactory.PullNextRelicFromBack": {
       "key": "MegaCrit.Sts2.Core.Factories.RelicFactory.PullNextRelicFromBack",
-      "hash": "EFC052FC3618100B",
-      "lines": 20
+      "hash": "AAF47338E8489855",
+      "lines": 11
     },
     "MegaCrit.Sts2.Core.Factories.RelicFactory.RollRarity": {
       "key": "MegaCrit.Sts2.Core.Factories.RelicFactory.RollRarity",
-      "hash": "3B4620BD98F9FC40",
-      "lines": 19
+      "hash": "8B22D4C01AF0D1B0",
+      "lines": 13
+    },
+    "MegaCrit.Sts2.Core.Multiplayer.Game.TreasureRoomRelicSynchronizer.BeginRelicPicking": {
+      "key": "MegaCrit.Sts2.Core.Multiplayer.Game.TreasureRoomRelicSynchronizer.BeginRelicPicking",
+      "hash": "A6006FF39459C5B1",
+      "lines": 71
+    },
+    "MegaCrit.Sts2.Core.Multiplayer.Game.TreasureRoomRelicSynchronizer.AwardRelics": {
+      "key": "MegaCrit.Sts2.Core.Multiplayer.Game.TreasureRoomRelicSynchronizer.AwardRelics",
+      "hash": "4048DD6882FB9CF4",
+      "lines": 95
+    },
+    "MegaCrit.Sts2.Core.Map.StandardActMap.GetNextValidPointType": {
+      "key": "MegaCrit.Sts2.Core.Map.StandardActMap.GetNextValidPointType",
+      "hash": "69F817694CAFFEC8",
+      "lines": 23
+    },
+    "MegaCrit.Sts2.Core.Map.StandardActMap.IsValidPointType": {
+      "key": "MegaCrit.Sts2.Core.Map.StandardActMap.IsValidPointType",
+      "hash": "1B629D05B9891A07",
+      "lines": 24
+    },
+    "MegaCrit.Sts2.Core.Map.MapPathPruning.RepairPointType": {
+      "key": "MegaCrit.Sts2.Core.Map.MapPathPruning.RepairPointType",
+      "hash": "5820AA0A43F35387",
+      "lines": 46
     }
   }
 }

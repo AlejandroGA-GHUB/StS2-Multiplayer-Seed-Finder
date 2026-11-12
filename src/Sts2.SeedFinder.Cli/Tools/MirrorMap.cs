@@ -52,8 +52,8 @@ public static class MirrorMap
             "src/Sts2.SeedFinder.Core/GameHash.cs",
             "model ids and RNG stream names, so all named streams."),
         new("MegaCrit.Sts2.Core.Extensions.ListExtensions", "UnstableShuffle",
-            "src/Sts2.SeedFinder.Core/Acts/RunGenerator.cs",
-            "every shuffle: relic bags, events, Ancient pools."),
+            "src/Sts2.SeedFinder.Core/Rng.cs",
+            "every shuffle: relic bags, events, Ancient pools, Neow, maps, chests."),
 
         // ---- run generation ----
         new("MegaCrit.Sts2.Core.Runs.RunManager", "GenerateRooms",
@@ -85,6 +85,9 @@ public static class MirrorMap
         new("MegaCrit.Sts2.Core.Models.Events.Neow", "GenerateInitialOptions",
             "src/Sts2.SeedFinder.Core/Neow/NeowGenerator.cs",
             "Neow's three options and the order they are drawn."),
+        new("MegaCrit.Sts2.Core.Models.Relics.NeowsBones", "AfterObtained",
+            "src/Sts2.SeedFinder.Core/Neow/NeowRelicPayload.cs",
+            "which stream Neow's Bones deals and curses from, and what it costs fight rewards."),
         new("MegaCrit.Sts2.Core.Entities.Players.Player", "PlayerRng",
             "src/Sts2.SeedFinder.Core/Rng.cs",
             "the per-player seed derivation. The whole co-op premise."),
@@ -96,7 +99,7 @@ public static class MirrorMap
             "rarity, pick and upgrade draws per offered card."),
 
         // ---- shops ----
-        new("MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory", "PopulateRelicEntries",
+        new("MegaCrit.Sts2.Core.Entities.Merchant.MerchantInventory", "GetDefaultRelicEntries",
             "src/Sts2.SeedFinder.Core/Acts/RunGenerator.cs",
             "that the third slot is hardcoded to Shop rarity. The whole shop feature."),
         new("MegaCrit.Sts2.Core.Factories.RelicFactory", "PullNextRelicFromBack",
@@ -105,6 +108,25 @@ public static class MirrorMap
         new("MegaCrit.Sts2.Core.Factories.RelicFactory", "RollRarity",
             "src/Sts2.SeedFinder.Core/Acts/RunGenerator.cs",
             "that nothing but a shop ever draws Shop rarity."),
+
+        // ---- chests ----
+        new("MegaCrit.Sts2.Core.Multiplayer.Game.TreasureRoomRelicSynchronizer", "BeginRelicPicking",
+            "src/Sts2.SeedFinder.Core/Acts/ChestRelics.cs",
+            "one rarity roll per player per chest, off the run's treasure stream."),
+        new("MegaCrit.Sts2.Core.Multiplayer.Game.TreasureRoomRelicSynchronizer", "AwardRelics",
+            "src/Sts2.SeedFinder.Core/Acts/ChestRelics.cs",
+            "what the award phase draws, which moves every later chest."),
+
+        // ---- act maps ----
+        new("MegaCrit.Sts2.Core.Map.StandardActMap", "GetNextValidPointType",
+            "src/Sts2.SeedFinder.Core/Map/ActMap.cs",
+            "which queued room type a node takes, and what stays queued."),
+        new("MegaCrit.Sts2.Core.Map.StandardActMap", "IsValidPointType",
+            "src/Sts2.SeedFinder.Core/Map/ActMap.cs",
+            "where each room type may sit, such as the lowest row for rest sites."),
+        new("MegaCrit.Sts2.Core.Map.MapPathPruning", "RepairPointType",
+            "src/Sts2.SeedFinder.Core/Map/MapPathPruning.cs",
+            "how pruned room types are put back, and the draws that costs."),
     ];
 
     /// <summary>Everything mirroring one of our files, for reporting a failure by file.</summary>
