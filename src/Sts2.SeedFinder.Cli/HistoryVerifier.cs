@@ -727,7 +727,11 @@ public static class HistoryVerifier
             root.TryGetProperty("ascension", out var asc) && asc.ValueKind == JsonValueKind.Number ? asc.GetInt32() : 0,
             root.TryGetProperty("seed", out var s) ? s.GetString() ?? "" : "",
             root.TryGetProperty("build_id", out var bd) ? bd.GetString() ?? "" : "",
-            root.TryGetProperty("game_mode", out var gm) ? gm.GetString() ?? "" : "",
+            // v0.113 moved Custom out of game_mode into its own flag, beside the new Blitz and
+            // Dread modes, so a Custom run now reads "standard" unless the flag is checked.
+            root.TryGetProperty("is_custom_game", out var custom) && custom.ValueKind == JsonValueKind.True
+                ? "custom"
+                : root.TryGetProperty("game_mode", out var gm) ? gm.GetString() ?? "" : "",
             root.TryGetProperty("modifiers", out var mods) && mods.ValueKind == JsonValueKind.Array
                 && mods.GetArrayLength() > 0,
             unknownCharacter);
