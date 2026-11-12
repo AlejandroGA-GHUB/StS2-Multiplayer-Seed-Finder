@@ -139,9 +139,8 @@ public sealed record DriftReport(
             {
                 drift = Drift.Logic;
                 message = $"Your game is {release.Version}. This build was checked against "
-                          + $"{verified.Version}, and the game's logic has changed since. Neow offers "
-                          + "and the Act 1 map are still correct; everything else is unverified. "
-                          + "Run repair.bat.";
+                          + $"{verified.Version}, and the game's logic has changed since, so "
+                          + "predictions are unverified until it is checked. Run repair.bat.";
             }
         }
         else

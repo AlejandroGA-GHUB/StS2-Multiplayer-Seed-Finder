@@ -51,9 +51,11 @@ regenerated table take effect without you having to think about it.
 
 Read the two verdict lines at the bottom. They tell you whether this is yours to fix.
 
-The "still correct regardless" line is worth trusting: Neow's offer and the Act 1 map run on
-their own RNG streams over fixed lists, so a content patch does not move them. Even a badly
-drifted copy is still a working Neow finder.
+The "still correct regardless" line only appears when no draw-order method changed, and then it
+is worth trusting: Neow's offer and the Act 1 map run on their own RNG streams over fixed lists,
+so a content patch does not move them. A change to a mirrored method can move them too; v0.113
+changed the shuffle both use and the map's placement rules, which is why the line is withheld
+whenever the draw-order layer fails.
 
 ### 2. Regenerate the data tables
 
