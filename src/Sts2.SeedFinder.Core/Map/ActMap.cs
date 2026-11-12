@@ -27,8 +27,16 @@ public sealed class ActMap
     private readonly Rng _rng;
     private readonly List<MapPoint> _startMapPoints = new();
 
-    /// <summary>Types that may not sit in the bottom six rows.</summary>
-    private static readonly MapPointType[] LowerRestrictions = { MapPointType.RestSite, MapPointType.Elite };
+    /// <summary>
+    /// The lowest row each restricted type may sit on. Rest sites start one row below elites
+    /// since v0.113 (both were row 6 before), so a short act still has room for its rests.
+    /// </summary>
+    private static int LowestRow(MapPointType type) => type switch
+    {
+        MapPointType.RestSite => 5,
+        MapPointType.Elite => 6,
+        _ => 0,
+    };
 
     /// <summary>Types that may not sit in the top three rows.</summary>
     private static readonly MapPointType[] UpperRestrictions = { MapPointType.RestSite };
@@ -234,9 +242,9 @@ public sealed class ActMap
     /// <summary>
     /// Deal the queued types onto unassigned points, in three passes.
     ///
-    /// More than one pass is needed because a type that fits nowhere is rotated to the back of the
-    /// queue rather than dropped, and a point that could take nothing is left unassigned. Filling
-    /// other points changes both, so a later pass can place what an earlier one could not.
+    /// More than one pass is needed because a type that fits nowhere stays queued rather than
+    /// dropped, and a point that could take nothing is left unassigned. Filling other points
+    /// changes both, so a later pass can place what an earlier one could not.
     /// </summary>
     private void AssignRemainingTypesToRandomPoints(Queue<MapPointType> queue)
     {
@@ -257,16 +265,22 @@ public sealed class ActMap
     }
 
     /// <summary>
-    /// Pull the first queued type this point can legally take, rotating rejects to the back.
+    /// Take the first queued type this point can legally take and leave the rest IN ORDER.
     /// Returns Unassigned when nothing in the queue fits, leaving the point for a later pass.
+    ///
+    /// Before v0.113 each reject was rotated to the back of the queue, so rest sites, which lead
+    /// it and have the narrowest window of rows, kept losing their place to shops and elites.
     /// </summary>
     private MapPointType NextValidPointType(Queue<MapPointType> queue, MapPoint point)
     {
-        for (int i = 0; i < queue.Count; i++)
+        var types = queue.ToArray();
+        for (int i = 0; i < types.Length; i++)
         {
-            var type = queue.Dequeue();
-            if (IsValidPointType(type, point)) return type;
-            queue.Enqueue(type);
+            if (!IsValidPointType(types[i], point)) continue;
+            queue.Clear();
+            for (int j = 0; j < types.Length; j++)
+                if (j != i) queue.Enqueue(types[j]);
+            return types[i];
         }
         return MapPointType.Unassigned;
     }
@@ -280,7 +294,7 @@ public sealed class ActMap
     {
         // Rests and elites stay out of the opening rows; rests also stay away from the boss, where
         // the forced last row already provides one.
-        if (point.Coord.Row < 6 && LowerRestrictions.Contains(type)) return false;
+        if (point.Coord.Row < LowestRow(type)) return false;
         if (point.Coord.Row >= _mapLength - 3 && UpperRestrictions.Contains(type)) return false;
 
         if (NeighbourRestrictions.Contains(type))

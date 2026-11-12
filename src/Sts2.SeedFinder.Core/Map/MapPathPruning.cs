@@ -27,8 +27,8 @@ internal static class MapPathPruning
     // ---- Repair --------------------------------------------------------------------------------
 
     /// <summary>
-    /// Top each type back up to its target by converting monsters. Returns whether anything
-    /// changed, which is what tells the caller another prune pass may be needed.
+    /// Top each type back up to its target by converting monsters, then unknowns. Returns whether
+    /// anything changed, which is what tells the caller another prune pass may be needed.
     ///
     /// The order of these four is fixed and matters: each one draws, and each one consumes
     /// monsters the next might have wanted.
@@ -45,15 +45,27 @@ internal static class MapPathPruning
 
     private static bool RepairPointType(ActMap map, MapPointType type, int targetCount, Rng rng)
     {
-        int missing = targetCount - map.GetAllMapPoints().Count(p => p.PointType == type);
+        // Only unlocked points count and only unlocked points are candidates, which is what
+        // protects the three forced rows (v0.113 stopped counting a forced row toward the target).
+        int missing = targetCount - map.GetAllMapPoints().Count(p => p.PointType == type && p.CanBeModified);
         if (missing <= 0) return false;
 
-        // Only unlocked monsters are candidates, which is what protects the three forced rows.
         var candidates = map.GetAllMapPoints()
             .Where(p => p.PointType == MapPointType.Monster && p.CanBeModified)
             .ToList();
 
         MapShuffle.Stable(candidates, rng, MapPointComparer.Instance);
+
+        // Since v0.113 unknowns are spent once the monsters run out, shuffled separately and
+        // after them, so this costs a second draw for every type but Unknown itself.
+        if (type != MapPointType.Unknown)
+        {
+            var unknowns = map.GetAllMapPoints()
+                .Where(p => p.PointType == MapPointType.Unknown && p.CanBeModified)
+                .ToList();
+            MapShuffle.Stable(unknowns, rng, MapPointComparer.Instance);
+            candidates.AddRange(unknowns);
+        }
 
         bool repaired = false;
         foreach (var point in candidates)
