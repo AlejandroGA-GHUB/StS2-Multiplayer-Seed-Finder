@@ -183,7 +183,13 @@ not cosmetic. Only two names in our data ever hit the acronym case (`ExpectAFigh
   `UpFront`, `Shuffle`, `UnknownMapPoint`, `CombatCardGeneration`, `CombatPotionGeneration`,
   `CombatCardSelection`, `CombatEnergyCosts`, `CombatTargets`, `MonsterAi`, `Niche`, `CombatOrbs`,
   `TreasureRoomRelics`. `UpFront` drives monsters/events/relics offered.
-- `PlayerRngSet` — 3 **per-player** RNGs: `Rewards`, `Shops`, `Transformations`.
+- `PlayerRngSet` — 4 **per-player** RNGs: `Rewards`, `Shops`, `Transformations`, and since
+  v0.113 `NonCombatGeneration` (Neow's Bones, Kaleidoscope, Phial Holster, War Paint, Whetstone).
+- **Shuffles cost ONE draw since v0.113.** `ListExtensions.UnstableShuffle` takes one
+  `NextUnsignedLong` off the stream it is given, seeds a fresh `Rng` with it, and does its
+  descending Fisher-Yates on that. So a shuffle of any length, 0 and 1 included, moves its parent
+  exactly one draw; before v0.113 it was length - 1. `StableShuffle` is a sort and then the same.
+  Ported once, as `Rng.UnstableShuffle`, and everything that shuffles goes through it.
 
 ### The multiplayer key
 `Player.cs:330` — a player's whole `PlayerRngSet` is seeded with the run seed plus their lobby
@@ -237,7 +243,8 @@ Availability gates that matter: `WingedBoots` SP-only, `MassiveScroll` MP-only,
 **Kaleidoscope's gate is PER PLAYER** (read against v0.111.0, 2026-09-28). Neow filters with
 `IsAllowedAtNeow(base.Owner)`, and Kaleidoscope's override counts the OWNER's
 `UnlockState.CharacterCardPools`, which the game builds from every character minus each whose
-first epoch (`Silent1Epoch`, `Regent1Epoch`, `Necrobinder1Epoch`, `Defect1Epoch`) is unrevealed.
+first epoch (`Silent1Epoch`, `Regent1Epoch`, `Necrobinder1Epoch`, `Defect1Epoch`, and since
+v0.113 `Fool1Epoch`) is unrevealed.
 So one lobby can have it in some players' positive pools and not others', and a player without
 it shuffles a pool one relic shorter, which changes BOTH of their positive options, not just
 whether Kaleidoscope shows. Confirmed on two finished runs: `VSYRUD21LBUE` (P3 a brand-new
@@ -271,20 +278,22 @@ v0.111.0 runs).
 - **Neow's Bones** builds `Neow.AllPossibleOptions`' relics: the ten curses, the fourteen
   positives, then LavaRock, NeowsTalisman, NutritiousOyster, Pomander, SmallCapsule,
   StoneHumidifier (alphabetical, NOT flip order), filtered by `IsAllowedAtNeow(owner)` and minus
-  itself. `PlayerRng.Rewards.Shuffle` (descending Fisher-Yates, n-1 draws), first two handed over.
-  Then ONE curse: `RunState.Rng.Niche.NextItem` over the curse pool's
-  `CanBeGeneratedByModifiers` cards in id order (Clumsy, Debt, Decay, Doubt, Guilty, Injury,
-  Normality, Regret, Shame, Writhe).
-- **The curse is the only part that is not per player.** Niche is a RUN stream, and Kaleidoscope,
-  New Leaf, another Bones, and War Paint or Whetstone (which a capsule can pull) all draw from it
-  on pickup. Co-op resolution order is unknowable, so `CurseIsCertain` promises the curse only
-  when the Bones player's own two relics hold none of those (or a capsule) and nobody else's
-  offer does either (their capsules are checked for what they would really pull). Search
-  requires certainty; the display marks an uncertain curse.
+  itself. Since v0.113 it is `StableShuffle`d on the player's own `NonCombatGeneration` stream
+  (seeded `runSeed + slot`, like the other player streams), first two handed over. Then ONE
+  curse: `NextItem` on that same stream, over the curse pool's `CanBeGeneratedByModifiers` cards
+  in id order (Clumsy, Debt, Decay, Doubt, Guilty, Injury, Normality, Regret, Shame, Writhe).
+- **The curse is per player since v0.113** (it was a draw off the run's Niche stream, which is
+  why co-op could only promise it sometimes). What can still move it is what the two dealt relics
+  draw from `NonCombatGeneration` when claimed, BEFORE the curse: Kaleidoscope 2 (two
+  StableShuffles), Phial Holster 4 (two potions, each a `NextFloat` and a `NextItem`), and a
+  capsule's War Paint or Whetstone pull, one each. The first two are fixed costs. A capsule is
+  priced by simulating its pulls, and when a capsule and another drawing relic are dealt together
+  `BonesCurse` tries both claim orders and returns null if they disagree; the display says so.
 - **Known gap:** Lasting Candy is refused while any Ironclad in the lobby is on an account with
   zero finished runs. Not modelled, so a brand-new Ironclad account can see a capsule skip it.
-- Neow's Bones' own Rewards cost is seed-dependent: its shuffle (list length - 1) plus whatever
-  the two relics draw when claimed, worked out per seed by `BonesRewardDraws` (2026-11-08,
+- Neow's Bones' own Rewards cost is seed-dependent: whatever the two relics it deals draw when
+  claimed (its shuffle moved to `NonCombatGeneration` in v0.113, so it costs Rewards nothing),
+  worked out per seed by `BonesRewardDraws` (2026-11-08,
   confirmed by `--verify-history` against a real fight 1 after a Bones pick). Every relic's cost
   is fixed, so claim order does not matter, except Scroll Boxes for a Defect: its 1-in-100 Claw
   check skips a bundle's three draws, so its cost depends on where it starts. Dealt next to a
@@ -541,12 +550,13 @@ imports a dropped `progress.save` through `ProfileReader.Parse`, and `SearchCrit
 - **The run-level state is the UNION, and must be rebuilt when anything is imported.** It is what
   act generation, the Ancients and the shared chest bag read. `UnlockState.Union` does this;
   `Query.LobbyUnlocks` is the only caller that matters.
-- **The blast radius is not the player who is wrong.** `PopulateRelicGrabBags` consumes one
-  stream in a fixed order: shared deques, then each player's bag in lobby order, then act
-  generation. A shuffle of n costs exactly n-1 draws, so a partner with differently sized pools
-  moves everything drawn after their bag. Measured on seed `8NZJ8J63RAKH` with P2 missing
-  Relic1-5 and Silent3/6: Act 1's boss went Vantom to Ceremonial Beast, the Act 2 and 3 Ancients
-  both changed, P2's shops changed and **P1's did not**, because P1 is shuffled first.
+- **The blast radius shrank in v0.113.** `PopulateRelicGrabBags` consumes one stream in a fixed
+  order: shared deques, then each player's bag in lobby order, then act generation. Up to v0.111
+  a shuffle of n cost n-1 draws, so a partner with differently sized pools moved everything
+  drawn after their bag (measured on seed `8NZJ8J63RAKH`, P2 missing Relic1-5 and Silent3/6:
+  Act 1's boss went Vantom to Ceremonial Beast and both later Ancients changed). Since v0.113
+  every shuffle is one draw, so pool SIZES move nothing downstream; a partner's state now reaches
+  the party only through what it changes about the union (the shared bag, events, Ancients).
 - **Card pools are per player too.** `CardRewardGenerator.PoolFor` and `NeowCardPayload` take a
   slot's own state, not the run's, which is why `SearchCriteria.UnlocksFor(slot)` exists and why
   `NeowPlan` carries an array rather than one state.
@@ -707,8 +717,9 @@ Three properties follow, and they are what make this worth having:
   depend on exactly one thing: how many chest picks came before it.
 - **The award phase is free in the ordinary case.** It only draws when players contest a relic
   (rock-paper-scissors) or leave one unclaimed (`StableShuffle` of the leftovers), and
-  `UnstableShuffle` of 0 or 1 element consumes nothing. Everyone picking a different relic costs
-  zero.
+  Since v0.113 the award always ends in a `StableShuffle` of the leftovers, and a shuffle costs
+  one draw even when nothing is left, so every chest costs its rolls plus exactly one. Contested
+  picks still add rock-paper-scissors draws, which is what the UI's tolerance is for.
 - **It is a SHARED pick.** One relic is rolled per player and the whole party votes on the set, so
   the seed fixes what is on the table and the table decides who gets it. Hence `ChestRelicCriterion`
   carries no slot rule, and naming two relics for one act means "both are in that chest".
@@ -811,11 +822,15 @@ already depends on:
    `[-1, 0, 1]` and takes the first direction that would not cross an existing edge.
 
 3. **`AssignPointTypes`** — forced rows, then the queued types dealt onto unassigned points in **three
-   passes**. A type that fits nowhere rotates to the back of the queue rather than being dropped, and
-   a point that can take nothing is left for the next pass. Leftovers become Monsters.
+   passes**. A point takes the first queued type that is valid for it and the rest of the queue
+   keeps its order (up to v0.111 the rejected ones rotated to the back). A point that can take
+   nothing is left for the next pass. Leftovers become Monsters. Validity includes a lowest row:
+   rest sites need row 5 or above since v0.113, elites row 6.
 
 4. **`PruneAndRepair`**, up to three rounds of: delete duplicate route segments, then top any type
    that fell below its target back up by converting unlocked monsters. Only the repair draws.
+   Since v0.113 it counts only points that `CanBeModified` toward the target, and for any type
+   but Unknown it may also convert Unknowns, StableShuffled and tried after the monsters.
 
 #### Three things that would silently break a reimplementation
 - **`NextGaussianInt` is Box-Muller with rejection**, so its cost is *two draws per attempt*, not two
@@ -836,7 +851,8 @@ defined, referenced only by each other, never called. They draw nothing.
 so a mistake there cannot desynchronise anything. It must still be exact, because the game saves the
 map *after* running it, so those are the coordinates any comparison is against.
 
-**Verified** on seed `1LVDJXPJ5HXE` (v0.111.0, singleplayer, A10, Overgrowth): all **64 nodes**
+**Re-verified on v0.113.0** on seed `JKWWTCCLEL3H` (singleplayer, A10, Fool, Overgrowth): all 54
+nodes. **First verified** on seed `1LVDJXPJ5HXE` (v0.111.0, singleplayer, A10, Overgrowth): all **64 nodes**
 matched on coordinate, type and edges, plus width, height and boss row. Singleplayer is near-total
 coverage here, unusually — `isMultiplayer` reaches exactly one line, `_mapLength`, and that method is
 already oracle-verified and confirmed against a real co-op run.
@@ -1032,7 +1048,7 @@ Two properties fall out. It needs no character, since the colourless pool is the
 everyone, making it the only card criterion that works with nobody picked. And it sets
 `NoCardPoolModifications`, so CharacterCards declines it.
 
-#### CharacterCards is five tickboxes, and three traps
+#### CharacterCards is six tickboxes, and three traps
 
 The only modifier the game parameterises: a `[SavedProperty] ModelId CharacterModel`, expanded
 into one tickbox per character. Any number can be on, since `MutuallyExclusiveModifiers` does not
@@ -1045,14 +1061,14 @@ hallway fight rewards and Draft's ten rewards. `GetPossibleCards` is
 each filtered by THIS player's unlock state.
 
 1. **The tickbox order is `ModelDb.AllCharacters`** (Ironclad, Silent, Regent, Necrobinder,
-   Defect), which is NOT our `Character` enum's order. Pools concatenate in hook order and a pick
+   Defect, Fool), which is NOT our `Character` enum's order. Pools concatenate in hook order and a pick
    is an index into one rarity's entries, so sorting by our enum would quietly return different
    cards.
 2. **A player playing a ticked character gains nothing.** The hook unions pool INSTANCES and
    theirs is already in the list, so `Union` drops it. One tickbox doubles one player's pool and
    does nothing for another, in the same lobby, off the same box.
 3. **Modded characters are unsupportable**, not merely unverified: their pool does not exist in
-   `sts2.dll`. Only the five vanilla characters are offered.
+   `sts2.dll`. Only the six vanilla characters are offered.
 
 It adds no Neow option, so it costs zero draws, which is why it is carried in
 `SearchCriteria.CharacterCardPools` rather than squeezed into the order-sensitive enum.
@@ -1117,11 +1133,10 @@ GenerateRooms():
            Boss    = NextItem(bosses)
            Ancient = NextItem(unlocked + sharedSubset)  <-- the target, rolled LAST
 ```
-A shuffle of n consumes exactly n-1 draws, so only per-rarity **counts** matter for the
-relic bags. All five characters have **identical** pool counts (Common 1, Uncommon 2,
-Rare 3, Shop 1), so party composition and slot order do *not* shift the UpFront stream —
-only **player count** does. (An earlier note here claimed composition mattered; it does
-not, though it would the moment a patch gives one character a differently sized pool.)
+Since v0.113 a shuffle consumes exactly ONE draw whatever its length, so a relic bag costs one
+draw per rarity deque and pool sizes do not matter at all. Party composition and slot order do
+*not* shift the UpFront stream; only **player count** does. (Up to v0.111 a shuffle cost n-1, and
+this held only because every character's pools happened to be the same size.)
 
 ### Ancients' offers — IMPLEMENTED and oracle-verified
 Act 2 (Hive): Orobas *(needs OrobasEpoch unlock)*, Pael, Tezcatara.
@@ -1179,8 +1194,8 @@ seed, so all of them are explicit inputs.
 
 - **Lobby order.** P1 is whoever joins first. Neow, the Ancients, card rewards and shop relics are
   per slot, so swapping join order swaps everything that belongs to those players.
-- **Player count**, which feeds act generation. Party *composition* does not: all five characters
-  have identically sized relic pools. See "MP-specific differences" below.
+- **Player count**, which feeds act generation. Party *composition* does not: every bag shuffle
+  costs one draw whatever the pool sizes. See "MP-specific differences" below.
 - **Ascension**, at exactly two levels. See "Ascension 10" and the Scarcity note under card rewards.
 - **Everyone's unlock state**, not just yours. The bags are shuffled one per player off one stream,
   so a partner missing epochs moves the draws for the whole party.

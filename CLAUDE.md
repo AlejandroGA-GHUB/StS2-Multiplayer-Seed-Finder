@@ -15,8 +15,9 @@ the relics Small and Large Capsule pull from the player's own bag, and the two r
 Neow's Bones deals. Searchable (`--relic large_capsule:p1:vajra,lantern`,
 `--relic neows_bones:p2:golden_pearl,doubt`), shown on every result, GPU-ported
 (`RelicPayloadFilter`), and checked by the Oracle and by `--verify-history` against real runs.
-The relics are exact per player; the Bones CURSE comes off the run-level Niche stream, so it is
-only promised when nobody at the table can draw from Niche first (`CurseIsCertain`). Read the
+The relics and, since v0.113, the Bones CURSE are exact per player: both come off the player's
+own `NonCombatGeneration` stream, and the curse is only unknown when a dealt capsule and another
+drawing relic make it depend on claim order (`BonesCurse` returns null). Read the
 "Relic payloads" part of `docs/GAME_MECHANICS.md` before touching it.
 
 **Five Neow card payloads are done**, in `Core/Cards/NeowCardPayload.cs`, all searchable and
@@ -91,6 +92,12 @@ card pool is still **unconfirmed in play**, because that fight 1 was three Commo
 
 ## Status
 
+**Ported to v0.113.0** (2026-11-12): the one-draw shuffle (`Rng.UnstableShuffle`), the chest
+award's extra draw, Neow's Bones on `NonCombatGeneration`, the new map placement and repair
+rules, and the Fool (6th character, appended LAST in `ModelDb.AllCharacters`). Oracle, GPU and
+`--verify` against a live A10 Fool run (`JKWWTCCLEL3H`, maps included) all pass. Blitz and Dread
+runs are not predicted: Blitz has its own map, shops and odds.
+
 **Acts 1–3 complete, and confirmed in play.** Neow's *full* offer — the curse-branch relic
 and both positive options — per player slot. Acts 2/3 generation is verified against a real
 singleplayer run save; all 7 Ancients' relic offers are oracle-verified. The user has since
@@ -144,8 +151,8 @@ Four things that are easy to get wrong:
   to 3. That is why `SearchCriteria.RewardPriorDraws` is the ONLY place prior draws are counted:
   an earlier version had the CLI deriving its own and the two disagreed, so the search matched on
   one number and printed rewards read from another.
-- **CharacterCards is five tickboxes, not one** (the game expands it per `ModelDb.AllCharacters`,
-  which is why a clean install shows 20 tickboxes for 16 classes). Its order is the game's, NOT
+- **CharacterCards is six tickboxes, not one** (the game expands it per `ModelDb.AllCharacters`,
+  which is why a clean install shows 21 tickboxes for 16 classes). Its order is the game's, NOT
   our `Character` enum's, and it adds nothing to a player already playing that character.
 - `Darv` gates Pandora's Box on `Modifiers.Any(m => m.ClearsPlayerDeck)`, the one place modifier
   IDENTITY reaches generation. True for Insanity, Draft and SealedDeck only.
@@ -202,7 +209,7 @@ dotnet run -c Release --project src\Sts2.SeedFinder.Cli -- --verify-history --ve
 ```
 
 **Run the Oracle after any change to Core, and after every game patch.** It loads the real
-`sts2.dll` and asserts our port still matches. As of v0.111.0 all 16 checks pass.
+`sts2.dll` and asserts our port still matches. As of v0.113.0 all 16 checks pass.
 
 **Run `--verify` after any change to `Core/Acts/` or `Core/Map/`.** It checks the act/boss/Ancient
 chain against a save the game itself wrote, and diffs each act map node-for-node against the
@@ -253,7 +260,7 @@ Other documents: `docs/plan.md` (open queue, what shipped, and the reasoning beh
 accelerator), `docs/VERIFICATION.md` (what each harness proves), `docs/PATCH_RECOVERY.md`
 (what a user does after a patch).
 
-## Game facts (derived by decompiling v0.109.1; port re-confirmed against v0.110.1 by the Oracle)
+## Game facts (derived by decompiling v0.109.1; port re-confirmed against v0.113.0 by the Oracle)
 
 Install: `C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2\`
 Game logic: `data_sts2_windows_x86_64\sts2.dll` — 9.6 MB, **.NET 9, unobfuscated**.
@@ -285,8 +292,9 @@ end to end: hiding a single relic epoch changes two of the three act bosses and 
 whole shop sequence.
 
 **A PARTNER's unlock state is an input too, since 2026-09-01.** It is per player, the run's is
-the union, and the bags are shuffled one per player off one stream, so a partner missing epochs
-moves the bosses for the WHOLE party rather than just their own rewards. `Import Friend Epoch`
+the union, and the bags are shuffled one per player off one stream. Up to v0.111 a partner
+missing epochs moved the bosses for the WHOLE party; since v0.113 a shuffle is one draw whatever
+its length, so it now reaches the party only through the union. `Import Friend Epoch`
 in the Lobby panel takes their dropped `progress.save` or a `UnlockCode` string;
 `SearchCriteria.PlayerUnlocks` carries it and `UnlocksFor(slot)` resolves per-slot card pools.
 Read the unlock section of `docs/GAME_MECHANICS.md` before touching any of it, including the

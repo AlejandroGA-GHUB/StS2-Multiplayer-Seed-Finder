@@ -26,9 +26,11 @@ Star, Draft), **all five Neow card payloads**, the **Neow relic payloads** (caps
 cards. Nothing is materialised: a capsule rolls its rarities on Rewards, burns UpFront to that
 player's deque (`RunGenerator.PlayerDeques` gives `DrawsBefore`, as `ShopDeques` does for shops)
 and follows the wanted relic's index through the shuffle; it was handed over iff it lands in
-front of the number of matching rolls. Bones follows the relic through the Rewards shuffle of the
-player's list (lands at 0 or 1). The curse is one Niche draw; its certainty rule needs everyone's
-offer, so the kernel over-accepts and the CPU decides.
+front of the number of matching rolls. Bones follows the relic through the NonCombatGeneration
+shuffle of the player's list (lands at 0 or 1). The curse is the next draw on that stream after
+what the dealt relics draw when claimed: Kaleidoscope and Phial Holster are followed through the
+shuffle and priced exactly, and a dealt capsule's War Paint or Whetstone pulls are not resolved,
+so every offset they allow is tried. That over-accepts and the CPU decides.
 
 **A Neow's Bones pick** is priced per seed inside the card stage: `CardFilter.BonesLayout` lists
 each relic in the taker's Bones list that draws, and the kernel walks the shuffle on the Rewards
