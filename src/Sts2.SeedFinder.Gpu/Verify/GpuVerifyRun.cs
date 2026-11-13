@@ -119,7 +119,7 @@ public static class GpuVerifyRun
         }
 
         foreach (var want in criteria.Events)
-            if (!run.Acts[want.Act - 1].Events.Take(want.WithinFirst).Contains(want.Event))
+            if (!run.Acts[want.Act - 1].EventOrder.Take(want.WithinFirst).Contains(want.Event))
                 return false;
 
         foreach (var want in criteria.Ancients)

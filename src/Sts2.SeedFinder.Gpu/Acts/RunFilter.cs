@@ -385,7 +385,10 @@ public static class RunFilter
 
                 int from = v.EventStartIndex[c * p.ActDefCount + actDef];
                 if (from < 0) return false;
-                if (FinalPosition(rng, events, from) >= v.EventCriteria[c * 2 + 1]) return false;
+                // Position 0 is spent by the act's Ancient (see GeneratedAct.EventOrder), so the
+                // first n events a ? room can offer are positions 1 to n.
+                int pos = FinalPosition(rng, events, from);
+                if (pos == 0 || pos > v.EventCriteria[c * 2 + 1]) return false;
             }
             rng.Burn(1);   // the event shuffle: one draw, however many events
 

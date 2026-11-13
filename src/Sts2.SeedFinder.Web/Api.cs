@@ -1290,7 +1290,7 @@ public static class Predictions
 
         var acts = run.Acts.Select((a, i) => new ActDto(
             i + 1, a.Act.Name, a.Bosses.Select(b => ActCatalog.Display(b.Name)).ToArray(), a.Ancient,
-            a.Events.Take(EventsShown).Select(ActCatalog.Display).ToArray())).ToArray();
+            a.EventOrder.Take(EventsShown).Select(ActCatalog.Display).ToArray())).ToArray();
 
         var ancientOffers = new List<AncientOfferDto>();
         for (int act = 0; act < run.Acts.Count; act++)

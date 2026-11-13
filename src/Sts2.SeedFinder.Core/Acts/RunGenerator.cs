@@ -173,6 +173,15 @@ public sealed record GeneratedAct(
     /// <summary>Every boss this act will make you fight, in the order you meet them.</summary>
     public IEnumerable<Encounter> Bosses =>
         SecondBoss is null ? new[] { Boss } : new[] { Boss, SecondBoss };
+
+    /// <summary>
+    /// The order <c>?</c> rooms hand events out in, which is NOT <see cref="Events"/>. The act
+    /// opens on its Ancient, an event room, and entering any event room advances the act's event
+    /// counter, so entry 0 is spent before the first <c>?</c> room and is never offered. Every
+    /// search and display reads this; <see cref="Events"/> stays the game's own list for
+    /// <c>--verify</c> to compare against the save.
+    /// </summary>
+    public IEnumerable<string> EventOrder => Events.Skip(1);
 }
 
 /// <summary>The upfront-generated shape of a whole run.</summary>

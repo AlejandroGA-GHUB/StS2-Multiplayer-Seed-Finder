@@ -414,7 +414,7 @@ internal static class Program
         Console.WriteLine("  skipping any that your run does not currently qualify for):");
         for (int i = 0; i < run.Acts.Count; i++)
         {
-            var names = run.Acts[i].Events.Take(EventsShown).Select(ActCatalog.Display);
+            var names = run.Acts[i].EventOrder.Take(EventsShown).Select(ActCatalog.Display);
             Console.WriteLine($"    Act {i + 1}: {string.Join(", ", names)}");
         }
     }
