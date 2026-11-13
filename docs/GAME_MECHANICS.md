@@ -597,6 +597,15 @@ so an unreachable boss or event costs a lookup instead of a full run.
 shared event seen in Act 1 is skipped in Acts 2 and 3. Hence the criterion is "within the
 first n", and both the CLI and the UI say why. Never phrase it as a guaranteed position.
 
+**Entry 0 is never offered** (found 2026-11-12, in play, seed `ALQP5KGFQX90`). Every act opens on
+its Ancient, which is an `EventRoom`, and `RunManager` calls `MarkRoomVisited(room.RoomType)` on
+entering any room, so the Ancient advances `eventsVisited` to 1 before the first `?` room. The
+first event you can meet is entry 1. The save proved it: Neow plus one event left
+`events_visited = 2`, and the event was entry 1; a skipped entry 0 would have left 3. Searches and
+displays read `GeneratedAct.EventOrder` (`Events.Skip(1)`); `Events` stays the game's list for
+`--verify`. Until this was found, an event searched "within the first 1" could only ever match
+the one slot nobody sees.
+
 ### Ascension 10 — Double Boss, the one ascension effect on RUN generation
 Not the only ascension effect the finder models. A7's `AscensionLevel.Scarcity` moves card
 rarity odds, which is why `--ascension` is a real input to card prediction — see "Card rewards,

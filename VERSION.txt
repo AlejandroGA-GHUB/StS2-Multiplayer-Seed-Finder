@@ -28,3 +28,6 @@ all match v0.113.0 again.
 still correct, since a patch like this one can change them too.
 
 3. Checking a run played with a modded character now says so, instead of crashing.
+
+4. Event searches and results now skip the first event in each act's list, which the act's
+Ancient always uses up. Before, an event shown first could never actually appear.
